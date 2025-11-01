@@ -14,8 +14,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Smart connection management with automatic failover and optimization
@@ -34,6 +36,7 @@ class SmartConnectionManager(
 
     private val _serverHealthMap = MutableStateFlow<Map<String, ServerHealth>>(emptyMap())
     val serverHealthMap: StateFlow<Map<String, ServerHealth>> = _serverHealthMap.asStateFlow()
+    private val serverConfigMap = ConcurrentHashMap<String, ServerConfig>()
 
     private var healthCheckJob: Job? = null
     private var networkCallbackRegistered = false
@@ -120,12 +123,16 @@ class SmartConnectionManager(
             server.id to ServerHealth(serverId = server.id)
         }
         _serverHealthMap.value = initialHealth
+        serverConfigMap.clear()
+        servers.forEach { server ->
+            registerServer(server)
+        }
 
         // Register network callback
         registerNetworkCallback()
 
         // Start health checks
-        startHealthChecks(servers)
+        startHealthChecks()
     }
 
     /**
@@ -140,6 +147,7 @@ class SmartConnectionManager(
      * Connect to server
      */
     suspend fun connect(server: ServerConfig) {
+        registerServer(server)
         _connectionState.value = ConnectionState.Connecting
         _activeServer.value = server
 
@@ -200,21 +208,28 @@ class SmartConnectionManager(
      * Find best server based on health scores
      */
     private fun findBestServer(excludeServerId: String? = null): ServerConfig? {
-        val healthMap = _serverHealthMap.value
-        val availableServers = healthMap.filter { (serverId, health) ->
-            serverId != excludeServerId &&
-                    health.isHealthy &&
-                    health.consecutiveFailures < consecutiveFailuresThreshold
+        val candidates = _serverHealthMap.value.mapNotNull { (serverId, health) ->
+            if (serverId == excludeServerId) return@mapNotNull null
+            if (!health.isHealthy || health.consecutiveFailures >= consecutiveFailuresThreshold) {
+                return@mapNotNull null
+            }
+
+            val config = serverConfigMap[serverId] ?: return@mapNotNull null
+            config to health
         }
 
-        if (availableServers.isEmpty()) return null
-
-        // Find server with best score
-        val bestEntry = availableServers.maxByOrNull { it.value.score }
-        return bestEntry?.key?.let { serverId ->
-            // TODO: Get ServerConfig from storage
-            null
+        if (candidates.isEmpty()) {
+            return null
         }
+
+        val comparator = compareByDescending<Pair<ServerConfig, ServerHealth>> { (_, health) ->
+            health.score
+        }
+            .thenByDescending { (config, _) -> config.priority }
+            .thenBy { (_, health) -> health.latency }
+            .thenBy { (config, _) -> config.id }
+
+        return candidates.maxWithOrNull(comparator)?.first
     }
 
     /**
@@ -226,7 +241,7 @@ class SmartConnectionManager(
         latency: Int = 0,
         packetLoss: Float = 0f
     ) {
-        val currentHealth = _serverHealthMap.value[serverId] ?: return
+        val currentHealth = _serverHealthMap.value[serverId] ?: ServerHealth(serverId = serverId)
 
         val updatedHealth = if (success) {
             currentHealth.copy(
@@ -245,26 +260,45 @@ class SmartConnectionManager(
             )
         }
 
-        _serverHealthMap.value = _serverHealthMap.value + (serverId to updatedHealth.copy(
-            score = updatedHealth.calculateScore()
-        ))
+        val scoredHealth = updatedHealth.copy(score = updatedHealth.calculateScore())
+        _serverHealthMap.update { current ->
+            current + (serverId to scoredHealth)
+        }
     }
 
     /**
      * Start periodic health checks
      */
-    private fun startHealthChecks(servers: List<ServerConfig>) {
+    private fun startHealthChecks() {
         healthCheckJob?.cancel()
 
         healthCheckJob = scope.launch {
             while (isActive) {
-                servers.forEach { server ->
+                val serversSnapshot = serverConfigMap.values.toList()
+                if (serversSnapshot.isEmpty()) {
+                    delay(healthCheckInterval)
+                    continue
+                }
+
+                serversSnapshot.forEach { server ->
                     launch {
                         checkServerHealth(server)
                     }
                 }
 
                 delay(healthCheckInterval)
+            }
+        }
+    }
+
+    private fun registerServer(server: ServerConfig) {
+        serverConfigMap[server.id] = server
+
+        _serverHealthMap.update { current ->
+            if (current.containsKey(server.id)) {
+                current
+            } else {
+                current + (server.id to ServerHealth(serverId = server.id))
             }
         }
     }
@@ -381,6 +415,14 @@ class SmartConnectionManager(
      * Set health check interval
      */
     fun setHealthCheckInterval(intervalMs: Long) {
+        if (intervalMs <= 0 || intervalMs == healthCheckInterval) {
+            return
+        }
+
         healthCheckInterval = intervalMs
+
+        if (serverConfigMap.isNotEmpty()) {
+            startHealthChecks()
+        }
     }
 }
