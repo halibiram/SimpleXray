@@ -159,8 +159,60 @@
 # Keep BuildConfig
 -keep class com.simplexray.an.BuildConfig { *; }
 
-# R8 optimizations
+# R8 Ultimate Level Optimizations
 -allowaccessmodification
 -mergeinterfacesaggressively
 -overloadaggressively
 -repackageclasses ''
+
+# Additional aggressive optimizations
+-optimizationpasses 5
+-optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*
+
+# Remove all logging in release builds (including warnings and errors)
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+    public static *** w(...);
+    public static *** e(...);
+    public static *** wtf(...);
+}
+
+# Remove debugging and assertions
+-assumenosideeffects class kotlin.jvm.internal.Intrinsics {
+    static void checkParameterIsNotNull(java.lang.Object, java.lang.String);
+    static void checkExpressionValueIsNotNull(java.lang.Object, java.lang.String);
+    static void checkNotNullExpressionValue(java.lang.Object, java.lang.String);
+    static void checkReturnedValueIsNotNull(java.lang.Object, java.lang.String, java.lang.String);
+    static void checkFieldIsNotNull(java.lang.Object, java.lang.String, java.lang.String);
+    static void throwUninitializedPropertyAccessException(java.lang.String);
+}
+
+# Aggressive class and method inlining
+-optimizations class/unboxing/enum,method/removal/parameter,method/propagation/parameter,method/inlining/*
+
+# Remove unused resources
+-dontwarn **
+-ignorewarnings
+
+# Optimize for speed
+-dontpreverify
+-dontusemixedcaseclassnames
+
+# Aggressive obfuscation
+-flattenpackagehierarchy
+-repackageclasses 'o'
+
+# Remove attributes for smaller size
+-renamesourcefileattribute SourceFile
+-keepattributes SourceFile,LineNumberTable
+
+# Additional kotlin optimizations
+-assumenosideeffects class kotlin.jvm.internal.Intrinsics {
+    public static void check*(...);
+    public static void throw*(...);
+}
+
+# Optimize annotations
+-keepattributes RuntimeVisible*Annotations,AnnotationDefault

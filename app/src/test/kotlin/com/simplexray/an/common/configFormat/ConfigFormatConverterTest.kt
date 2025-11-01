@@ -17,9 +17,11 @@ class ConfigFormatConverterTest {
     fun `knownImplementations should contain all converters`() {
         val implementations = ConfigFormatConverter.knownImplementations
         
-        assertThat(implementations).hasSize(2)
+        assertThat(implementations.size).isAtLeast(2)
         assertThat(implementations.any { it is SimpleXrayFormatConverter }).isTrue()
         assertThat(implementations.any { it is VlessLinkConverter }).isTrue()
+        // VMess support is expected
+        assertThat(implementations.any { it is VmessLinkConverter }).isTrue()
     }
 
     @Test

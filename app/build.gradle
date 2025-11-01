@@ -42,8 +42,36 @@ android {
         }
         externalNativeBuild {
             ndkBuild {
+                // Package name for native code
                 arguments "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=."
+
+                // Ultimate NDK Performance Optimizations
+                // Compiler optimizations: -O3 for maximum speed, -Os for size
+                arguments "APP_CFLAGS+=-O3 -ffast-math -fomit-frame-pointer -fno-stack-protector"
+                arguments "APP_CFLAGS+=-fvisibility=hidden -fvisibility-inlines-hidden"
+                arguments "APP_CFLAGS+=-ftree-vectorize -fvectorize"
+                arguments "APP_CFLAGS+=-flto -fuse-ld=lld"
+
+                // Linker optimizations
                 arguments "APP_LDFLAGS+=-Wl,--build-id=none"
+                arguments "APP_LDFLAGS+=-Wl,--gc-sections -Wl,--strip-all"
+                arguments "APP_LDFLAGS+=-Wl,-O3 -Wl,--as-needed"
+                arguments "APP_LDFLAGS+=-Wl,--icf=all -Wl,--lto-O3"
+                arguments "APP_LDFLAGS+=-flto"
+
+                // C++ optimizations
+                arguments "APP_CPPFLAGS+=-O3 -ffast-math -fno-rtti -fno-exceptions"
+                arguments "APP_CPPFLAGS+=-std=c++17 -fvisibility=hidden"
+
+                // Platform specific optimizations
+                arguments "NDK_TOOLCHAIN_VERSION=clang"
+                arguments "APP_STL=c++_shared"
+
+                // ARM64 specific optimizations
+                arguments "APP_CFLAGS_arm64-v8a=-march=armv8-a+crypto+crc -mtune=cortex-a76"
+
+                // x86_64 specific optimizations
+                arguments "APP_CFLAGS_x86_64=-march=x86-64 -mtune=intel -msse4.2 -mpopcnt"
             }
         }
         targetSdk 35
@@ -70,6 +98,15 @@ android {
                     getDefaultProguardFile('proguard-android-optimize.txt'),
                     'proguard-rules.pro'
             )
+
+            // Optimize for performance
+            crunchPngs true
+            zipAlignEnabled true
+
+            // NDK optimization flags
+            ndk {
+                debugSymbolLevel 'NONE'
+            }
         }
         debug {
             minifyEnabled false
@@ -81,6 +118,9 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+
+        // Incremental compilation
+        incremental = true
     }
 
     def propsFile = rootProject.file('store.properties')
@@ -114,7 +154,30 @@ android {
 
     packagingOptions {
         jniLibs {
-            useLegacyPackaging true
+            useLegacyPackaging false
+            keepDebugSymbols.clear()
+        }
+
+        // Exclude unnecessary files for smaller APK
+        resources {
+            excludes += [
+                    'META-INF/DEPENDENCIES',
+                    'META-INF/LICENSE',
+                    'META-INF/LICENSE.txt',
+                    'META-INF/license.txt',
+                    'META-INF/NOTICE',
+                    'META-INF/NOTICE.txt',
+                    'META-INF/notice.txt',
+                    'META-INF/ASL2.0',
+                    'META-INF/*.kotlin_module',
+                    'META-INF/versions/**',
+                    'kotlin/**',
+                    '**/*.kotlin_metadata',
+                    '**/*.kotlin_builtins',
+                    '**/*.pro',
+                    '**/*.kotlin_module',
+                    'DebugProbesKt.bin'
+            ]
         }
     }
 
@@ -127,6 +190,17 @@ android {
     ndkVersion versionProps.NDK_VERSION
     kotlinOptions {
         jvmTarget = '11'
+
+        // Kotlin compiler performance optimizations
+        freeCompilerArgs += [
+                '-opt-in=kotlin.RequiresOptIn',
+                '-Xjvm-default=all',
+                '-Xbackend-threads=0',  // Use all available CPU cores
+        ]
+
+        // Additional optimizations
+        allWarningsAsErrors = false
+        suppressWarnings = false
     }
 
     splits {

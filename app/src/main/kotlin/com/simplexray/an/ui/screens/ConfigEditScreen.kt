@@ -3,25 +3,32 @@ package com.simplexray.an.ui.screens
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -56,6 +63,8 @@ import com.simplexray.an.ui.util.bracketMatcherTransformation
 import com.simplexray.an.viewmodel.ConfigEditUiEvent
 import com.simplexray.an.viewmodel.ConfigEditViewModel
 import kotlinx.coroutines.flow.collectLatest
+import org.json.JSONArray
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,6 +156,16 @@ fun ConfigEditScreen(
                 .padding(top = paddingValues.calculateTopPadding())
                 .verticalScroll(scrollState)
         ) {
+            AdvancedTransportTlsEditor(
+                configText = configTextFieldValue.text,
+                onApply = { updated ->
+                    // Replace editor content with updated JSON (preserve caret at end)
+                    viewModel.onConfigContentChange(
+                        TextFieldValue(text = updated, selection = TextRange(updated.length))
+                    )
+                }
+            )
+            Spacer(Modifier.height(12.dp))
             TextField(value = filename,
                 onValueChange = { v ->
                     viewModel.onFilenameChange(v)
@@ -213,4 +232,284 @@ fun ConfigEditScreen(
             )
         }
     })
+}
+
+@Composable
+private fun AdvancedTransportTlsEditor(
+    configText: String,
+    onApply: (String) -> Unit,
+) {
+    // Parse current config stream settings
+    var network by remember(configText) { mutableStateOf("tcp") }
+    var tlsEnabled by remember(configText) { mutableStateOf(false) }
+    var sni by remember(configText) { mutableStateOf("") }
+    var alpn by remember(configText) { mutableStateOf("") }
+    var fingerprint by remember(configText) { mutableStateOf("") }
+
+    var wsPath by remember(configText) { mutableStateOf("") }
+    var wsHost by remember(configText) { mutableStateOf("") }
+
+    var grpcService by remember(configText) { mutableStateOf("") }
+    var grpcMulti by remember(configText) { mutableStateOf(true) }
+
+    var httpHost by remember(configText) { mutableStateOf("") }
+    var httpPath by remember(configText) { mutableStateOf("") }
+
+    var quicSecurity by remember(configText) { mutableStateOf("") }
+
+    var protocolLabel by remember { mutableStateOf("tcp") }
+    var showProtoMenu by remember { mutableStateOf(false) }
+
+    // REALITY (VLESS) fields
+    var useReality by remember(configText) { mutableStateOf(false) }
+    var realityServerName by remember(configText) { mutableStateOf("") }
+    var realityPublicKey by remember(configText) { mutableStateOf("") }
+    var realityShortId by remember(configText) { mutableStateOf("") }
+    var realitySpiderX by remember(configText) { mutableStateOf("/") }
+
+    LaunchedEffect(configText) {
+        runCatching {
+            val root = JSONObject(configText)
+            val outbound = findPrimaryOutbound(root) ?: return@runCatching
+            val stream = outbound.optJSONObject("streamSettings") ?: JSONObject()
+            val net = stream.optString("network", "tcp")
+            network = net
+            protocolLabel = when (net) {
+                "http" -> "http (h2)"
+                else -> net
+            }
+            val security = stream.optString("security", "")
+            tlsEnabled = security.equals("tls", true)
+            stream.optJSONObject("tlsSettings")?.let { tls ->
+                sni = tls.optString("serverName", "")
+                val alpnArr = tls.optJSONArray("alpn")
+                alpn = if (alpnArr != null) (0 until alpnArr.length()).joinToString(",") { i -> alpnArr.getString(i) } else ""
+                fingerprint = tls.optString("fingerprint", "")
+            }
+            stream.optJSONObject("wsSettings")?.let { ws ->
+                wsPath = ws.optString("path", "")
+                wsHost = ws.optJSONObject("headers")?.optString("Host", "") ?: ""
+            }
+            stream.optJSONObject("grpcSettings")?.let { g ->
+                grpcService = g.optString("serviceName", "")
+                grpcMulti = g.optBoolean("multiMode", true)
+            }
+            stream.optJSONObject("httpSettings")?.let { h ->
+                val hostArr = h.optJSONArray("host")
+                httpHost = if (hostArr != null && hostArr.length() > 0) hostArr.getString(0) else ""
+                httpPath = h.optString("path", "")
+            }
+            stream.optJSONObject("quicSettings")?.let { q ->
+                quicSecurity = q.optString("security", "")
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text("Advanced Transport / TLS", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+
+        // Network selector
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = protocolLabel,
+                onValueChange = {},
+                modifier = Modifier.weight(1f),
+                label = { Text("Network") },
+                readOnly = true,
+                trailingIcon = {
+                    IconButton(onClick = { showProtoMenu = true }) {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                }
+            )
+            DropdownMenu(expanded = showProtoMenu, onDismissRequest = { showProtoMenu = false }) {
+                listOf("tcp", "ws", "grpc", "http (h2)", "quic").forEach { item ->
+                    DropdownMenuItem(text = { Text(item) }, onClick = {
+                        protocolLabel = item
+                        network = if (item == "http (h2)") "http" else item
+                        showProtoMenu = false
+                    })
+                }
+            }
+            OutlinedButton(onClick = {
+                // Apply to JSON
+                val updated = runCatching { applyAdvancedSettings(configText, network, tlsEnabled, sni, alpn, fingerprint, wsPath, wsHost, grpcService, grpcMulti, httpHost, httpPath, quicSecurity, useReality, realityServerName, realityPublicKey, realityShortId, realitySpiderX) }.getOrNull()
+                if (updated != null) onApply(updated)
+            }) { Text("Apply") }
+        }
+
+        // Quick presets
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = {
+                network = "ws"; protocolLabel = "ws"; tlsEnabled = true; sni = "example.com"; wsPath = "/ws"; wsHost = "cdn.example.com"; useReality = false
+            }) { Text("WS CDN") }
+            OutlinedButton(onClick = {
+                network = "grpc"; protocolLabel = "grpc"; tlsEnabled = true; grpcService = "grpc"; useReality = false
+            }) { Text("gRPC") }
+            OutlinedButton(onClick = {
+                network = "http"; protocolLabel = "http (h2)"; tlsEnabled = true; httpPath = "/"; useReality = false
+            }) { Text("H2") }
+            OutlinedButton(onClick = {
+                useReality = true; tlsEnabled = false; network = "tcp"; protocolLabel = "tcp"; fingerprint = "chrome"; realitySpiderX = "/"
+            }) { Text("REALITY") }
+        }
+
+        // TLS toggle and fields
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = if (tlsEnabled) "Enabled" else "Disabled",
+                onValueChange = {},
+                label = { Text("TLS") },
+                readOnly = true,
+                modifier = Modifier.weight(1f),
+                trailingIcon = {
+                    IconButton(onClick = { tlsEnabled = !tlsEnabled }) {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                }
+            )
+            OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SNI / ServerName") }, modifier = Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(value = alpn, onValueChange = { alpn = it }, label = { Text("ALPN (comma)") }, modifier = Modifier.weight(1f))
+            OutlinedTextField(value = fingerprint, onValueChange = { fingerprint = it }, label = { Text("uTLS Fingerprint") }, modifier = Modifier.weight(1f))
+        }
+
+        if (useReality) {
+            Text("REALITY (VLESS)", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = realityServerName, onValueChange = { realityServerName = it }, label = { Text("serverName (SNI)") }, modifier = Modifier.weight(1f))
+                OutlinedTextField(value = realityPublicKey, onValueChange = { realityPublicKey = it }, label = { Text("publicKey") }, modifier = Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = realityShortId, onValueChange = { realityShortId = it }, label = { Text("shortId") }, modifier = Modifier.weight(1f))
+                OutlinedTextField(value = realitySpiderX, onValueChange = { realitySpiderX = it }, label = { Text("spiderX") }, modifier = Modifier.weight(1f))
+            }
+        }
+
+        when (network) {
+            "ws" -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(value = wsPath, onValueChange = { wsPath = it }, label = { Text("WS Path") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = wsHost, onValueChange = { wsHost = it }, label = { Text("WS Host header") }, modifier = Modifier.weight(1f))
+                }
+            }
+            "grpc" -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(value = grpcService, onValueChange = { grpcService = it }, label = { Text("gRPC serviceName") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = if (grpcMulti) "multi" else "unary", onValueChange = {}, label = { Text("Mode") }, readOnly = true, modifier = Modifier.weight(1f), trailingIcon = {
+                        IconButton(onClick = { grpcMulti = !grpcMulti }) { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
+                    })
+                }
+            }
+            "http" -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(value = httpHost, onValueChange = { httpHost = it }, label = { Text("HTTP Host") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = httpPath, onValueChange = { httpPath = it }, label = { Text("HTTP Path") }, modifier = Modifier.weight(1f))
+                }
+            }
+            "quic" -> {
+                OutlinedTextField(value = quicSecurity, onValueChange = { quicSecurity = it }, label = { Text("QUIC Security") }, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+private fun findPrimaryOutbound(root: JSONObject): JSONObject? {
+    val arr = root.optJSONArray("outbounds") ?: return null
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val proto = o.optString("protocol", "")
+        if (proto !in listOf("freedom", "blackhole", "dns")) return o
+    }
+    return null
+}
+
+private fun applyAdvancedSettings(
+    configText: String,
+    network: String,
+    tlsEnabled: Boolean,
+    sni: String?,
+    alpn: String?,
+    fingerprint: String?,
+    wsPath: String?,
+    wsHost: String?,
+    grpcService: String?,
+    grpcMulti: Boolean,
+    httpHost: String?,
+    httpPath: String?,
+    quicSecurity: String?,
+    useReality: Boolean,
+    realityServerName: String?,
+    realityPublicKey: String?,
+    realityShortId: String?,
+    realitySpiderX: String?,
+): String {
+    val root = JSONObject(configText)
+    val outbound = findPrimaryOutbound(root) ?: return configText
+    val stream = outbound.optJSONObject("streamSettings") ?: JSONObject().also { outbound.put("streamSettings", it) }
+
+    // network mapping
+    stream.put("network", network)
+
+    // TLS
+    if (tlsEnabled && !useReality) {
+        stream.put("security", "tls")
+        val tls = stream.optJSONObject("tlsSettings") ?: JSONObject().also { stream.put("tlsSettings", it) }
+        if (!sni.isNullOrBlank()) tls.put("serverName", sni) else tls.remove("serverName")
+        val alpnList = alpn?.split(',')?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+        if (alpnList.isNotEmpty()) tls.put("alpn", JSONArray().apply { alpnList.forEach { put(it) } }) else tls.remove("alpn")
+        if (!fingerprint.isNullOrBlank()) tls.put("fingerprint", fingerprint) else tls.remove("fingerprint")
+        // Clear REALITY if switching back
+        stream.remove("realitySettings")
+    } else if (!useReality) {
+        stream.remove("security")
+        stream.remove("tlsSettings")
+        stream.remove("realitySettings")
+    }
+
+    // REALITY (only valid for VLESS outbound)
+    if (useReality && outbound.optString("protocol", "") == "vless") {
+        stream.put("security", "reality")
+        stream.remove("tlsSettings")
+        val r = stream.optJSONObject("realitySettings") ?: JSONObject().also { stream.put("realitySettings", it) }
+        r.put("show", false)
+        if (!fingerprint.isNullOrBlank()) r.put("fingerprint", fingerprint) else r.remove("fingerprint")
+        if (!realityServerName.isNullOrBlank()) r.put("serverName", realityServerName) else r.remove("serverName")
+        if (!realityPublicKey.isNullOrBlank()) r.put("publicKey", realityPublicKey) else r.remove("publicKey")
+        if (!realityShortId.isNullOrBlank()) r.put("shortId", realityShortId) else r.remove("shortId")
+        if (!realitySpiderX.isNullOrBlank()) r.put("spiderX", realitySpiderX) else r.remove("spiderX")
+    }
+
+    // Clear transport-specific blocks first
+    stream.remove("wsSettings"); stream.remove("grpcSettings"); stream.remove("httpSettings"); stream.remove("quicSettings")
+
+    when (network) {
+        "ws" -> {
+            val ws = JSONObject()
+            if (!wsPath.isNullOrBlank()) ws.put("path", wsPath)
+            if (!wsHost.isNullOrBlank()) ws.put("headers", JSONObject().apply { put("Host", wsHost) })
+            stream.put("wsSettings", ws)
+        }
+        "grpc" -> {
+            val g = JSONObject()
+            if (!grpcService.isNullOrBlank()) g.put("serviceName", grpcService)
+            g.put("multiMode", grpcMulti)
+            stream.put("grpcSettings", g)
+        }
+        "http" -> {
+            val h = JSONObject()
+            if (!httpHost.isNullOrBlank()) h.put("host", JSONArray().apply { put(httpHost) })
+            if (!httpPath.isNullOrBlank()) h.put("path", httpPath)
+            stream.put("httpSettings", h)
+        }
+        "quic" -> {
+            val q = JSONObject()
+            if (!quicSecurity.isNullOrBlank()) q.put("security", quicSecurity)
+            stream.put("quicSettings", q)
+        }
+    }
+
+    return root.toString(2)
 }

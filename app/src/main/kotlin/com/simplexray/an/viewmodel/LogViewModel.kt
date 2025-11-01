@@ -121,9 +121,11 @@ class LogViewModel(application: Application) :
             }
         }
         viewModelScope.launch {
-            logEntries.collect { entries ->
-                _hasLogsToExport.value = entries.isNotEmpty() && logFileManager.logFile.exists()
-            }
+            combine(logEntries, systemLogEntries) { service, system ->
+                val hasService = service.isNotEmpty() && logFileManager.logFile.exists()
+                val hasSystem = system.isNotEmpty() || logFileManager.systemLogFile.exists()
+                hasService || hasSystem
+            }.collect { _hasLogsToExport.value = it }
         }
         viewModelScope.launch {
             combine(
@@ -291,6 +293,12 @@ class LogViewModel(application: Application) :
                                 if (systemLogsList.size > 1000) {
                                     systemLogsList.removeAt(systemLogsList.lastIndex)
                                 }
+                                // Persist to file for later crash analysis
+                                try {
+                                    logFileManager.appendSystemLog(logLine)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed to persist system log line", e)
+                                }
                                 withContext(Dispatchers.Main) {
                                     _systemLogEntries.value = systemLogsList.toList()
                                 }
@@ -325,6 +333,40 @@ class LogViewModel(application: Application) :
 
     fun getLogFile(): File {
         return logFileManager.logFile
+    }
+
+    fun getSystemLogFile(): File {
+        return logFileManager.systemLogFile
+    }
+
+    fun buildExportArchive(): File? {
+        return try {
+            val context = getApplication<Application>()
+            val cacheDir = context.cacheDir
+            val timestamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                .format(java.util.Date())
+            val outFile = File(cacheDir, "logs-$timestamp.zip")
+
+            val sources = mutableListOf<Pair<File, String>>()
+            val service = getLogFile()
+            val system = getSystemLogFile()
+            if (service.exists() && service.length() > 0) sources += service to "service_log.txt"
+            if (system.exists() && system.length() > 0) sources += system to "system_logcat.txt"
+
+            if (sources.isEmpty()) return null
+
+            java.util.zip.ZipOutputStream(outFile.outputStream()).use { zos ->
+                sources.forEach { (file, entryName) ->
+                    zos.putNextEntry(java.util.zip.ZipEntry(entryName))
+                    file.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
+            }
+            outFile
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to build export archive", e)
+            null
+        }
     }
 
     override fun onCleared() {

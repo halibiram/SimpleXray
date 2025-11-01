@@ -193,9 +193,8 @@ jobs:
           fi
 
       - name: Send APK File to Telegram
-        if: always() && steps.apk_info.outputs.apk_path != ''
+        if: always()
         run: |
-          APK_PATH="${{ steps.apk_info.outputs.apk_path }}"
           BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
 
@@ -204,29 +203,40 @@ jobs:
             exit 0
           fi
 
+          # ARM64 APK'sını bul (daha küçük, 50MB sınırına girer)
+          APK_PATH=$(find apks/ -name "*arm64-v8a*.apk" -type f 2>/dev/null | head -n 1)
+
           if [ ! -f "$APK_PATH" ]; then
-            echo "❌ APK dosyası bulunamadı: $APK_PATH"
-            ls -lah apks/ || echo "apks/ klasörü bulunamadı"
-            exit 1
+            echo "⚠️  ARM64 APK dosyası bulunamadı, GitHub release linkini gönderiliyor..."
+            
+            # Fallback: GitHub release linkini gönder
+            RELEASE_LINK="https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+            CAPTION="📦 *SimpleXray APK - Build Complete*\n\n⬇️ *Download from Release:*\n$RELEASE_LINK\n\n👤 *Actor:* ${{ github.actor }}\n🔨 *Commit:* \`${{ steps.apk_info.outputs.commit_sha }}\`\n⏰ *Time:* $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            
+            RESPONSE=$(curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -d "{\"chat_id\": \"$CHAT_ID\", \"text\": \"$CAPTION\", \"parse_mode\": \"Markdown\", \"disable_web_page_preview\": true}" \
+              "https://api.telegram.org/bot$BOT_TOKEN/sendMessage")
+          else
+            APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
+            echo "📎 ARM64 APK dosyası Telegram'a gönderiliyor..."
+            echo "Dosya: $APK_PATH"
+            echo "Boyut: $APK_SIZE"
+
+            RESPONSE=$(curl -s -X POST \
+              -F "chat_id=$CHAT_ID" \
+              -F "document=@$APK_PATH" \
+              -F "caption=📦 *SimpleXray APK - Build Successful*\n\n📊 *Size:* $APK_SIZE\n🔨 *Commit:* \`${{ steps.apk_info.outputs.commit_sha }}\`\n👤 *Actor:* ${{ github.actor }}\n\n🔗 [View Release](https://github.com/${{ github.repository }}/releases)" \
+              -F "parse_mode=Markdown" \
+              "https://api.telegram.org/bot$BOT_TOKEN/sendDocument")
           fi
-
-          echo "📎 APK dosyası Telegram'a gönderiliyor..."
-          echo "Dosya: $APK_PATH"
-          echo "Boyut: $(du -h "$APK_PATH" | cut -f1)"
-
-          RESPONSE=$(curl -s -X POST \
-            -F "chat_id=$CHAT_ID" \
-            -F "document=@$APK_PATH" \
-            -F "caption=📦 *SimpleXray APK - Build Successful*\n\n🔗 [View Release](https://github.com/${{ github.repository }}/releases)" \
-            -F "parse_mode=Markdown" \
-            "https://api.telegram.org/bot$BOT_TOKEN/sendDocument")
 
           echo "Response: $RESPONSE"
 
           if echo "$RESPONSE" | grep -q '"ok":true'; then
-            echo "✅ APK dosyası başarıyla gönderildi"
+            echo "✅ Telegram'a başarıyla gönderildi"
           else
-            echo "❌ APK dosyası gönderilemedi"
+            echo "❌ Telegram'a gönderilemedi"
             echo "Response Details: $RESPONSE"
           fi
 

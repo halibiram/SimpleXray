@@ -52,35 +52,31 @@ fun rememberMainScreenCallbacks(
 
     val onPerformExport: () -> Unit = {
         scope.launch {
-            val logFile = logViewModel.getLogFile()
-            if (logFile.exists() && logViewModel.logEntries.value.isNotEmpty()) {
+            val archive = logViewModel.buildExportArchive()
+            if (archive != null && archive.exists()) {
                 try {
-                    val fileUri =
-                        FileProvider.getUriForFile(
-                            applicationContext,
-                            "com.simplexray.an.fileprovider",
-                            logFile
-                        )
-                    val shareIntent = Intent(Intent.ACTION_SEND)
-                    shareIntent.setType("text/plain")
-                    shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri)
-                    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    val chooserIntent =
-                        Intent.createChooser(
-                            shareIntent,
-                            applicationContext.getString(R.string.export)
-                        )
-                    mainViewModel.shareIntent(chooserIntent, applicationContext.packageManager)
-                } catch (e: IllegalArgumentException) {
-                    Log.e(
-                        "MainActivity",
-                        "Error getting Uri for file using FileProvider during export.",
-                        e
+                    val fileUri = FileProvider.getUriForFile(
+                        applicationContext,
+                        "com.simplexray.an.fileprovider",
+                        archive
                     )
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_STREAM, fileUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val chooser = Intent.createChooser(
+                        shareIntent,
+                        applicationContext.getString(R.string.export)
+                    )
+                    mainViewModel.shareIntent(chooser, applicationContext.packageManager)
+                } catch (e: IllegalArgumentException) {
+                    Log.e("MainActivity", "Error getting Uri for export archive", e)
                     mainViewModel.showExportFailedSnackbar()
                 }
             } else {
-                Log.w("MainActivity", "Export log file is null, empty, or no logs in adapter.")
+                Log.w("MainActivity", "No logs available to export")
+                mainViewModel.showExportFailedSnackbar()
             }
         }
     }

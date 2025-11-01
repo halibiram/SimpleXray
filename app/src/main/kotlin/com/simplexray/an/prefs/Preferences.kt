@@ -253,6 +253,24 @@ class Preferences(context: Context) {
             setValueInProvider(CONFIG_FILES_ORDER, jsonList)
         }
 
+    var configTags: Map<String, List<String>>
+        get() {
+            val json = getPrefData(CONFIG_TAGS).first
+            return json?.let {
+                try {
+                    val type = object : TypeToken<Map<String, List<String>>>() {}.type
+                    gson.fromJson<Map<String, List<String>>>(it, type)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error deserializing CONFIG_TAGS Map<String, List<String>>", e)
+                    emptyMap()
+                }
+            } ?: emptyMap()
+        }
+        set(value) {
+            val json = gson.toJson(value)
+            setValueInProvider(CONFIG_TAGS, json)
+        }
+
     var connectivityTestTarget: String
         get() = getPrefData(CONNECTIVITY_TEST_TARGET).first
             ?: context1.getString(R.string.connectivity_test_url)
@@ -373,6 +391,7 @@ class Preferences(context: Context) {
         const val STREAMING_PLATFORM_CONFIGS: String = "StreamingPlatformConfigs"
         const val STREAMING_OPTIMIZATION_ENABLED: String = "StreamingOptimizationEnabled"
         const val SELECTED_STREAMING_PLATFORM: String = "SelectedStreamingPlatform"
+        const val CONFIG_TAGS: String = "ConfigTags"
         private const val TAG = "Preferences"
     }
 }
