@@ -48,6 +48,10 @@ class LogViewModel(application: Application) :
         _searchQuery.value = query
     }
 
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
     private val _hasLogsToExport = MutableStateFlow(false)
     val hasLogsToExport: StateFlow<Boolean> = _hasLogsToExport.asStateFlow()
 

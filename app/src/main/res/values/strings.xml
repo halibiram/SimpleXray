@@ -203,6 +203,13 @@
     <string name="network_metered">Metered Connection</string>
     <string name="network_roaming">Roaming</string>
 
+    <!-- Config Management -->
+    <string name="edit">Edit</string>
+    <string name="rename">Rename</string>
+    <string name="copy">Copy</string>
+    <string name="tags">Tags</string>
+    <string name="delete">Delete</string>
+
     <!-- Advanced Features -->
     <string name="protocol_optimization">Protocol Optimization</string>
     <string name="http3_support">HTTP/3 (QUIC) Support</string>

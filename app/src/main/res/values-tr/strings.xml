@@ -203,6 +203,13 @@
     <string name="network_metered">Olculen Baglanti</string>
     <string name="network_roaming">Roaming</string>
 
+    <!-- Config Management -->
+    <string name="edit">Duzenle</string>
+    <string name="rename">Yeniden Adlandir</string>
+    <string name="copy">Kopyala</string>
+    <string name="tags">Etiketler</string>
+    <string name="delete">Sil</string>
+
     <!-- Gelismis Ozellikler -->
     <string name="protocol_optimization">Protokol Optimizasyonu</string>
     <string name="http3_support">HTTP/3 (QUIC) Destegi</string>
