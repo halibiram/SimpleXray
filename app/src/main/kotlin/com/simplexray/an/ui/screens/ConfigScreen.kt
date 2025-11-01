@@ -234,7 +234,7 @@ fun ConfigScreen(
                                             copyText.value = file.name.removeSuffix(".json") + "_copy"
                                             showCopyDialog.value = file
                                         })
-                                        DropdownMenuItem(text = { Text(stringResource(R.string.tags)) }, onClick = {
+                                        DropdownMenuItem(text = { Text("Tags") }, onClick = {
                                             itemMenuExpanded.value = false
                                             tagsText.value = (tagsMap[file.name] ?: emptyList()).joinToString(",")
                                             showTagsDialog.value = file
