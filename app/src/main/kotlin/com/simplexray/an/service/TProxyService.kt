@@ -28,6 +28,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
@@ -187,6 +188,7 @@ class TProxyService : VpnService() {
                 stopXray()
                 return
             }
+            copyFrameInsertAssetIfMissing(libraryDir)
             val xrayPath = "$libraryDir/libxray.so"
             val configContent = File(selectedConfigPath).readText()
             val apiPort = findAvailablePort(extractPortsFromJson(configContent)) ?: return
@@ -263,10 +265,46 @@ class TProxyService : VpnService() {
         return processBuilder
     }
 
+    private fun copyFrameInsertAssetIfMissing(libraryDir: String) {
+        val targetFile = File(applicationContext.filesDir, FRAME_INSERT_FILENAME)
+        if (targetFile.exists()) {
+            Log.d(TAG, "FrameInsert asset already exists at ${targetFile.absolutePath}")
+            return
+        }
+
+        val sourceFile = File(libraryDir, FRAME_INSERT_FILENAME)
+        if (sourceFile.exists()) {
+            runCatching {
+                sourceFile.inputStream().use { input ->
+                    targetFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }.onSuccess {
+                Log.d(TAG, "Copied FrameInsert asset to ${targetFile.absolutePath}")
+                return
+            }.onFailure {
+                Log.e(TAG, "Failed to copy FrameInsert asset from native library", it)
+            }
+        }
+
+        runCatching {
+            applicationContext.assets.open(FRAME_INSERT_FILENAME).use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }.onSuccess {
+            Log.d(TAG, "Copied FrameInsert asset from APK assets to ${targetFile.absolutePath}")
+        }.onFailure {
+            Log.w(TAG, "Unable to provision FrameInsert asset", it)
+        }
+    }
+
     private fun stopXray() {
         Log.d(TAG, "stopXray called with keepExecutorAlive=" + false)
-        serviceScope.cancel()
-        Log.d(TAG, "CoroutineScope cancelled.")
+        serviceScope.coroutineContext.cancelChildren()
+        Log.d(TAG, "CoroutineScope children cancelled.")
 
         xrayProcess?.destroy()
         xrayProcess = null
@@ -406,6 +444,7 @@ class TProxyService : VpnService() {
         const val EXTRA_LOG_DATA: String = "log_data"
         private const val TAG = "VpnService"
         private const val BROADCAST_DELAY_MS: Long = 3000
+        private const val FRAME_INSERT_FILENAME = "FrameInsert"
 
         init {
             System.loadLibrary("hev-socks5-tunnel")

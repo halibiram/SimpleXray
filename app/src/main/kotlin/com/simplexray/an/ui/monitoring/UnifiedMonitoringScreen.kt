@@ -11,11 +11,10 @@ import com.simplexray.an.performance.model.MetricsHistory
 import com.simplexray.an.performance.monitor.Bottleneck
 import com.simplexray.an.protocol.visualization.*
 import com.simplexray.an.ui.performance.MonitoringDashboard
-import com.simplexray.an.ui.visualization.NetworkTopologyView
-import com.simplexray.an.ui.visualization.TimeSeriesChart
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import kotlin.math.roundToInt
 
 /**
  * Unified monitoring screen combining performance monitoring and network visualization
