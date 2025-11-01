@@ -83,6 +83,13 @@ fun LogScreen(
         }
     }
 
+    // Auto-scroll for live system logcat stream
+    LaunchedEffect(filteredSystemLogs, logType) {
+        if (logType == LogViewModel.LogType.SYSTEM && filteredSystemLogs.isNotEmpty()) {
+            runCatching { listState.animateScrollToItem(0) }
+        }
+    }
+
     LaunchedEffect(filteredEntries) {
         if (filteredEntries.isNotEmpty() && isInitialLoad.value && logType == LogViewModel.LogType.SERVICE) {
             listState.animateScrollToItem(0)
@@ -250,7 +257,47 @@ fun LogEntryItem(logEntry: String) {
                 // Rest of the message (TAG: MESSAGE)
                 if (parts.size >= 6) {
                     append(" ")
-                    append(parts[5])
+                    // Enhance error highlighting by error type keywords
+                    val message = parts[5]
+                    val keywords = listOf(
+                        // Critical crash indicators
+                        "FATAL EXCEPTION" to errorColor,
+                        "AndroidRuntime" to errorColor,
+                        "ANR" to errorColor,
+                        "OutOfMemoryError" to errorColor,
+                        // Common exception types
+                        "java.lang.NullPointerException" to warningColor,
+                        "NullPointerException" to warningColor,
+                        "IllegalArgumentException" to warningColor,
+                        "IllegalStateException" to warningColor,
+                        "IndexOutOfBoundsException" to warningColor,
+                        // Stacktrace marker
+                        "Caused by:" to infoColor,
+                        "at " to verboseColor,
+                    )
+
+                    var idx = 0
+                    while (idx < message.length) {
+                        // Find the next matching keyword and color it
+                        val match = keywords
+                            .mapNotNull { (kw, color) ->
+                                val i = message.indexOf(kw, startIndex = idx)
+                                if (i >= 0) Triple(i, kw, color) else null
+                            }
+                            .minByOrNull { it.first }
+
+                        if (match == null) {
+                            append(message.substring(idx))
+                            break
+                        } else {
+                            val (i, kw, color) = match
+                            if (i > idx) append(message.substring(idx, i))
+                            withStyle(SpanStyle(color = color, fontFamily = FontFamily.Monospace)) {
+                                append(kw)
+                            }
+                            idx = i + kw.length
+                        }
+                    }
                 }
             } else {
                 // Fallback for non-standard format

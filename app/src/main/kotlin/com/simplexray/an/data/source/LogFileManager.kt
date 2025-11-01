@@ -13,11 +13,14 @@ import java.io.RandomAccessFile
 
 class LogFileManager(context: Context) {
     val logFile: File
+    val systemLogFile: File
 
     init {
         val filesDir = context.filesDir
         this.logFile = File(filesDir, LOG_FILE_NAME)
-        Log.d(TAG, "Log file path: " + logFile.absolutePath)
+        this.systemLogFile = File(filesDir, SYSTEM_LOG_FILE_NAME)
+        Log.d(TAG, "Log file path: ${logFile.absolutePath}")
+        Log.d(TAG, "System log file path: ${systemLogFile.absolutePath}")
     }
 
     @Synchronized
@@ -54,6 +57,42 @@ class LogFileManager(context: Context) {
             }
         } catch (e: IOException) {
             Log.e(TAG, "Error reading log file", e)
+            return null
+        }
+        return logContent.toString()
+    }
+
+    @Synchronized
+    fun appendSystemLog(logEntry: String) {
+        try {
+            FileWriter(systemLogFile, true).use { fileWriter ->
+                PrintWriter(fileWriter).use { printWriter ->
+                    printWriter.println(logEntry)
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Error appending system log to file", e)
+        } finally {
+            checkAndTruncateSystemLogFile()
+        }
+    }
+
+    fun readSystemLogs(): String? {
+        val logContent = StringBuilder()
+        if (!systemLogFile.exists()) {
+            return ""
+        }
+        try {
+            FileReader(systemLogFile).use { fileReader ->
+                BufferedReader(fileReader).use { bufferedReader ->
+                    var line: String?
+                    while (bufferedReader.readLine().also { line = it } != null) {
+                        logContent.append(line).append("\n")
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Error reading system log file", e)
             return null
         }
         return logContent.toString()
@@ -142,9 +181,71 @@ class LogFileManager(context: Context) {
         }
     }
 
+    @Synchronized
+    private fun checkAndTruncateSystemLogFile() {
+        if (!systemLogFile.exists()) {
+            return
+        }
+        val currentSize = systemLogFile.length()
+        if (currentSize <= MAX_LOG_SIZE_BYTES) return
+
+        try {
+            val startByteToKeep = currentSize - TRUNCATE_SIZE_BYTES
+            RandomAccessFile(systemLogFile, "rw").use { raf ->
+                raf.seek(startByteToKeep)
+                val firstLineToKeepStartPos: Long
+                val firstPartialOrFullLine = raf.readLine()
+                if (firstPartialOrFullLine != null) {
+                    firstLineToKeepStartPos = raf.filePointer
+                } else {
+                    clearSystemLogs()
+                    return
+                }
+                raf.channel.use { sourceChannel ->
+                    val tempFile = File(systemLogFile.parentFile, "$SYSTEM_LOG_FILE_NAME.tmp")
+                    FileOutputStream(tempFile).use { fos ->
+                        fos.channel.use { destChannel ->
+                            val bytesToTransfer = sourceChannel.size() - firstLineToKeepStartPos
+                            sourceChannel.transferTo(firstLineToKeepStartPos, bytesToTransfer, destChannel)
+                        }
+                    }
+                    if (systemLogFile.delete()) {
+                        if (!tempFile.renameTo(systemLogFile)) {
+                            Log.e(TAG, "Failed to rotate system log file")
+                            tempFile.delete()
+                        }
+                    } else {
+                        Log.e(TAG, "Failed to delete original system log during truncation")
+                        tempFile.delete()
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Error truncating system log file", e)
+            clearSystemLogs()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Security exception truncating system log file", e)
+            clearSystemLogs()
+        }
+    }
+
+    @Synchronized
+    fun clearSystemLogs() {
+        if (systemLogFile.exists()) {
+            try {
+                FileWriter(systemLogFile, false).use { fileWriter ->
+                    fileWriter.write("")
+                }
+            } catch (e: IOException) {
+                Log.e(TAG, "Failed to clear system log file", e)
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "LogFileManager"
         private const val LOG_FILE_NAME = "app_log.txt"
+        private const val SYSTEM_LOG_FILE_NAME = "system_logcat.txt"
         private const val MAX_LOG_SIZE_BYTES = (10 * 1024 * 1024).toLong()
         private const val TRUNCATE_SIZE_BYTES = (5 * 1024 * 1024).toLong()
     }
