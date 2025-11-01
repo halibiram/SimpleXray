@@ -28,6 +28,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
@@ -265,8 +266,8 @@ class TProxyService : VpnService() {
 
     private fun stopXray() {
         Log.d(TAG, "stopXray called with keepExecutorAlive=" + false)
-        serviceScope.cancel()
-        Log.d(TAG, "CoroutineScope cancelled.")
+        serviceScope.coroutineContext.cancelChildren()
+        Log.d(TAG, "CoroutineScope children cancelled.")
 
         xrayProcess?.destroy()
         xrayProcess = null

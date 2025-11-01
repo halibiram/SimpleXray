@@ -25,7 +25,7 @@ import java.io.RandomAccessFile
  */
 class PerformanceMonitor(
     private val context: Context,
-    private val updateInterval: Long = 1000, // milliseconds
+    private var updateInterval: Long = 1000, // milliseconds
     private var coreStatsClient: CoreStatsClient? = null
 ) {
     private val scope = CoroutineScope(Dispatchers.Default + Job())
@@ -95,7 +95,13 @@ class PerformanceMonitor(
      * Update interval
      */
     fun setUpdateInterval(interval: Long) {
-        if (interval != updateInterval) {
+        if (interval <= 0 || interval == updateInterval) {
+            return
+        }
+
+        updateInterval = interval
+
+        if (isRunning) {
             stop()
             start()
         }
