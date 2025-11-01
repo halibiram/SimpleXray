@@ -11,7 +11,10 @@ object ConfigUtils {
     @Throws(JSONException::class)
     fun formatConfigContent(content: String): String {
         val jsonObject = JSONObject(content)
-        (jsonObject["log"] as? JSONObject)?.apply {
+        val logObject = (jsonObject["log"] as? JSONObject) ?: JSONObject().also {
+            jsonObject.put("log", it)
+        }
+        logObject.apply {
             if (has("access") && optString("access") != "none") {
                 remove("access")
                 Log.d(TAG, "Removed log.access")
@@ -19,6 +22,10 @@ object ConfigUtils {
             if (has("error") && optString("error") != "none") {
                 remove("error")
                 Log.d(TAG, "Removed log.error")
+            }
+            if (optString("loglevel") != "debug") {
+                put("loglevel", "debug")
+                Log.d(TAG, "Set log.loglevel to debug")
             }
         }
         var formattedContent = jsonObject.toString(2)
@@ -39,6 +46,16 @@ object ConfigUtils {
 
         jsonObject.put("api", apiObject)
         jsonObject.put("stats", JSONObject())
+
+        val logObject = if (jsonObject.has("log")) {
+            jsonObject.getJSONObject("log")
+        } else {
+            JSONObject().also { jsonObject.put("log", it) }
+        }
+        if (logObject.optString("loglevel") != "debug") {
+            logObject.put("loglevel", "debug")
+            Log.d(TAG, "Ensured log.loglevel is set to debug for injected config")
+        }
 
         // Preserve existing policy if present
         val policyObject = if (jsonObject.has("policy")) {

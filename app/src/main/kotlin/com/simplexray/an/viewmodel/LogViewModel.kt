@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Collections
+import java.util.Locale
 
 private const val TAG = "LogViewModel"
 
@@ -65,6 +66,13 @@ class LogViewModel(application: Application) :
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()
 
     private var logcatProcess: Process? = null
+    private val relevantLogKeywords = listOf(
+        "xray",
+        "libxray",
+        "tproxy",
+        "simplexray",
+        "vpnservice"
+    )
 
     enum class LogType {
         SERVICE, SYSTEM
@@ -252,9 +260,21 @@ class LogViewModel(application: Application) :
 
                 // Read logcat with threadtime format for better categorization
                 val packageName = getApplication<Application>().packageName
-                logcatProcess = Runtime.getRuntime().exec(
-                    arrayOf("logcat", "-v", "threadtime", "*:V")
+                val logcatCommand = arrayOf(
+                    "logcat",
+                    "-b",
+                    "main",
+                    "-b",
+                    "system",
+                    "-b",
+                    "crash",
+                    "-b",
+                    "events",
+                    "-v",
+                    "threadtime",
+                    "*:V"
                 )
+                logcatProcess = Runtime.getRuntime().exec(logcatCommand)
 
                 val reader = logcatProcess?.inputStream?.bufferedReader()
                 val systemLogsList = mutableListOf<String>()
@@ -264,10 +284,7 @@ class LogViewModel(application: Application) :
                     while (it.readLine().also { line = it } != null) {
                         line?.let { logLine ->
                             // Filter logs to show only app package and system errors
-                            if (logLine.contains(packageName) ||
-                                logLine.contains("AndroidRuntime") ||
-                                logLine.contains("System.err") ||
-                                logLine.contains("FATAL")) {
+                            if (isRelevantSystemLog(logLine, packageName)) {
 
                                 systemLogsList.add(0, logLine)
                                 // Keep only last 1000 lines
@@ -291,6 +308,19 @@ class LogViewModel(application: Application) :
         logcatProcess?.destroy()
         logcatProcess = null
         Log.d(TAG, "Logcat stopped")
+    }
+
+    private fun isRelevantSystemLog(logLine: String, packageName: String): Boolean {
+        if (logLine.contains(packageName)) {
+            return true
+        }
+        if (logLine.contains("AndroidRuntime") ||
+            logLine.contains("System.err") ||
+            logLine.contains("FATAL")) {
+            return true
+        }
+        val normalized = logLine.lowercase(Locale.ROOT)
+        return relevantLogKeywords.any { keyword -> normalized.contains(keyword) }
     }
 
     fun getLogFile(): File {
