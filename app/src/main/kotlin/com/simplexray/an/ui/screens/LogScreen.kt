@@ -21,6 +21,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -106,6 +107,19 @@ fun LogScreen(
             )
         }
 
+        // Search
+        Row(modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp)) {
+            val q by logViewModel.searchQuery.collectAsStateWithLifecycle()
+            OutlinedTextField(
+                value = q,
+                onValueChange = { logViewModel.setSearchQuery(it) },
+                label = { Text("Search logs") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
         // Log Level Filters (only for System Logcat)
         if (logType == LogViewModel.LogType.SYSTEM) {
             Row(
@@ -142,6 +156,19 @@ fun LogScreen(
 
         // Log Content
         val currentLogs = if (logType == LogViewModel.LogType.SERVICE) filteredEntries else filteredSystemLogs
+
+        // Quick filters
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("SNI", "serverName=", "ALPN", "alpn=", "reality", "xtls", "ws", "grpc", "http", "quic").forEach { key ->
+                FilterChip(selected = false, onClick = { logViewModel.setSearchQuery(key) }, label = { Text(key) })
+            }
+        }
 
         if (currentLogs.isEmpty()) {
             Box(

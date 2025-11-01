@@ -133,6 +133,17 @@ class MainViewModel(application: Application) :
 
     private val _selectedConfigFile = MutableStateFlow<File?>(null)
     val selectedConfigFile: StateFlow<File?> = _selectedConfigFile.asStateFlow()
+    // Tags per config file (filename -> tags)
+    private val _configTags = MutableStateFlow<Map<String, List<String>>>(prefs.configTags)
+    val configTags: StateFlow<Map<String, List<String>>> = _configTags.asStateFlow()
+
+    fun setTagsFor(filename: String, tags: List<String>) {
+        val clean = tags.map { it.trim() }.filter { it.isNotBlank() }
+        val newMap = _configTags.value.toMutableMap()
+        if (clean.isEmpty()) newMap.remove(filename) else newMap[filename] = clean
+        _configTags.value = newMap
+        prefs.configTags = newMap
+    }
 
     private val _geoipDownloadProgress = MutableStateFlow<String?>(null)
     val geoipDownloadProgress: StateFlow<String?> = _geoipDownloadProgress.asStateFlow()
@@ -678,6 +689,54 @@ class MainViewModel(application: Application) :
     fun updateSelectedConfigFile(file: File?) {
         _selectedConfigFile.value = file
         prefs.selectedConfigPath = file?.absolutePath
+    }
+    fun renameConfigFile(file: File, newNameWithoutExt: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val content = file.readText()
+                val newFile = File(file.parentFile, "$newNameWithoutExt.json")
+                val ok = fileManager.renameConfigFile(file, newFile, content)
+                if (ok) {
+                    refreshConfigFileList()
+                    // migrate tags
+                    val map = _configTags.value.toMutableMap()
+                    val old = file.name
+                    val new = newFile.name
+                    if (map.containsKey(old)) {
+                        map[new] = map.remove(old) ?: emptyList()
+                        prefs.configTags = map
+                        _configTags.value = map
+                    }
+                }
+                withContext(Dispatchers.Main) { onDone(ok) }
+            } catch (e: Exception) {
+                Log.e(TAG, "renameConfigFile failed", e)
+                withContext(Dispatchers.Main) { onDone(false) }
+            }
+        }
+    }
+    fun duplicateConfigFile(file: File, newNameWithoutExt: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val content = file.readText()
+                val newFile = File(file.parentFile, "$newNameWithoutExt.json")
+                if (newFile.exists()) {
+                    withContext(Dispatchers.Main) { onDone(false) }
+                    return@launch
+                }
+                newFile.writeText(content)
+                // Update order: insert after current
+                val order = prefs.configFilesOrder.toMutableList()
+                val idx = order.indexOf(file.name)
+                if (idx >= 0) order.add(idx + 1, newFile.name) else order.add(newFile.name)
+                prefs.configFilesOrder = order
+                refreshConfigFileList()
+                withContext(Dispatchers.Main) { onDone(true) }
+            } catch (e: Exception) {
+                Log.e(TAG, "duplicateConfigFile failed", e)
+                withContext(Dispatchers.Main) { onDone(false) }
+            }
+        }
     }
 
     fun updateConnectivityTestTarget(target: String) {

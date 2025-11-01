@@ -24,7 +24,13 @@
         android:banner="@mipmap/ic_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.Material3.DynamicColors.DayNight.NoActionBar">
+        android:theme="@style/Theme.Material3.DynamicColors.DayNight.NoActionBar"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:supportsRtl="true"
+        tools:targetApi="tiramisu">
         <provider
             android:name="com.simplexray.an.prefs.PrefsProvider"
             android:authorities="com.simplexray.an.prefsprovider"
@@ -67,11 +73,13 @@
 
         <activity
             android:name="com.simplexray.an.activity.MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
             android:enableOnBackInvokedCallback="true"
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustPan"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="unspecified"
             tools:targetApi="tiramisu">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
