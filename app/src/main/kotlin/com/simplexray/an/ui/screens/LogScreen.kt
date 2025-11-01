@@ -121,7 +121,7 @@ fun LogScreen(
             val q by logViewModel.searchQuery.collectAsStateWithLifecycle()
             OutlinedTextField(
                 value = q,
-                onValueChange = { logViewModel.setSearchQuery(it) },
+                onValueChange = { logViewModel.onSearchQueryChange(it) },
                 label = { Text("Search logs") },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -173,7 +173,7 @@ fun LogScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             listOf("SNI", "serverName=", "ALPN", "alpn=", "reality", "xtls", "ws", "grpc", "http", "quic").forEach { key ->
-                FilterChip(selected = false, onClick = { logViewModel.setSearchQuery(key) }, label = { Text(key) })
+                FilterChip(selected = false, onClick = { logViewModel.onSearchQueryChange(key) }, label = { Text(key) })
             }
         }
 
