@@ -130,7 +130,7 @@ fun ConfigScreen(
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
         ) {
             val allTags = tagsMap.values.flatten().distinct().sorted()
             allTags.forEach { tag ->
