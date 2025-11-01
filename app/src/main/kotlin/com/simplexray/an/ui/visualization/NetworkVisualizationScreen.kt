@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import com.simplexray.an.protocol.visualization.*
 import com.simplexray.an.viewmodel.NetworkVisualizationViewModel
 import kotlin.math.max
@@ -33,7 +35,11 @@ import kotlin.math.max
 @Composable
 fun NetworkVisualizationScreen(
     onBackClick: () -> Unit = {},
-    viewModel: NetworkVisualizationViewModel = viewModel()
+    viewModel: NetworkVisualizationViewModel = run {
+        val app = LocalContext.current.applicationContext as android.app.Application
+        val factory = com.simplexray.an.viewmodel.NetworkVisualizationViewModelFactory(app)
+        viewModel(factory = factory)
+    }
 ) {
     val topology by viewModel.topology.collectAsState()
     val latencyHistory by viewModel.latencyHistory.collectAsState()
@@ -293,13 +299,14 @@ private fun NetworkTopologyGraph(
     }
 
     // Node labels (overlay)
+    val density = LocalDensity.current
     Box(modifier = modifier) {
         topology.nodes.forEach { node ->
             Column(
                 modifier = Modifier
                     .offset(
-                        x = (node.position.x - 50).dp,
-                        y = (node.position.y + 50).dp
+                        x = with(density) { (node.position.x - 50f).toDp() },
+                        y = with(density) { (node.position.y + 50f).toDp() }
                     )
                     .width(100.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -524,7 +531,7 @@ private fun TimeSeriesGraph(
 
             drawPath(
                 path = path,
-                color = Color(timeSeries.color),
+                color = Color(timeSeries.color.toULong()),
                 style = Stroke(width = 3f, cap = StrokeCap.Round)
             )
 
@@ -535,7 +542,7 @@ private fun TimeSeriesGraph(
 
                 if (index == points.size - 1) {
                     drawCircle(
-                        color = Color(timeSeries.color),
+                        color = Color(timeSeries.color.toULong()),
                         radius = 6f,
                         center = Offset(x, y)
                     )
