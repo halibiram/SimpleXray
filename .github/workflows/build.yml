@@ -120,6 +120,20 @@ jobs:
       - name: Build Release APK
         run: ./gradlew assembleRelease
 
+      - name: List Build Outputs
+        run: |
+          echo "== app/build summary =="
+          ls -lah app/build || true
+          echo
+          echo "== outputs/ directory tree (top levels) =="
+          find app/build/outputs -maxdepth 2 -type d -print 2>/dev/null || true
+          echo
+          echo "== Candidate APK files =="
+          find app/build/outputs -name "*.apk" -type f -exec ls -lh {} \; 2>/dev/null || true
+          echo
+          echo "== Candidate AAB files =="
+          find app/build/outputs -name "*.aab" -type f -exec ls -lh {} \; 2>/dev/null || true
+
       - name: Find and Copy APKs
         id: find_apk
         run: |
