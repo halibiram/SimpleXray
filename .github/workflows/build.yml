@@ -121,18 +121,31 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Find and Copy APKs
+        id: find_apk
         run: |
           mkdir -p apks
-          # Be robust across AGP output path changes; search under outputs/apk
+          # Search all possible APK locations (AGP can vary output paths)
+          FOUND=0
           if [ -d app/build/outputs/apk/release ]; then
-            find app/build/outputs/apk/release -name "*.apk" -type f -exec cp {} apks/ \;
-          else
-            echo "release folder not found; searching all apk outputs"
-            find app/build/outputs/apk -name "*.apk" -type f -exec cp {} apks/ \; || true
+            find app/build/outputs/apk/release -name "*.apk" -type f -exec cp {} apks/ \; && FOUND=1 || true
+          fi
+          if [ $FOUND -eq 0 ]; then
+            echo "Searching all outputs/apk recursively..."
+            COUNT=$(find app/build/outputs/apk -name "*.apk" -type f | wc -l || echo 0)
+            if [ "$COUNT" -gt 0 ]; then
+              find app/build/outputs/apk -name "*.apk" -type f -exec cp {} apks/ \;
+              FOUND=1
+            fi
           fi
           ls -lah apks || true
+          if [ $FOUND -eq 1 ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Upload Artifacts
+        if: steps.find_apk.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: simplexray-apks
