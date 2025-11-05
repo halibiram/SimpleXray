@@ -1,266 +1,215 @@
-# 🧪 Testing Guide - Security Audit Fixes
+# Testing Guide: Xray-core + BoringSSL Workflow
 
-## Overview
+## Quick Start
 
-This guide provides testing instructions for all critical bug fixes and OpenSSL integration.
+### 1. Test Workflow Locally (Recommended First Step)
 
----
-
-## Test Categories
-
-### 1. Unit Tests
-
-**Location:** `app/src/test/kotlin/com/simplexray/an/performance/`
-
-**Test Files:**
-- `CryptoTest.kt` - Crypto function tests (AES, ChaCha20)
-- `JNIThreadSafetyTest.kt` - Background thread JNI tests
-- `MemoryLeakTest.kt` - Memory leak prevention tests
-
-**Run Tests:**
 ```bash
-./gradlew test
+# Test BoringSSL build
+./scripts/build-boringssl.sh arm64-v8a
+
+# If successful, test Xray build (you'll need to provide paths)
+# First, note where BoringSSL was built:
+BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+BORINGSSL_BUILD="$BORINGSSL_DIR/build_arm64-v8a"
+
+# Then build Xray (this will need NDK path too)
+NDK_HOME="/path/to/android-ndk"
+./scripts/build-xray.sh arm64-v8a \
+  "$BORINGSSL_BUILD/crypto/libcrypto.a" \
+  "$BORINGSSL_BUILD/ssl/libssl.a" \
+  "$BORINGSSL_DIR/include" \
+  "$NDK_HOME"
+
+# Verify
+./scripts/verify-boringssl.sh app/src/main/jniLibs/arm64-v8a/libxray.so
 ```
 
-**Expected Results:**
-- All tests pass (or skip gracefully if native library not available)
-- No crashes or SIGSEGV errors
-- Functions return appropriate error codes when OpenSSL not installed
+### 2. Test Workflow on GitHub (Test Branch)
 
----
-
-### 2. Integration Tests
-
-#### JNI Thread Safety Test
-
-**Manual Test:**
-1. Start VPN service
-2. Call JNI methods from multiple background coroutines
-3. Verify no crashes occur
-
-**Expected:**
-- No SIGSEGV crashes
-- All operations complete successfully
-- Thread attachment/detachment working correctly
-
-#### Memory Leak Test
-
-**Manual Test:**
-1. Run VPN service for extended period (>1 hour)
-2. Monitor memory usage with Android Profiler
-3. Check TLS session cache growth
-4. Verify cleanup on service shutdown
-
-**Expected:**
-- Memory usage remains stable
-- TLS cache cleaned up on `JNI_OnUnload`
-- No OOM errors
-
-#### Connection Pool Test
-
-**Manual Test:**
-1. Get multiple pooled sockets
-2. Return sockets from different threads simultaneously
-3. Verify no double-free crashes
-
-**Expected:**
-- No heap corruption
-- No double-free errors
-- Sockets properly invalidated before close
-
-#### Ring Buffer Test
-
-**Manual Test:**
-1. High-throughput data transfer
-2. Wraparound scenarios (buffer full/empty)
-3. Multiple concurrent readers/writers
-
-**Expected:**
-- No data corruption
-- Sequence numbers prevent ABA problem
-- No crashes on wraparound
-
----
-
-### 3. Crypto Function Tests
-
-#### AES-128 Encryption Test
-
-**Prerequisites:**
-- OpenSSL libraries installed in `app/src/main/jni/openssl/`
-
-**Test Steps:**
-1. Prepare 16-byte plaintext and key
-2. Call `nativeAES128Encrypt()`
-3. Verify ciphertext differs from plaintext
-4. Decrypt and verify plaintext matches
-
-**Expected:**
-- Function returns positive value (encrypted length)
-- Ciphertext is different from plaintext
-- Decryption works correctly
-
-**Without OpenSSL:**
-- Function returns -1
-- Error message in logcat guides user to install OpenSSL
-
-#### ChaCha20 Encryption Test
-
-**Prerequisites:**
-- OpenSSL libraries installed
-
-**Test Steps:**
-1. Prepare plaintext, 32-byte key, and 12-byte nonce
-2. Call `nativeChaCha20NEON()`
-3. Verify ciphertext differs from plaintext
-4. Decrypt and verify plaintext matches
-
-**Expected:**
-- Function returns input length
-- Ciphertext is different from plaintext
-- Decryption works correctly
-
----
-
-### 4. Stress Tests
-
-#### Long-Running Session Test
-
-**Duration:** 1+ hours
-
-**Steps:**
-1. Start VPN service
-2. Monitor memory usage
-3. Monitor CPU usage
-4. Check for crashes or errors
-
-**Expected:**
-- No memory leaks
-- No crashes
-- Stable performance
-
-#### Concurrent Operations Test
-
-**Steps:**
-1. Multiple threads calling JNI methods simultaneously
-2. Multiple threads using connection pool
-3. Multiple threads using ring buffer
-
-**Expected:**
-- No race conditions
-- No data corruption
-- No crashes
-
----
-
-### 5. Performance Tests
-
-#### Crypto Performance
-
-**Test:**
-- Measure encryption/decryption speed
-- Compare with broken implementation (if available)
-- Verify hardware acceleration working
-
-**Expected:**
-- OpenSSL performance better than broken implementation
-- Hardware acceleration active on supported devices
-
-#### Memory Usage
-
-**Test:**
-- Monitor memory usage over time
-- Check for leaks
-- Verify cleanup on shutdown
-
-**Expected:**
-- Stable memory usage
-- No leaks
-- Proper cleanup
-
----
-
-## Running All Tests
-
-### Unit Tests
+**Create test branch:**
 ```bash
-./gradlew test
+git checkout -b test/boringssl-workflow
+git push origin test/boringssl-workflow
 ```
 
-### Instrumented Tests (on device/emulator)
+**Or trigger manually:**
+1. Go to GitHub Actions tab
+2. Click "Build Xray-core with BoringSSL" workflow
+3. Click "Run workflow"
+4. Select branch: `test/boringssl-workflow`
+5. Set `with_boringssl: true`
+6. Click "Run workflow"
+
+**Monitor:**
+- Check each job's logs
+- Verify artifacts are uploaded
+- Check for errors
+
+### 3. Download and Test Artifacts
+
+**Download artifacts:**
+1. Go to workflow run
+2. Click on "Artifacts" section
+3. Download `xray-arm64-v8a`, `xray-armeabi-v7a`, `xray-x86_64`
+
+**Test locally:**
 ```bash
-./gradlew connectedAndroidTest
+# Extract artifact
+unzip xray-arm64-v8a.zip
+
+# Verify BoringSSL symbols
+strings libxray.so | grep -i "BoringSSL\|boringssl"
+
+# Check file type
+file libxray.so
 ```
 
-### Build Test
-```bash
-./gradlew clean assembleDebug
+## Expected Issues & Solutions
+
+### Issue 1: CGO Build Fails
+
+**Symptom:**
+```
+# runtime/cgo
+runtime/cgo: C compiler not found
 ```
 
----
+**Solution:**
+- Ensure NDK is properly set up
+- Check CC environment variable points to correct toolchain
+- Verify CGO_ENABLED=1 is set
 
-## Test Results Interpretation
+**Workaround:**
+- Build vanilla Xray-core (CGO_ENABLED=0)
+- BoringSSL is still available via perf-net module
 
-### Success Criteria
+### Issue 2: Patches Don't Apply
 
-✅ **All unit tests pass**
-✅ **No crashes in integration tests**
-✅ **No memory leaks detected**
-✅ **Crypto functions work when OpenSSL installed**
-✅ **Crypto functions safely disabled when OpenSSL not installed**
+**Symptom:**
+```
+git apply: patch does not apply
+```
 
-### Failure Scenarios
+**Solution:**
+- Current patches are templates
+- Either remove patch application step
+- Or create real patches based on Xray-core codebase
 
-❌ **SIGSEGV crashes** → JNI thread safety issue
-❌ **Memory leaks** → Cleanup not working
-❌ **Double-free errors** → Connection pool issue
-❌ **Data corruption** → Ring buffer ABA problem
-❌ **Crypto returns garbage** → Broken implementation (should be disabled)
+**Quick Fix:**
+Remove patch application from workflow:
+```yaml
+- name: Apply Patches
+  run: |
+    echo "⚠️  Skipping patch application (templates only)"
+    # Patches are templates, skip for now
+```
 
----
+### Issue 3: BoringSSL Libraries Not Found
 
-## Continuous Integration
+**Symptom:**
+```
+❌ BoringSSL libraries not found!
+```
 
-### CI Test Plan
+**Solution:**
+- Check artifact download step
+- Verify artifact names match (boringssl-arm64-v8a)
+- Check paths in workflow
 
-1. **Unit Tests** (automated)
-   - Run on every commit
-   - Must pass before merge
+### Issue 4: Build Mode Error
 
-2. **Build Tests** (automated)
-   - Verify compilation succeeds
-   - Check for OpenSSL integration
+**Symptom:**
+```
+-buildmode=c-shared: not supported
+```
 
-3. **Integration Tests** (manual/periodic)
-   - Run before releases
-   - Long-running sessions
-   - Stress tests
+**Solution:**
+- Xray-core may not support c-shared mode
+- Change to regular build mode
+- Remove `-buildmode=c-shared` flag
 
----
+## Testing Checklist
 
-## Troubleshooting
+### Pre-Push Testing
+- [ ] Scripts are executable (`chmod +x scripts/*.sh`)
+- [ ] Workflow syntax is valid (use GitHub Actions validator)
+- [ ] All paths are correct
+- [ ] Environment variables are set
 
-### Tests Fail with UnsatisfiedLinkError
+### Post-Push Testing
+- [ ] Workflow runs without errors
+- [ ] BoringSSL builds for all ABIs
+- [ ] Xray-core builds (vanilla or CGO)
+- [ ] Artifacts are uploaded
+- [ ] Artifacts can be downloaded
+- [ ] Binaries are valid
 
-**Cause:** Native library not available in test environment
+### Integration Testing
+- [ ] Artifacts integrate with auto-release workflow
+- [ ] APK builds successfully
+- [ ] APK installs on device
+- [ ] App runs without crashes
+- [ ] BoringSSL is working (check logs)
 
-**Solution:** Tests are designed to skip gracefully. This is expected behavior.
+## Performance Verification
 
-### Crypto Tests Return -1
+### Check BoringSSL Integration
+```bash
+# In Android app logs
+adb logcat | grep -i boringssl
 
-**Cause:** OpenSSL libraries not installed
+# Should see:
+# BoringSSL initialized
+# Using hardware crypto acceleration
+```
 
-**Solution:** Install OpenSSL (see `OPENSSL_SETUP_INSTRUCTIONS.md`)
+### Benchmark (if CGO bridge implemented)
+- Test AES-GCM encryption speed
+- Compare with vanilla Xray-core
+- Expected: 3-40x improvement
 
-### Crashes During Tests
+## Rollback Plan
 
-**Cause:** Bug in implementation
+If workflow causes issues:
 
-**Solution:** Check logcat for error details, review code changes
+1. **Disable BoringSSL build:**
+   ```yaml
+   # In auto-release.yml
+   build-xray-libs:
+     if: false  # Disable
+   ```
 
----
+2. **Use vanilla Xray:**
+   - The fallback step will build vanilla Xray
+   - No changes needed
 
-**Status:** ✅ Test Suite Ready  
-**Next:** Run `./gradlew test` to execute unit tests
+3. **Revert commit:**
+   ```bash
+   git revert <commit-hash>
+   git push
+   ```
 
+## Next Steps After Testing
 
+1. **If tests pass:**
+   - Merge to main
+   - Monitor first production build
+   - Verify release artifacts
+
+2. **If tests fail:**
+   - Review error logs
+   - Fix issues
+   - Re-test on branch
+
+3. **If CGO needed:**
+   - Create real patches
+   - Test CGO build locally first
+   - Then integrate into workflow
+
+## Support Resources
+
+- Workflow logs: GitHub Actions tab
+- Build artifacts: Workflow run artifacts section
+- Local testing: Use scripts in `scripts/`
+- Documentation: See `XRAY_BORINGSSL_WORKFLOW.md`

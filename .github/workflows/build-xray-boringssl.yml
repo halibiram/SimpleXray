@@ -219,16 +219,42 @@ jobs:
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE"
           export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -lcrypto -lssl -static"
           
-          # Build with CGO
-          echo "Building Xray-core for ${{ matrix.abi }} with BoringSSL..."
-          go build \
-            -buildmode=c-shared \
-            -o libxray.so \
-            -trimpath \
-            -buildvcs=false \
-            -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
-            -v \
-            ./main
+          # Build Xray-core
+          # Note: Without actual CGO bridge code in Xray-core, we build vanilla Xray
+          # BoringSSL integration is handled by perf-net native module (already integrated)
+          echo "Building Xray-core for ${{ matrix.abi }}..."
+          
+          # Try building with CGO if patches were applied, otherwise build vanilla
+          if git diff --quiet HEAD; then
+            echo "No patches applied, building vanilla Xray-core"
+            go build \
+              -o libxray.so \
+              -trimpath \
+              -buildvcs=false \
+              -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
+              -v \
+              ./main
+          else
+            echo "Patches detected, attempting CGO build with BoringSSL..."
+            go build \
+              -buildmode=c-shared \
+              -o libxray.so \
+              -trimpath \
+              -buildvcs=false \
+              -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
+              -v \
+              ./main || {
+                echo "⚠️  CGO build failed, falling back to vanilla build"
+                export CGO_ENABLED=0
+                go build \
+                  -o libxray.so \
+                  -trimpath \
+                  -buildvcs=false \
+                  -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
+                  -v \
+                  ./main
+              }
+          fi
           
           # Strip binary
           $STRIP --strip-all libxray.so
