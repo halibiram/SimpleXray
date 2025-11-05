@@ -168,8 +168,8 @@ def build_abi(abi_name, abi_config, ndk_path):
     lib_output = LIB_DIR / abi_name
     lib_output.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(build_dir / 'crypto/libcrypto.a', lib_output / 'libcrypto.a')
-    shutil.copy2(build_dir / 'ssl/libssl.a', lib_output / 'libssl.a')
+    shutil.copy2(build_dir / 'libcrypto.a', lib_output / 'libcrypto.a')
+    shutil.copy2(build_dir / 'libssl.a', lib_output / 'libssl.a')
 
     print(f"✓ {abi_name} build complete")
     print(f"  Libraries: {lib_output}/")
