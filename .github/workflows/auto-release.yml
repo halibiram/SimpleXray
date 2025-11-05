@@ -40,11 +40,15 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
+          submodules-recursive: false
 
       - name: Explicit Submodule Update
         run: |
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          git submodule sync --recursive || true
+          git submodule update --init --recursive || {
+            echo "⚠️  Some submodules failed to update, continuing..."
+            # BoringSSL may not be a submodule, that's okay
+          }
 
       - name: Read Versions
         id: version

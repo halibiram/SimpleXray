@@ -42,6 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          submodules-recursive: false
 
       - name: Setup NDK
         run: |
@@ -60,11 +61,26 @@ jobs:
       - name: Build BoringSSL
         run: |
           BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+          
+          # Check if BoringSSL directory exists (may be checked in directly or as submodule)
           if [ ! -d "$BORINGSSL_DIR" ]; then
-            echo "❌ BoringSSL submodule not found!"
+            echo "❌ BoringSSL directory not found at $BORINGSSL_DIR"
+            echo "Attempting to initialize as submodule..."
+            # Try to add as submodule if not exists
+            git submodule add https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" || {
+              echo "⚠️  Could not add BoringSSL submodule. Please ensure it exists in the repository."
+              exit 1
+            }
+          fi
+          
+          # Verify BoringSSL has CMakeLists.txt
+          if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
+            echo "❌ BoringSSL CMakeLists.txt not found!"
+            echo "Directory exists but may not be properly initialized."
             exit 1
           fi
-
+          
+          echo "✅ BoringSSL found at $BORINGSSL_DIR"
           cd "$BORINGSSL_DIR"
           TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           BUILD_DIR="build_${{ matrix.abi }}"
@@ -120,6 +136,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          submodules-recursive: false
 
       - name: Read Versions
         run: |
