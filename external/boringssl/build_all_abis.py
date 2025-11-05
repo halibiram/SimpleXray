@@ -15,18 +15,22 @@ ABIS = {
     'arm64-v8a': {
         'arch': 'aarch64',
         'api_level': '21',
+        'triple': 'aarch64-linux-android',
         'cmake_flags': [
             '-DCMAKE_ANDROID_ARCH_ABI=arm64-v8a',
             '-DCMAKE_SYSTEM_PROCESSOR=aarch64',
+            '-DANDROID_ABI=arm64-v8a',
             '-DOPENSSL_NO_ASM=0',  # Enable assembly optimizations
         ]
     },
     'armeabi-v7a': {
         'arch': 'arm',
         'api_level': '21',
+        'triple': 'armv7a-linux-androideabi',
         'cmake_flags': [
             '-DCMAKE_ANDROID_ARCH_ABI=armeabi-v7a',
             '-DCMAKE_SYSTEM_PROCESSOR=armv7-a',
+            '-DANDROID_ABI=armeabi-v7a',
             '-DCMAKE_ANDROID_ARM_MODE=ON',
             '-DCMAKE_ANDROID_ARM_NEON=ON',
             '-DOPENSSL_NO_ASM=0',
@@ -35,18 +39,22 @@ ABIS = {
     'x86_64': {
         'arch': 'x86_64',
         'api_level': '21',
+        'triple': 'x86_64-linux-android',
         'cmake_flags': [
             '-DCMAKE_ANDROID_ARCH_ABI=x86_64',
             '-DCMAKE_SYSTEM_PROCESSOR=x86_64',
+            '-DANDROID_ABI=x86_64',
             '-DOPENSSL_NO_ASM=0',
         ]
     },
     'x86': {
         'arch': 'i686',
         'api_level': '21',
+        'triple': 'i686-linux-android',
         'cmake_flags': [
             '-DCMAKE_ANDROID_ARCH_ABI=x86',
             '-DCMAKE_SYSTEM_PROCESSOR=i686',
+            '-DANDROID_ABI=x86',
             '-DOPENSSL_NO_ASM=0',
         ]
     }
@@ -436,10 +444,15 @@ def build_abi(abi_name, abi_config, ndk_path):
     clean_source_artifacts()
 
     build_dir = BUILD_DIR / abi_name
-    # Clean build directory to prevent cross-contamination
+    # Clean build directory completely to prevent cross-contamination
     if build_dir.exists():
         print(f"[*] Cleaning previous build for {abi_name}...")
-        shutil.rmtree(build_dir)
+        shutil.rmtree(build_dir, ignore_errors=True)
+        # Ensure it's really gone
+        if build_dir.exists():
+            import time
+            time.sleep(0.5)
+            shutil.rmtree(build_dir, ignore_errors=True)
     build_dir.mkdir(parents=True, exist_ok=True)
 
     toolchain_file = ndk_path / 'build/cmake/android.toolchain.cmake'
@@ -509,6 +522,10 @@ def build_abi(abi_name, abi_config, ndk_path):
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
+    # Build explicit compiler flags with target architecture
+    target_triple = f"{abi_config['triple']}{abi_config['api_level']}"
+    compiler_flags = f"-target {target_triple}"
+
     cmake_args = [
         'cmake',
         f'-G{generator}',
@@ -519,18 +536,22 @@ def build_abi(abi_name, abi_config, ndk_path):
         f'-DCMAKE_BUILD_TYPE=Release',
         '-DCMAKE_POSITION_INDEPENDENT_CODE=ON',
         '-DBUILD_SHARED_LIBS=OFF',
+        f'-DCMAKE_C_FLAGS={compiler_flags}',
+        f'-DCMAKE_CXX_FLAGS={compiler_flags}',
+        f'-DCMAKE_ASM_FLAGS={compiler_flags}',
     ] + abi_config['cmake_flags']
-    
+
     # Add CMAKE_MAKE_PROGRAM if we found ninja.exe
     if cmake_make_program:
         cmake_args.append(f'-DCMAKE_MAKE_PROGRAM={cmake_make_program}')
-    
+
     cmake_args.append(str(BORINGSSL_SRC))
 
     print(f"[*] Configuring CMake for {abi_name}...")
     print(f"  CMake args: {' '.join(cmake_args)}")
+    print(f"  Target: {target_triple}")
     subprocess.run(cmake_args, cwd=build_dir, check=True)
-    
+
     # Verify CMake configuration for all ABIs
     config_log = (build_dir / 'CMakeCache.txt')
     if config_log.exists():
@@ -549,6 +570,16 @@ def build_abi(abi_name, abi_config, ndk_path):
                 f'ANDROID_ABI={abi_name}',
             ]
             abi_found = any(pattern in cache_content for pattern in abi_patterns)
+
+            # Verify compiler flags contain the correct target
+            flags_verified = target_triple in cache_content
+
+            if not flags_verified:
+                print(f"[WARN] ⚠️  Target triple {target_triple} not found in CMakeCache.txt")
+                print(f"[DEBUG] Checking compiler flags...")
+                for line in cache_content.split('\n'):
+                    if 'CMAKE_C_FLAGS' in line or 'CMAKE_CXX_FLAGS' in line:
+                        print(f"        {line.strip()}")
 
             if not abi_found:
                 print(f"[WARN] ⚠️  Could not verify {abi_name} in CMakeCache.txt (this may be normal)")
@@ -574,10 +605,12 @@ def build_abi(abi_name, abi_config, ndk_path):
             elif abi_name == 'x86':
                 arch_verified = 'i686' in cache_content.lower() or 'x86' in cache_content.lower()
 
-            if abi_found and arch_verified:
+            if abi_found and arch_verified and flags_verified:
                 print(f"[OK] CMake configuration verified for {abi_name}")
+            elif abi_found and flags_verified:
+                print(f"[OK] CMake configured for {abi_name} with target {target_triple}")
             elif abi_found:
-                print(f"[OK] CMake ABI configured for {abi_name} (architecture check skipped)")
+                print(f"[OK] CMake ABI configured for {abi_name} (flags check incomplete)")
             else:
                 print(f"[INFO] CMake configuration check incomplete - will verify after build")
 
