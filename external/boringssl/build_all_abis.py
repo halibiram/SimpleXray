@@ -132,6 +132,97 @@ def clone_boringssl():
     except subprocess.CalledProcessError:
         print("[OK] BoringSSL cloned successfully")
 
+def verify_archive_arch(archive_path, target_arch):
+    """Verify that all object files in an archive are compatible with target_arch"""
+    import tempfile
+
+    arch_patterns = {
+        'arm64-v8a': ['aarch64', 'arm64', 'ARM aarch64'],
+        'armeabi-v7a': ['arm', 'ARM, EABI5'],
+        'x86_64': ['x86-64', 'x86_64'],
+        'x86': ['Intel 80386', 'i386', 'i686'],
+    }
+
+    if target_arch not in arch_patterns:
+        print(f"[WARN]  Unknown ABI {target_arch}, skipping verification")
+        return False
+
+    patterns = arch_patterns[target_arch]
+
+    # List all members
+    try:
+        result = subprocess.run(
+            ['ar', 't', str(archive_path)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        members = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+        if not members:
+            print(f"[WARN]  Archive {archive_path.name} is empty!")
+            return False
+
+        # Check a sample of object files
+        temp_dir = Path(tempfile.mkdtemp())
+        try:
+            sample_size = min(5, len([m for m in members if m.endswith('.o')]))
+            object_members = [m for m in members if m.endswith('.o')][:sample_size]
+
+            incompatible_found = False
+            for member in object_members:
+                extract_dir = temp_dir / f"verify_{member}"
+                extract_dir.mkdir()
+
+                try:
+                    subprocess.run(
+                        ['ar', 'x', str(archive_path), member],
+                        cwd=extract_dir,
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
+                    extracted = list(extract_dir.glob('*'))
+                    if extracted:
+                        file_result = subprocess.run(
+                            ['file', str(extracted[0])],
+                            capture_output=True,
+                            text=True,
+                            check=True
+                        )
+                        file_output = file_result.stdout.lower()
+
+                        is_compatible = any(pattern.lower() in file_output for pattern in patterns)
+
+                        if target_arch == 'arm64-v8a':
+                            is_compatible = is_compatible and 'x86-64' not in file_output and 'x86_64' not in file_output
+                        elif target_arch == 'x86_64':
+                            is_compatible = is_compatible and 'arm' not in file_output and 'aarch64' not in file_output
+
+                        if not is_compatible:
+                            print(f"[ERROR] ❌ INCOMPATIBLE: {member} in {archive_path.name}")
+                            print(f"        Expected: {target_arch}, Got: {file_output.strip()}")
+                            incompatible_found = True
+                except Exception as e:
+                    print(f"[WARN]  Could not verify {member}: {e}")
+                finally:
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+
+            if incompatible_found:
+                print(f"[ERROR] ❌ Archive {archive_path.name} contains incompatible object files!")
+                sys.exit(1)
+            else:
+                print(f"   ✓ {archive_path.name} verified - all samples match {target_arch}")
+                return True
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    except Exception as e:
+        print(f"[WARN]  Could not verify archive {archive_path.name}: {e}")
+        return False
+
 def filter_archive_by_arch(archive_path, target_arch):
     """Filter a static library archive to only include object files compatible with target_arch"""
     import tempfile
@@ -186,8 +277,13 @@ def filter_archive_by_arch(archive_path, target_arch):
                 # Find extracted file
                 extracted_files = list(member_extract_dir.glob('*'))
                 if not extracted_files:
-                    # Member might be a directory or special file, assume compatible
-                    compatible_members.append(member)
+                    # Member might be a directory or special file
+                    # For .o files, this is unexpected - be conservative and skip
+                    if member.endswith('.o'):
+                        incompatible_count += 1
+                    else:
+                        # Non-object files (e.g., metadata) can be included
+                        compatible_members.append(member)
                     shutil.rmtree(member_extract_dir, ignore_errors=True)
                     continue
                 
@@ -230,11 +326,11 @@ def filter_archive_by_arch(archive_path, target_arch):
                             elif target_arch == 'x86_64':
                                 is_compatible = is_compatible and 'arm' not in readelf_output and 'aarch64' not in readelf_output
                         else:
-                            # If both fail, assume compatible (better safe than sorry)
-                            is_compatible = True
+                            # If readelf fails, be conservative and reject
+                            is_compatible = False
                     except (subprocess.CalledProcessError, FileNotFoundError):
-                        # If both commands fail, assume compatible
-                        is_compatible = True
+                        # If both commands fail, reject to be safe
+                        is_compatible = False
                 
                 if is_compatible:
                     compatible_members.append(member)
@@ -301,16 +397,48 @@ def filter_archive_by_arch(archive_path, target_arch):
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+def clean_source_artifacts():
+    """Clean any build artifacts from the BoringSSL source directory"""
+    if not BORINGSSL_SRC.exists():
+        return
+
+    # Clean common build artifacts that might contaminate cross-compilation
+    patterns_to_clean = [
+        '**/*.o',      # Object files
+        '**/*.a',      # Static libraries
+        '**/*.so',     # Shared libraries
+        '**/CMakeFiles',  # CMake build artifacts
+        '**/CMakeCache.txt',
+    ]
+
+    cleaned_count = 0
+    for pattern in patterns_to_clean:
+        for item in BORINGSSL_SRC.glob(pattern):
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+                cleaned_count += 1
+            except Exception:
+                pass  # Ignore errors during cleanup
+
+    if cleaned_count > 0:
+        print(f"[*] Cleaned {cleaned_count} build artifact(s) from source directory")
+
 def build_abi(abi_name, abi_config, ndk_path):
     """Build BoringSSL for a specific ABI"""
     print(f"\n{'='*60}")
     print(f"Building BoringSSL for {abi_name}")
     print(f"{'='*60}")
 
+    # Clean source directory artifacts to prevent cross-contamination
+    clean_source_artifacts()
+
     build_dir = BUILD_DIR / abi_name
     # Clean build directory to prevent cross-contamination
     if build_dir.exists():
-        print(f" Cleaning previous build for {abi_name}...")
+        print(f"[*] Cleaning previous build for {abi_name}...")
         shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
 
@@ -403,17 +531,31 @@ def build_abi(abi_name, abi_config, ndk_path):
     print(f"  CMake args: {' '.join(cmake_args)}")
     subprocess.run(cmake_args, cwd=build_dir, check=True)
     
-    # Verify CMake configuration
-    if abi_name == 'arm64-v8a':
-        # Check that CMake configured for correct architecture
-        config_log = (build_dir / 'CMakeCache.txt')
-        if config_log.exists():
-            with open(config_log, 'r') as f:
-                cache_content = f.read()
-                if 'CMAKE_ANDROID_ARCH_ABI:STRING=arm64-v8a' not in cache_content:
-                    print(f"[WARN]  Warning: CMake cache may not have correct ABI setting")
-                if 'aarch64' not in cache_content.lower():
-                    print(f"[WARN]  Warning: CMake may not be configured for aarch64")
+    # Verify CMake configuration for all ABIs
+    config_log = (build_dir / 'CMakeCache.txt')
+    if config_log.exists():
+        with open(config_log, 'r') as f:
+            cache_content = f.read()
+
+            # Verify correct ABI is set
+            expected_abi = f'CMAKE_ANDROID_ARCH_ABI:STRING={abi_name}'
+            if expected_abi not in cache_content:
+                print(f"[ERROR] ❌ CMake not configured for {abi_name}!")
+                print(f"        Expected: {expected_abi}")
+                sys.exit(1)
+
+            # Verify architecture-specific settings
+            if abi_name == 'arm64-v8a' and 'aarch64' not in cache_content.lower():
+                print(f"[ERROR] ❌ CMake not configured for aarch64!")
+                sys.exit(1)
+            elif abi_name == 'armeabi-v7a' and 'armv7' not in cache_content.lower():
+                print(f"[ERROR] ❌ CMake not configured for armv7!")
+                sys.exit(1)
+            elif abi_name == 'x86_64' and 'x86_64' not in cache_content.lower() and 'x86-64' not in cache_content.lower():
+                print(f"[ERROR] ❌ CMake not configured for x86_64!")
+                sys.exit(1)
+
+            print(f"[OK] CMake configuration verified for {abi_name}")
 
     print(f"[*] Building {abi_name}...")
     subprocess.run(build_cmd, cwd=build_dir, check=True)
@@ -430,9 +572,14 @@ def build_abi(abi_name, abi_config, ndk_path):
         sys.exit(1)
 
     # Filter archives to remove incompatible object files
-    print(f"[check] Filtering archives for {abi_name}...")
-    filter_archive_by_arch(libcrypto_path, abi_name)
-    filter_archive_by_arch(libssl_path, abi_name)
+    print(f"[*] Filtering archives for {abi_name}...")
+    crypto_filtered = filter_archive_by_arch(libcrypto_path, abi_name)
+    ssl_filtered = filter_archive_by_arch(libssl_path, abi_name)
+
+    # Verify the filtered archives
+    print(f"[*] Verifying filtered archives...")
+    verify_archive_arch(libcrypto_path, abi_name)
+    verify_archive_arch(libssl_path, abi_name)
 
     # Copy libraries
     lib_output = LIB_DIR / abi_name
