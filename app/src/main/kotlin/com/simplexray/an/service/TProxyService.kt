@@ -157,6 +157,9 @@ class TProxyService : VpnService() {
             try {
                 callbacks.register(callback)
                 AppLogger.d("TProxyService: Callback registered")
+                // Capture binder reference for use in coroutines
+                val binderRef: com.simplexray.an.service.IVpnServiceBinder = this
+                val serviceBinderRef: android.os.IBinder = this
                 // Immediately notify current state
                 handler.post {
                     try {
@@ -168,8 +171,8 @@ class TProxyService : VpnService() {
                             serviceScope.launch {
                                 try {
                                     com.simplexray.an.protocol.streaming.StreamingRepository.onBinderReconnected(
-                                        binder,
-                                        service
+                                        binderRef,
+                                        serviceBinderRef
                                     )
                                 } catch (e: Exception) {
                                     AppLogger.w("TProxyService: Failed to re-register streaming optimization", e)
@@ -180,8 +183,8 @@ class TProxyService : VpnService() {
                             serviceScope.launch {
                                 try {
                                     com.simplexray.an.game.GameOptimizationRepository.onBinderReconnected(
-                                        binder,
-                                        service
+                                        binderRef,
+                                        serviceBinderRef
                                     )
                                 } catch (e: Exception) {
                                     AppLogger.w("TProxyService: Failed to re-register game optimization", e)

@@ -29,7 +29,7 @@ import com.simplexray.an.topology.ForceLayout
 import com.simplexray.an.topology.StabilizedForceLayout
 import com.simplexray.an.topology.Node
 import com.simplexray.an.topology.PositionedNode
-import kotlinx.coroutines.flow.collectAsState
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

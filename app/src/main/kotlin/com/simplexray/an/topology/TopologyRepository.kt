@@ -21,6 +21,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,10 +89,20 @@ class TopologyRepository private constructor(
     private val _topologyFlow = MutableSharedFlow<TopologyGraph>(
         replay = REPLAY_SIZE,
         extraBufferCapacity = EXTRA_BUFFER_CAPACITY,
-        onBufferOverflow = kotlinx.coroutines.flow.BufferOverflow.DROP_OLDEST
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
     
     val topologyFlow: SharedFlow<TopologyGraph> = _topologyFlow
+    
+    /**
+     * Public graph property for compatibility - maps to topologyFlow
+     */
+    val graph: SharedFlow<Pair<List<Node>, List<Edge>>> = 
+        topologyFlow.map { graph -> graph.nodes to graph.edges }.shareIn(
+            scope = repositoryScope,
+            started = SharingStarted.WhileSubscribed(replayExpirationMillis = 0),
+            replay = REPLAY_SIZE
+        )
     
     // Current graph state (immutable snapshot)
     @Volatile
@@ -225,7 +238,12 @@ class TopologyRepository private constructor(
                     service?.linkToDeath(deathRecipient, 0)
                     
                     // Register topology callback - CRITICAL: Re-register on reconnect
-                    val registered = binder!!.registerCallback(topologyCallback)
+                    val currentBinder = binder
+                    val registered = if (currentBinder != null) {
+                        currentBinder.registerCallback(topologyCallback)
+                    } else {
+                        false
+                    }
                     if (registered) {
                         AppLogger.d("$TAG: Topology callback registered successfully")
                         
@@ -307,7 +325,7 @@ class TopologyRepository private constructor(
             return
         }
         
-        while (isActive) {
+        while (repositoryScope.isActive) {
             try {
                 refreshStubIfNeeded()
                 
@@ -698,6 +716,20 @@ class TopologyRepository private constructor(
             AppLogger.w("$TAG: Failed to extract topology from logs", e)
             TopologyGraph(emptyList(), emptyList())
         }
+    }
+    
+    /**
+     * Start topology polling (no-op, starts automatically in init)
+     */
+    fun start() {
+        // Already started in init block
+    }
+    
+    /**
+     * Stop topology polling and cleanup resources
+     */
+    fun stop() {
+        cleanup()
     }
     
     /**

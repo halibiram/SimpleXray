@@ -1,6 +1,7 @@
 package com.simplexray.an.hyper.ui
 
 import androidx.compose.animation.core.*
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,8 +47,8 @@ fun HyperSpeedBar(
     val infiniteTransition = rememberInfiniteTransition(label = "speed_bar")
     
     // Color shift based on throughput (blue -> green -> yellow -> red)
-    val colorShift by infiniteTransition.animateFloat(
-        initialValue = 0f,
+    // Note: This should use animateFloatAsState since it has a target value, not infinite
+    val colorShift by animateFloatAsState(
         targetValue = normalizedThroughput.toFloat(),
         animationSpec = tween(300, easing = FastOutSlowInEasing),
         label = "color_shift"
@@ -57,8 +58,7 @@ fun HyperSpeedBar(
     val burstPulse by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = repeatable(
-            iterations = Int.MAX_VALUE,
+        animationSpec = infiniteRepeatable(
             animation = tween(500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
@@ -69,8 +69,7 @@ fun HyperSpeedBar(
     val quicGlow by infiniteTransition.animateFloat(
         initialValue = 0.3f,
         targetValue = 0.8f,
-        animationSpec = repeatable(
-            iterations = Int.MAX_VALUE,
+        animationSpec = infiniteRepeatable(
             animation = tween(2000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),

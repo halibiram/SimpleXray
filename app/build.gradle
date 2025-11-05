@@ -192,6 +192,7 @@ android {
     buildFeatures {
         compose true
         buildConfig true
+        aidl true
     }
 
     // COMPAT: jvmToolchain(21) requires JDK 21 - required for building this project
@@ -203,7 +204,7 @@ android {
     sourceSets {
         main {
             java {
-                srcDirs 'src/main/java', 'build/generated/source/proto/main/java'
+                srcDirs 'src/main/java', 'build/generated/source/proto/main/java', 'build/generated/source/aidl/debug', 'build/generated/source/aidl/release'
             }
             kotlin {
                 srcDirs 'src/main/kotlin', 'build/generated/source/proto/main/grpckt', 'build/generated/ksp/debug/kotlin', 'build/generated/ksp/release/kotlin'

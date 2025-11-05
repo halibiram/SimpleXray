@@ -9,7 +9,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.simplexray.an.BuildConfig
 import com.simplexray.an.protocol.streaming.StreamingRepository
-import kotlinx.coroutines.flow.collectAsState
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.flow.first
 
 /**

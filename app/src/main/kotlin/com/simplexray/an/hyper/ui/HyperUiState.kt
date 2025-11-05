@@ -31,7 +31,8 @@ data class HyperSnapshot(
 enum class PathStatus {
     STABILIZING, // Green - path is stable
     RACING,      // Yellow - multiple paths racing
-    DROPPING     // Red - paths dropping
+    DROPPING,    // Red - paths dropping
+    UNKNOWN      // Unknown state
 }
 
 @Immutable

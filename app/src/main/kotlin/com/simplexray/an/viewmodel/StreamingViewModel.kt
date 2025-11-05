@@ -40,11 +40,8 @@ class StreamingViewModel(application: Application) : AndroidViewModel(applicatio
     )
     
     // Topology repository for traffic monitoring
-    private val topologyRepository = TopologyRepository(
-        application,
-        GrpcChannelFactory.statsStub(),
-        viewModelScope
-    )
+    private val topologyRepository = TopologyRepository.getInstanceOrNull() ?:
+        TopologyRepository.getInstance(application, GrpcChannelFactory.statsStub(), viewModelScope)
 
     private val _selectedPlatform = MutableStateFlow<StreamingPlatform?>(null)
     val selectedPlatform: StateFlow<StreamingPlatform?> = _selectedPlatform.asStateFlow()

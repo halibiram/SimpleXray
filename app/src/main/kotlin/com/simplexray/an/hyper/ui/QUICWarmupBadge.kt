@@ -40,8 +40,7 @@ fun QUICWarmupBadge(
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.6f,
         targetValue = 1f,
-        animationSpec = repeatable(
-            iterations = Int.MAX_VALUE,
+        animationSpec = infiniteRepeatable(
             animation = tween(1000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),

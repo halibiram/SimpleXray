@@ -132,7 +132,11 @@ class StabilizedForceLayout(
      */
     private suspend fun layoutLoop(nodes: List<Node>, edges: List<Edge>) {
         // Create ticker for fixed timestep (30fps)
-        val ticker = ticker(timestepMs, 0, kotlinx.coroutines.channels.TickerMode.FIXED_DELAY)
+        val ticker = ticker(
+            delayMillis = timestepMs,
+            initialDelayMillis = 0,
+            mode = kotlinx.coroutines.channels.TickerMode.FIXED_DELAY
+        )
         
         try {
             var iteration = 0

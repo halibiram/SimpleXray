@@ -37,7 +37,7 @@ object AdaptiveBitrateStabilizer {
     /**
      * Bitrate tracker for a domain
      */
-    private data class BitrateTracker(
+    internal data class BitrateTracker(
         val domain: String,
         val platform: StreamingRepository.StreamingPlatform,
         var consecutiveDrops: Int = 0,
@@ -88,9 +88,10 @@ object AdaptiveBitrateStabilizer {
         
         // Log bitrate drop event
         LoggerRepository.add(
-            LogEvent.Info(
-                message = "Streaming bitrate drop: $domain ${previousBitrate}bps -> ${currentBitrate}bps (consecutive: ${tracker.consecutiveDrops})",
-                tag = TAG
+            LogEvent.create(
+                severity = LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Streaming bitrate drop: $domain ${previousBitrate}bps -> ${currentBitrate}bps (consecutive: ${tracker.consecutiveDrops})"
             )
         )
     }
@@ -127,9 +128,10 @@ object AdaptiveBitrateStabilizer {
         
         // Log rebuffering event
         LoggerRepository.add(
-            LogEvent.Info(
-                message = "Streaming rebuffer: $domain (${durationMs}ms)",
-                tag = TAG
+            LogEvent.create(
+                severity = LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Streaming rebuffer: $domain (${durationMs}ms)"
             )
         )
     }
@@ -158,9 +160,10 @@ object AdaptiveBitrateStabilizer {
             
             // Log route chain update
             LoggerRepository.add(
-                LogEvent.Info(
-                    message = "Streaming route chain updated: $domain -> $routeChain (instability detected)",
-                    tag = TAG
+                LogEvent.create(
+                    severity = LogEvent.Severity.INFO,
+                    tag = TAG,
+                    message = "Streaming route chain updated: $domain -> $routeChain (instability detected)"
                 )
             )
         }
@@ -185,7 +188,7 @@ object AdaptiveBitrateStabilizer {
     /**
      * Get current tracker for domain
      */
-    fun getTracker(domain: String, platform: StreamingRepository.StreamingPlatform): BitrateTracker? {
+    internal fun getTracker(domain: String, platform: StreamingRepository.StreamingPlatform): BitrateTracker? {
         return bitrateHistory["${platform.name}-$domain"]
     }
 }

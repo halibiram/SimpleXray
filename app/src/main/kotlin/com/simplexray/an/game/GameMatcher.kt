@@ -190,7 +190,7 @@ object GameMatcher {
                 }
             }
         } catch (e: Exception) {
-            AppLogger.d("$TAG: Error checking CIDR for $ip", e)
+            AppLogger.w("$TAG: Error checking CIDR for $ip", e)
         }
         
         return false

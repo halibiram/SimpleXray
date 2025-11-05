@@ -188,7 +188,8 @@ class ConnectionViewModel(
         viewModelScope.launch {
             // Try to stop via binder first
             try {
-                binder?.let {
+                val currentBinder = binder
+                if (currentBinder != null) {
                     // Binder is available, but stopping requires sending intent
                     // The binder will notify us via callback when stopped
                     val intent = Intent(
@@ -196,7 +197,7 @@ class ConnectionViewModel(
                         TProxyService::class.java
                     ).setAction(TProxyService.ACTION_DISCONNECT)
                     uiEventSender(MainViewUiEvent.StartService(intent))
-                } ?: run {
+                } else {
                     // Binder is null, fallback to intent
                     AppLogger.d("ConnectionViewModel: Binder unavailable, using intent fallback")
                     val intent = Intent(
@@ -338,14 +339,19 @@ class ConnectionViewModel(
                     service?.linkToDeath(deathRecipient, 0)
                     
                     // Register callback
-                    val registered = binder!!.registerCallback(stateCallback)
-                    if (registered) {
+                    val currentBinder = binder
+                    val registered = if (currentBinder != null) {
+                        currentBinder.registerCallback(stateCallback)
+                    } else {
+                        false
+                    }
+                    if (registered && currentBinder != null) {
                         AppLogger.d("ConnectionViewModel: Callback registered successfully")
                         
                         // Query current state immediately
                         viewModelScope.launch(Dispatchers.IO) {
                             try {
-                                val isConnected = binder!!.isConnected()
+                                val isConnected = currentBinder.isConnected()
                                 AppLogger.d("ConnectionViewModel: Current service state: $isConnected")
                                 setServiceEnabled(isConnected)
                             } catch (e: RemoteException) {

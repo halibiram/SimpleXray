@@ -8,7 +8,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.draw
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.max
@@ -130,10 +132,17 @@ private fun DrawScope.drawJitterLine(
     )
     
     // Draw fill area (subtle gradient)
-    val fillPath = Path(path)
-    fillPath.lineTo(padding + width, padding + height)
-    fillPath.lineTo(padding, padding + height)
-    fillPath.close()
+    val fillPath = Path().apply {
+        moveTo(padding, firstY)
+        for (i in 1 until pointCount) {
+            val x = padding + i * stepX
+            val y = padding + height * (1f - normalizedHistory[i])
+            lineTo(x, y)
+        }
+        lineTo(padding + width, padding + height)
+        lineTo(padding, padding + height)
+        close()
+    }
     
     drawPath(
         path = fillPath,

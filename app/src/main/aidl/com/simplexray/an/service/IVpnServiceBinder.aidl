@@ -1,5 +1,7 @@
 package com.simplexray.an.service;
 
+import com.simplexray.an.service.IVpnStateCallback;
+
 /**
  * Binder interface for VPN service communication
  * Provides state query and callback registration

@@ -100,8 +100,10 @@ object RoutingRepository {
             // Log binder death
             LoggerRepository.add(
                 com.simplexray.an.logging.LogEvent.Instrumentation(
+                    timestamp = System.currentTimeMillis(),
                     type = com.simplexray.an.logging.LogEvent.InstrumentationType.BINDER_DEATH,
-                    message = "$TAG: Binder died, attempting reconnect"
+                    message = "$TAG: Binder died, attempting reconnect",
+                    vpnState = LoggerRepository.getVpnState()
                 )
             )
             
@@ -174,9 +176,10 @@ object RoutingRepository {
         }
         
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Routing rule added: ${rule.name}",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Routing rule added: ${rule.name}"
             )
         )
     }
@@ -190,9 +193,10 @@ object RoutingRepository {
         }
         
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Routing rule removed: $ruleId",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Routing rule removed: $ruleId"
             )
         )
     }
@@ -207,9 +211,10 @@ object RoutingRepository {
         }
         
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Routing rule updated: ${rule.name}",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Routing rule updated: ${rule.name}"
             )
         )
     }
@@ -221,9 +226,10 @@ object RoutingRepository {
         updateRouteTable { RouteTable.empty() }
         
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "All routing rules cleared",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "All routing rules cleared"
             )
         )
     }
@@ -235,9 +241,10 @@ object RoutingRepository {
         updateRouteTable { RouteTable(rules = rules) }
         
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Applied ${rules.size} routing rules",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Applied ${rules.size} routing rules"
             )
         )
     }
@@ -275,30 +282,32 @@ object RoutingRepository {
                     serviceBinder?.linkToDeath(deathRecipient, 0)
                     
                     // Register routing callback - CRITICAL: Re-register on reconnect
-                    val registered = binder!!.registerCallback(routingCallback)
-                    if (registered) {
-                        AppLogger.d("$TAG: Routing callback registered successfully")
-                        
-                        // Immediately request full routing snapshot
-                        refreshRoutingState()
-                        
-                        // Re-register streaming optimization callback
-                        scope.launch {
-                            com.simplexray.an.protocol.streaming.StreamingRepository.onBinderReconnected(
-                                binder!!,
-                                service
-                            )
+                    val currentBinder = binder
+                    val currentServiceBinder = serviceBinder
+                    if (currentBinder != null && currentServiceBinder != null) {
+                        val registered = currentBinder.registerCallback(routingCallback)
+                        if (registered) {
+                            AppLogger.d("$TAG: Routing callback registered successfully")
+                            
+                            // Immediately request full routing snapshot
+                            scope.launch {
+                                refreshRoutingState()
+                                
+                                // Re-register streaming optimization callback
+                                com.simplexray.an.protocol.streaming.StreamingRepository.onBinderReconnected(
+                                    currentBinder,
+                                    currentServiceBinder
+                                )
+                                
+                                // Re-register game optimization callback
+                                com.simplexray.an.game.GameOptimizationRepository.onBinderReconnected(
+                                    currentBinder,
+                                    currentServiceBinder
+                                )
+                            }
+                        } else {
+                            AppLogger.w("$TAG: Failed to register routing callback")
                         }
-                        
-                        // Re-register game optimization callback
-                        scope.launch {
-                            com.simplexray.an.game.GameOptimizationRepository.onBinderReconnected(
-                                binder!!,
-                                service
-                            )
-                        }
-                    } else {
-                        AppLogger.w("$TAG: Failed to register routing callback")
                     }
                 } catch (e: Exception) {
                     AppLogger.w("$TAG: Error in onServiceConnected", e)
@@ -309,8 +318,16 @@ object RoutingRepository {
             
             override fun onServiceDisconnected(name: ComponentName?) {
                 AppLogger.w("$TAG: Service disconnected")
-                binder?.unregisterCallback(routingCallback)
-                serviceBinder?.unlinkToDeath(deathRecipient, 0)
+                val currentBinder = binder
+                val currentServiceBinder = serviceBinder
+                if (currentBinder != null) {
+                    try {
+                        currentBinder.unregisterCallback(routingCallback)
+                    } catch (e: Exception) {
+                        AppLogger.w("$TAG: Error unregistering callback", e)
+                    }
+                }
+                currentServiceBinder?.unlinkToDeath(deathRecipient, 0)
                 binder = null
                 serviceBinder = null
             }
@@ -337,14 +354,24 @@ object RoutingRepository {
         
         LoggerRepository.add(
             com.simplexray.an.logging.LogEvent.Instrumentation(
+                timestamp = System.currentTimeMillis(),
                 type = com.simplexray.an.logging.LogEvent.InstrumentationType.BINDER_RECONNECT,
-                message = "$TAG: Attempting binder reconnect"
+                message = "$TAG: Attempting binder reconnect",
+                vpnState = LoggerRepository.getVpnState()
             )
         )
         
         // Cleanup old binding
-        binder?.unregisterCallback(routingCallback)
-        serviceBinder?.unlinkToDeath(deathRecipient, 0)
+        val oldBinder = binder
+        val oldServiceBinder = serviceBinder
+        if (oldBinder != null) {
+            try {
+                oldBinder.unregisterCallback(routingCallback)
+            } catch (e: Exception) {
+                AppLogger.w("$TAG: Error unregistering callback during reconnect", e)
+            }
+        }
+        oldServiceBinder?.unlinkToDeath(deathRecipient, 0)
         binder = null
         serviceBinder = null
         
@@ -359,14 +386,16 @@ object RoutingRepository {
         
         // Re-register streaming optimization after reconnect
         // Note: This will be called again in onServiceConnected, but it's safe to call multiple times
-        if (binder != null && serviceBinder != null) {
+        val newBinder = binder
+        val newServiceBinder = serviceBinder
+        if (newBinder != null && newServiceBinder != null) {
             com.simplexray.an.protocol.streaming.StreamingRepository.onBinderReconnected(
-                binder!!,
-                serviceBinder!!
+                newBinder,
+                newServiceBinder
             )
             com.simplexray.an.game.GameOptimizationRepository.onBinderReconnected(
-                binder!!,
-                serviceBinder!!
+                newBinder,
+                newServiceBinder
             )
         }
     }
@@ -404,8 +433,15 @@ object RoutingRepository {
             refreshRoutingState()
             
             // Re-register callback if binder is alive
-            if (binder != null && serviceBinder?.isBinderAlive == true) {
-                binder?.registerCallback(routingCallback)
+            val currentBinder = binder
+            val currentServiceBinder = serviceBinder
+            if (currentBinder != null && currentServiceBinder?.isBinderAlive == true) {
+                try {
+                    currentBinder.registerCallback(routingCallback)
+                } catch (e: Exception) {
+                    AppLogger.w("$TAG: Error re-registering callback on resume", e)
+                    reconnectBinder()
+                }
             } else {
                 // Reconnect if binder is dead
                 reconnectBinder()

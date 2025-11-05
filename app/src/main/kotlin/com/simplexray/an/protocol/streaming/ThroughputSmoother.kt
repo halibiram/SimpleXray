@@ -90,7 +90,7 @@ object ThroughputSmoother {
                 throughputBps // Fallback to raw if no samples after trimming
             }
             
-            AppLogger.d("$TAG: Smoothed throughput for $domain: $rawBps -> $smoothed bps (window: ${window.size})")
+            AppLogger.d("$TAG: Smoothed throughput for $domain: $throughputBps -> $smoothed bps (window: ${window.size})")
             
             return SmoothedThroughput(
                 smoothedBps = smoothed,

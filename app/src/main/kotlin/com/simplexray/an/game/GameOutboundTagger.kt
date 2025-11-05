@@ -68,9 +68,10 @@ object GameOutboundTagger {
         // This ensures BBR pacing, tcp_keepalive, reusePort=true, udpFragment=true
         AppLogger.d("$TAG: Applying priority outbound tag for game domain: $normalized:$port")
         com.simplexray.an.logging.LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Game priority chain applied: $normalized:$port",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Game priority chain applied: $normalized:$port"
             )
         )
         
@@ -80,7 +81,7 @@ object GameOutboundTagger {
         // Optimize outbound change - prevent churn for identical results
         if (!PerformanceOptimizer.optimizeOutboundChange("$normalized:$port", outboundTag)) {
             AppLogger.d("$TAG: Skipping duplicate outbound tag for $normalized:$port")
-            return true // Already applied, skip
+            return@withContext true // Already applied, skip
         }
         
         // Update routing rules to use game-priority for this domain
@@ -157,7 +158,7 @@ object GameOutboundTagger {
                         }
                     }
                     is com.simplexray.an.protocol.routing.AdvancedRouter.RoutingMatcher.PortMatcher -> {
-                        matcher.ports.contains(port)
+                        matcher.ports.any { it.contains(port) }
                     }
                     else -> false
                 }
@@ -176,11 +177,10 @@ object GameOutboundTagger {
                         domains = listOf(domain)
                     ),
                     com.simplexray.an.protocol.routing.AdvancedRouter.RoutingMatcher.PortMatcher(
-                        ports = listOf(port)
+                        ports = listOf(com.simplexray.an.protocol.routing.AdvancedRouter.PortRange.single(port))
                     )
                 ),
-                action = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.PROXY,
-                outboundTag = outboundTag
+                action = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.CustomProxy(outboundTag)
             )
             
             RoutingRepository.addRule(gameRule)
@@ -188,8 +188,13 @@ object GameOutboundTagger {
             AppLogger.d("$TAG: Created routing rule for game domain: $domain:$port")
         } else {
             // Update existing rule to use game-priority outbound
+            val updatedAction = when (val currentAction = existingRule.action) {
+                is com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.CustomProxy -> 
+                    com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.CustomProxy(outboundTag)
+                else -> com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.CustomProxy(outboundTag)
+            }
             val updatedRule = existingRule.copy(
-                outboundTag = outboundTag,
+                action = updatedAction,
                 priority = maxOf(existingRule.priority, 150) // Ensure high priority
             )
             

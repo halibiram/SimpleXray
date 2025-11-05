@@ -208,7 +208,12 @@ class TrafficRepository private constructor(
                     service?.linkToDeath(deathRecipient, 0)
                     
                     // Register callback
-                    val registered = binder!!.registerCallback(trafficCallback)
+                    val currentBinder = binder
+                    val registered = if (currentBinder != null) {
+                        currentBinder.registerCallback(trafficCallback)
+                    } else {
+                        false
+                    }
                     if (registered) {
                         AppLogger.d("$TAG: Traffic callback registered")
                         // Request initial snapshot
@@ -300,7 +305,7 @@ class TrafficRepository private constructor(
             com.simplexray.an.protocol.streaming.StreamingRepository.onThroughput(bpsUp, bpsDown)
         } catch (e: Exception) {
             // Fail silently - streaming optimization is optional
-            AppLogger.d("$TAG: Failed to forward to StreamingRepository", e)
+            AppLogger.w("$TAG: Failed to forward to StreamingRepository", e)
         }
     }
     
@@ -393,7 +398,9 @@ class TrafficRepository private constructor(
      * Get last N samples from ring buffer (thread-safe)
      */
     suspend fun getLastSamples(n: Int): List<TrafficSample> = ringBufferMutex.withLock {
-        return ringBuffer.takeLast(n.coerceAtMost(RING_BUFFER_SIZE))
+        val count = n.coerceAtMost(RING_BUFFER_SIZE).coerceAtMost(ringBuffer.size)
+        if (count <= 0) return emptyList()
+        return ringBuffer.drop(maxOf(0, ringBuffer.size - count))
     }
     
     /**

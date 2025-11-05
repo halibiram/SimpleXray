@@ -12,7 +12,8 @@ import kotlinx.coroutines.launch
 
 class CategoryViewModel(app: Application) : AndroidViewModel(app) {
     private val classifier = DomainClassifier(app)
-    private val topRepo = TopologyRepository(app, GrpcChannelFactory.statsStub(), viewModelScope)
+    private val topRepo = TopologyRepository.getInstanceOrNull() ?: 
+        TopologyRepository.getInstance(app, GrpcChannelFactory.statsStub(), viewModelScope)
     private val _dist = MutableStateFlow<Map<Category, Float>>(emptyMap())
     val dist: StateFlow<Map<Category, Float>> = _dist
 

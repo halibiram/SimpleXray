@@ -58,7 +58,8 @@ class HeatmapRepository(
             repeat(rows * cols) { buffer.addLast(0f) }
 
             // Build a lightweight topology feed locally for category weights
-            val repo = com.simplexray.an.topology.TopologyRepository(context, com.simplexray.an.grpc.GrpcChannelFactory.statsStub(), scope)
+            val repo = com.simplexray.an.topology.TopologyRepository.getInstanceOrNull() ?:
+                com.simplexray.an.topology.TopologyRepository.getInstance(context, com.simplexray.an.grpc.GrpcChannelFactory.statsStub(), scope)
             topologyRepo = repo
             repo.start()
             repo.graph.collect { (nodes, edges) ->

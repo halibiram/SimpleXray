@@ -9,7 +9,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.simplexray.an.BuildConfig
 import com.simplexray.an.game.GameOptimizationRepository
-import kotlinx.coroutines.flow.collectAsState
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.flow.StateFlow
 
 /**

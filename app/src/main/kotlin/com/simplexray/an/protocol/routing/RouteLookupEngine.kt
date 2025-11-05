@@ -1,6 +1,7 @@
 package com.simplexray.an.protocol.routing
 
 import com.simplexray.an.common.AppLogger
+import com.simplexray.an.logging.LoggerRepository
 import com.simplexray.an.protocol.routing.AdvancedRouter.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -168,9 +169,10 @@ object RouteLookupEngine {
             AppLogger.d("$TAG: Rule matched: ${matchedRule.name} for $originalHost")
             
             LoggerRepository.add(
-                com.simplexray.an.logging.LogEvent.Info(
-                    message = "Route match: ${matchedRule.name} -> ${decision.action}",
-                    tag = TAG
+                com.simplexray.an.logging.LogEvent.create(
+                    severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                    tag = TAG,
+                    message = "Route match: ${matchedRule.name} -> ${decision.action}"
                 )
             )
             
@@ -194,9 +196,10 @@ object RouteLookupEngine {
         AppLogger.d("$TAG: Fallback route for $originalHost (${lookupTime}ms)")
         
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Route fallback: $originalHost -> ${fallbackDecision.action}",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Route fallback: $originalHost -> ${fallbackDecision.action}"
             )
         )
         

@@ -527,6 +527,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     
     return input_len;
 #endif
+}
 #endif // !USE_BORINGSSL
     
     // Original broken code (DISABLED):
@@ -627,7 +628,6 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     return input_len;
 #endif
     */
-}
 
 /**
  * Prefetch data into CPU cache
@@ -665,6 +665,4 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEON(JNIEnv *env,
 }
 } // extern "C"
 #endif // !USE_BORINGSSL
-
-extern "C" {
 

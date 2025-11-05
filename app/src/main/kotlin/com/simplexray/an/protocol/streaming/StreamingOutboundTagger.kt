@@ -1,6 +1,7 @@
 package com.simplexray.an.protocol.streaming
 
 import com.simplexray.an.common.AppLogger
+import com.simplexray.an.logging.LoggerRepository
 import com.simplexray.an.perf.PerformanceOptimizer
 import com.simplexray.an.protocol.routing.RoutingRepository
 import com.simplexray.an.xray.XrayConfigPatcher
@@ -63,9 +64,10 @@ object StreamingOutboundTagger {
         // This ensures BBR pacing, tcp_keepalive, reusePort=true
         AppLogger.d("$TAG: Applying priority outbound tag for streaming domain: $normalized")
         LoggerRepository.add(
-            com.simplexray.an.logging.LogEvent.Info(
-                message = "Streaming priority chain applied: $normalized",
-                tag = TAG
+            com.simplexray.an.logging.LogEvent.create(
+                severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Streaming priority chain applied: $normalized"
             )
         )
         
@@ -75,7 +77,7 @@ object StreamingOutboundTagger {
         // Optimize outbound change - prevent churn for identical results
         if (!PerformanceOptimizer.optimizeOutboundChange(normalized, STREAMING_OUTBOUND_TAG)) {
             AppLogger.d("$TAG: Skipping duplicate outbound tag for $normalized")
-            return true // Already applied, skip
+            return@withContext true // Already applied, skip
         }
         
         // Update routing rules to use streaming-proxy for this domain
@@ -159,8 +161,7 @@ object StreamingOutboundTagger {
                         domains = listOf(domain)
                     )
                 ),
-                action = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.PROXY,
-                outboundTag = STREAMING_OUTBOUND_TAG
+                action = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.CustomProxy(STREAMING_OUTBOUND_TAG)
             )
             
             RoutingRepository.addRule(streamingRule)
@@ -168,8 +169,9 @@ object StreamingOutboundTagger {
             AppLogger.d("$TAG: Created routing rule for streaming domain: $domain")
         } else {
             // Update existing rule to use streaming-proxy outbound
+            val updatedAction = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.CustomProxy(STREAMING_OUTBOUND_TAG)
             val updatedRule = existingRule.copy(
-                outboundTag = STREAMING_OUTBOUND_TAG,
+                action = updatedAction,
                 priority = maxOf(existingRule.priority, 100) // Ensure high priority
             )
             

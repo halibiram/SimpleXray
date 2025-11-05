@@ -7,7 +7,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.simplexray.an.protocol.streaming.StreamingRepository
-import kotlinx.coroutines.flow.collectAsState
+import androidx.compose.runtime.collectAsState
 
 /**
  * StreamingOptimizationScreen - Compose UI for streaming optimization status.
@@ -89,12 +89,14 @@ fun StreamingOptimizationScreen(
 
 @Composable
 private fun StatusIndicator(status: StreamingRepository.StreamingStatus) {
-    val (color, text) = when (status) {
-        StreamingRepository.StreamingStatus.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant to "Idle"
-        StreamingRepository.StreamingStatus.STREAMING -> MaterialTheme.colorScheme.primary to "Streaming"
-        StreamingRepository.StreamingStatus.BUFFERING -> MaterialTheme.colorScheme.warning to "Buffering"
-        StreamingRepository.StreamingStatus.ERROR -> MaterialTheme.colorScheme.error to "Error"
+    val statusPair = when (status) {
+        StreamingRepository.StreamingStatus.IDLE -> Pair(MaterialTheme.colorScheme.onSurfaceVariant, "Idle")
+        StreamingRepository.StreamingStatus.STREAMING -> Pair(MaterialTheme.colorScheme.primary, "Streaming")
+        StreamingRepository.StreamingStatus.BUFFERING -> Pair(MaterialTheme.colorScheme.tertiary, "Buffering")
+        StreamingRepository.StreamingStatus.ERROR -> Pair(MaterialTheme.colorScheme.error, "Error")
     }
+    val color = statusPair.first
+    val text = statusPair.second
     
     Card(
         colors = CardDefaults.cardColors(

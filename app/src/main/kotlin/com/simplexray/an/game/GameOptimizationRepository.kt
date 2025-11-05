@@ -485,9 +485,10 @@ object GameOptimizationRepository {
         if (now - lastTime > LOG_RATE_LIMIT_MS) {
             AppLogger.d(message)
             LoggerRepository.add(
-                com.simplexray.an.logging.LogEvent.Info(
-                    message = message,
-                    tag = TAG
+                com.simplexray.an.logging.LogEvent.create(
+                    severity = com.simplexray.an.logging.LogEvent.Severity.INFO,
+                    tag = TAG,
+                    message = message
                 )
             )
             lastLogTime[key] = now

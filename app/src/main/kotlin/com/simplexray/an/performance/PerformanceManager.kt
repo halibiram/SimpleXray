@@ -47,6 +47,45 @@ class PerformanceManager private constructor(context: Context) {
             }
         }
         
+        /**
+         * Check if NEON is available (static method, can be called without instance)
+         * Uses a temporary instance to access native methods
+         */
+        @JvmStatic
+        fun nativeHasNEON(): Boolean {
+            // Create a temporary instance to access the native method
+            // The native methods are instance methods but we need static access
+            return try {
+                val instance = INSTANCE ?: run {
+                    // If no instance exists, we can't call native methods
+                    // Return false as fallback
+                    return false
+                }
+                instance.hasNEON()
+            } catch (e: Exception) {
+                false
+            }
+        }
+        
+        /**
+         * Check if ARMv8 Crypto Extensions are available (static method)
+         * Uses a temporary instance to access native methods
+         */
+        @JvmStatic
+        fun nativeHasCryptoExtensions(): Boolean {
+            // Create a temporary instance to access the native method
+            return try {
+                val instance = INSTANCE ?: run {
+                    // If no instance exists, we can't call native methods
+                    // Return false as fallback
+                    return false
+                }
+                instance.hasCryptoExtensions()
+            } catch (e: Exception) {
+                false
+            }
+        }
+        
         init {
             try {
                 System.loadLibrary("perf-net")
@@ -306,14 +345,14 @@ class PerformanceManager private constructor(context: Context) {
      * Check if NEON is available
      */
     fun hasNEON(): Boolean {
-        return nativeHasNEON()
+        return nativeHasNEONImpl()
     }
     
     /**
      * Check if ARMv8 Crypto Extensions are available
      */
     fun hasCryptoExtensions(): Boolean {
-        return nativeHasCryptoExtensions()
+        return nativeHasCryptoExtensionsImpl()
     }
     
     /**
@@ -581,8 +620,8 @@ class PerformanceManager private constructor(context: Context) {
     private external fun nativeDestroyConnectionPool()
     
     // Crypto
-    private external fun nativeHasNEON(): Boolean
-    private external fun nativeHasCryptoExtensions(): Boolean
+    private external fun nativeHasNEONImpl(): Boolean
+    private external fun nativeHasCryptoExtensionsImpl(): Boolean
     private external fun nativeAES128Encrypt(
         input: ByteBuffer, inputOffset: Int, inputLen: Int,
         output: ByteBuffer, outputOffset: Int, key: ByteBuffer

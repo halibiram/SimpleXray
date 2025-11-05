@@ -290,11 +290,17 @@ object StreamingRepository {
                         downValues.average().toLong()
                     }
                     
-                    // Update snapshot with smoothed throughput
-                    updateThroughputInSnapshot(smoothedUp, smoothedDown)
+                    // Store values to update outside synchronized block
+                    val up = smoothedUp
+                    val down = smoothedDown
                     
-                    // Check for bitrate drops (2 consecutive)
-                    detectBitrateDrops(smoothedDown)
+                    // Update snapshot with smoothed throughput (outside critical section)
+                    scope.launch {
+                        updateThroughputInSnapshot(up, down)
+                        
+                        // Check for bitrate drops (2 consecutive)
+                        detectBitrateDrops(down)
+                    }
                 }
             }
         }
@@ -356,9 +362,10 @@ object StreamingRepository {
             }
             
             LoggerRepository.add(
-                LogEvent.Info(
-                    message = "Streaming stall mitigation applied: $domain",
-                    tag = TAG
+                LogEvent.create(
+                    severity = LogEvent.Severity.INFO,
+                    tag = TAG,
+                    message = "Streaming stall mitigation applied: $domain"
                 )
             )
         }
@@ -585,9 +592,10 @@ object StreamingRepository {
         AppLogger.d("$TAG: Transport fallback for $domain: $from -> $to (RTT: ${rtt}ms)")
         
         LoggerRepository.add(
-            LogEvent.Info(
-                message = "Streaming transport fallback: $domain $from->$to (RTT: ${rtt}ms)",
-                tag = TAG
+            LogEvent.create(
+                severity = LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Streaming transport fallback: $domain $from->$to (RTT: ${rtt}ms)"
             )
         )
     }
@@ -636,9 +644,10 @@ object StreamingRepository {
             AppLogger.w("$TAG: >2 consecutive bitrate drops for $domain, forcing streaming-proxy route chain")
             
             LoggerRepository.add(
-                LogEvent.Info(
-                    message = "Streaming bitrate drop detected: $domain (${updatedSession.consecutiveBitrateDrops} consecutive)",
-                    tag = TAG
+                LogEvent.create(
+                    severity = LogEvent.Severity.INFO,
+                    tag = TAG,
+                    message = "Streaming bitrate drop detected: $domain (${updatedSession.consecutiveBitrateDrops} consecutive)"
                 )
             )
             
@@ -668,9 +677,10 @@ object StreamingRepository {
         AppLogger.d("$TAG: Rebuffering event for $domain: ${durationMs}ms")
         
         LoggerRepository.add(
-            LogEvent.Info(
-                message = "Streaming rebuffer: $domain (${durationMs}ms)",
-                tag = TAG
+            LogEvent.create(
+                severity = LogEvent.Severity.INFO,
+                tag = TAG,
+                message = "Streaming rebuffer: $domain (${durationMs}ms)"
             )
         )
         
@@ -709,7 +719,7 @@ object StreamingRepository {
         com.simplexray.an.protocol.routing.RouteCache.put(
             normalized,
             com.simplexray.an.protocol.routing.RouteDecision(
-                action = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.PROXY,
+                action = com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction.Proxy,
                 sniffedHost = normalized
             )
         )
@@ -755,8 +765,10 @@ object StreamingRepository {
             
             LoggerRepository.add(
                 LogEvent.Instrumentation(
+                    timestamp = System.currentTimeMillis(),
                     type = LogEvent.InstrumentationType.BINDER_RECONNECT,
-                    message = "$TAG: Binder reconnected, streaming optimization restored"
+                    message = "$TAG: Binder reconnected, streaming optimization restored",
+                    vpnState = LoggerRepository.getVpnState()
                 )
             )
         }
@@ -913,7 +925,7 @@ object StreamingRepository {
  */
 data class StreamingClass(
     val isStreaming: Boolean,
-    val cdnProvider: CdnProvider?,
+    val cdnProvider: StreamingRepository.CdnProvider?,
     val normalizedHost: String,
     val matchType: MatchType
 )

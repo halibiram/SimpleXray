@@ -34,6 +34,22 @@ class HyperBackend private constructor() {
         init {
             System.loadLibrary("perf-net")
         }
+        
+        /**
+         * Callback for burst hints (called from C++)
+         */
+        @JvmStatic
+        fun onBurstHint(level: Int) {
+            Log.d(TAG, "Burst hint: level=$level")
+        }
+        
+        /**
+         * Callback for packet processed (called from C++)
+         */
+        @JvmStatic
+        fun onPacketProcessed(bytes: Long, timestampNs: Long) {
+            // Backend can track statistics
+        }
     }
     
     private var ringHandle: Long = 0
@@ -189,22 +205,6 @@ class HyperBackend private constructor() {
             ringHandle = 0
         }
         initialized = false
-    }
-    
-    /**
-     * Callback for burst hints (called from C++)
-     */
-    @JvmStatic
-    fun onBurstHint(level: Int) {
-        Log.d(TAG, "Burst hint: level=$level")
-    }
-    
-    /**
-     * Callback for packet processed (called from C++)
-     */
-    @JvmStatic
-    fun onPacketProcessed(bytes: Long, timestampNs: Long) {
-        // Backend can track statistics
     }
     
     // Native methods

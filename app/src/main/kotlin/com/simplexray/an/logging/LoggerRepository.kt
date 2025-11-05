@@ -216,7 +216,7 @@ sealed class LogEvent {
         val throwable: Throwable? = null,
         override val vpnState: LoggerRepository.VpnState
     ) : LogEvent() {
-        fun toFormattedString(): String {
+        fun toFormattedStringStandard(): String {
             val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
             val timeStr = dateFormat.format(Date(timestamp))
             val severityChar = when (severity) {
@@ -245,7 +245,7 @@ sealed class LogEvent {
         val downlink: Long,
         override val vpnState: LoggerRepository.VpnState
     ) : LogEvent() {
-        fun toFormattedString(): String {
+        fun toFormattedStringTraffic(): String {
             val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
             val timeStr = dateFormat.format(Date(timestamp))
             val vpnStateStr = when (vpnState) {
@@ -267,7 +267,7 @@ sealed class LogEvent {
         val data: Map<String, Any?> = emptyMap(),
         override val vpnState: LoggerRepository.VpnState
     ) : LogEvent() {
-        fun toFormattedString(): String {
+        fun toFormattedStringInstrumentation(): String {
             val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
             val timeStr = dateFormat.format(Date(timestamp))
             val vpnStateStr = when (vpnState) {
@@ -315,9 +315,9 @@ sealed class LogEvent {
      * Convert to formatted string for display
      */
     fun toFormattedString(): String = when (this) {
-        is Standard -> toFormattedString()
-        is Traffic -> toFormattedString()
-        is Instrumentation -> toFormattedString()
+        is Standard -> toFormattedStringStandard()
+        is Traffic -> toFormattedStringTraffic()
+        is Instrumentation -> toFormattedStringInstrumentation()
     }
 }
 

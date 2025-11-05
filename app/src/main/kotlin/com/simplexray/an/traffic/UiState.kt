@@ -16,10 +16,7 @@ data class UiState(
     fun trimmed(): UiState = copy(history = history.takeLast(120))
 }
 
-data class TrafficSample(
-    val timestamp: Long,
-    val rxMbps: Float,
-    val txMbps: Float
-)
+// TrafficSample is now defined in TrafficSample.kt
+// This inline definition has been removed to avoid redeclaration
 
 

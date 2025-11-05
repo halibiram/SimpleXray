@@ -140,7 +140,7 @@ object HyperUiRepository {
                             .count { it == StreamingRepository.TransportType.HTTP2 }
                     
                     // Check if QUIC is warming up
-                    val quicSessions = streamingSnapshot.activeStreamingSessions.values
+                    val quicSessions = streamingSnapshot.activeSessions.values
                         .filter { it.transportPreference == StreamingRepository.TransportType.QUIC }
                     
                     if (quicSessions.isNotEmpty() && quicWarmupState == QuicWarmupState.IDLE) {
