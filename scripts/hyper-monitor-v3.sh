@@ -4,6 +4,12 @@
 
 set -eo pipefail
 
+# Array'leri initialize et
+declare -A ERROR_HISTORY=()
+declare -A ERROR_PATTERNS=()
+declare -A FIX_HISTORY=()
+declare -A WORKFLOW_STATS=()
+
 # Renkler ve formatlar
 RED='\033[0;31m'
 GREEN='\033[0;32m'
