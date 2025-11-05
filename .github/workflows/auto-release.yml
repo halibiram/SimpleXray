@@ -35,7 +35,6 @@ jobs:
           echo "GEOIP_VERSION=$(grep 'GEOIP_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
           echo "GEOSITE_VERSION=$(grep 'GEOSITE_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
           echo "GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
-          echo "OPENSSL_VERSION=$(grep 'OPENSSL_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
 
       - name: Check if tag exists
         id: check_tag
@@ -93,21 +92,34 @@ jobs:
           restore-keys: |
             ndk-r28c-
 
-      - name: Cache OpenSSL
+      - name: Cache BoringSSL
         if: steps.check_tag.outputs.exists == 'false'
-        id: cache-openssl
+        id: cache-boringssl
         uses: actions/cache@v4
         with:
           path: |
-            app/src/main/jni/openssl
-          key: openssl-android-${{ env.OPENSSL_VERSION }}-ndk-r28c-v1
+            external/boringssl/lib
+            external/boringssl/include
+            external/boringssl/src
+          key: boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-v1
           restore-keys: |
-            openssl-android-${{ env.OPENSSL_VERSION }}-
+            boringssl-${{ runner.os }}-
 
-      - name: Build OpenSSL from Source
-        if: steps.check_tag.outputs.exists == 'false' && steps.cache-openssl.outputs.cache-hit != 'true'
+      - name: Setup Python for BoringSSL
+        if: steps.check_tag.outputs.exists == 'false' && steps.cache-boringssl.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install BoringSSL Build Dependencies
+        if: steps.check_tag.outputs.exists == 'false' && steps.cache-boringssl.outputs.cache-hit != 'true'
         run: |
-          # Set up NDK first
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+
+      - name: Setup NDK for BoringSSL
+        if: steps.check_tag.outputs.exists == 'false' && steps.cache-boringssl.outputs.cache-hit != 'true'
+        run: |
           if [ -z "$(ls -d android-ndk-* 2>/dev/null)" ]; then
             echo "Downloading NDK..."
             wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
@@ -115,118 +127,19 @@ jobs:
             rm android-ndk.zip
           fi
           NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
           echo "Using NDK: $NDK_HOME"
 
-          # Download OpenSSL source
-          wget -q https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          tar -xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          cd openssl-${{ env.OPENSSL_VERSION }}
-
-          # Create output directory structure
-          mkdir -p ../app/src/main/jni/openssl/include
-
-          # Function to build OpenSSL for a specific ABI
-          build_openssl() {
-            local NDK_ARCH=$1
-            local OPENSSL_TARGET=$2
-            local OUTPUT_ARCH=$3
-            local TOOLCHAIN_PREFIX=$4
-            
-            echo "Building OpenSSL for $OUTPUT_ARCH (target: $OPENSSL_TARGET)..."
-            
-            # Use modern NDK toolchain directly (no standalone toolchain needed)
-            local TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-            export PATH=$TOOLCHAIN_DIR/bin:$PATH
-            export CC=$TOOLCHAIN_PREFIX-clang
-            export CXX=$TOOLCHAIN_PREFIX-clang++
-            export AR=$TOOLCHAIN_DIR/bin/llvm-ar
-            export RANLIB=$TOOLCHAIN_DIR/bin/llvm-ranlib
-            export STRIP=$TOOLCHAIN_DIR/bin/llvm-strip
-            export ANDROID_NDK_HOME=$NDK_HOME
-            export ANDROID_NDK_ROOT=$NDK_HOME
-            
-            # Configure OpenSSL with explicit compiler settings
-            # Note: __ANDROID_API__ is already defined by the NDK toolchain (e.g., aarch64-linux-android24-clang)
-            # so we don't need to explicitly set it with -D__ANDROID_API__=24
-            ./Configure $OPENSSL_TARGET \
-              --prefix=/tmp/openssl-$OUTPUT_ARCH \
-              CC=$CC \
-              CXX=$CXX \
-              AR=$AR \
-              RANLIB=$RANLIB \
-              STRIP=$STRIP \
-              no-shared \
-              no-ssl3 \
-              no-comp
-            
-            # Build (use -j2 to avoid OOM on GitHub Actions runners)
-            make clean
-            if ! make -j2; then
-              echo "❌ ERROR: OpenSSL build failed for $OUTPUT_ARCH"
-              exit 1
-            fi
-            if ! make install_sw; then
-              echo "❌ ERROR: OpenSSL install failed for $OUTPUT_ARCH"
-              exit 1
-            fi
-            
-            # Copy libraries to project
-            mkdir -p ../app/src/main/jni/openssl/lib/$OUTPUT_ARCH
-            cp /tmp/openssl-$OUTPUT_ARCH/lib/libcrypto.a ../app/src/main/jni/openssl/lib/$OUTPUT_ARCH/
-            cp /tmp/openssl-$OUTPUT_ARCH/lib/libssl.a ../app/src/main/jni/openssl/lib/$OUTPUT_ARCH/
-            
-            # Copy headers (only once)
-            if [ ! -d "../app/src/main/jni/openssl/include/openssl" ]; then
-              cp -r /tmp/openssl-$OUTPUT_ARCH/include/openssl ../app/src/main/jni/openssl/include/
-            fi
-            
-            make clean
-          }
-
-          # Build for all supported ABIs (matching Xray-core build)
-          build_openssl arm64 android-arm64 arm64-v8a "aarch64-linux-android24"
-          build_openssl arm android-arm armeabi-v7a "armv7a-linux-androideabi24"
-          build_openssl x86_64 android-x86_64 x86_64 "x86_64-linux-android24"
-          build_openssl x86 android-x86 x86 "i686-linux-android24"
-
-          cd ..
-
-          # Verify OpenSSL build was successful
-          echo "🔍 Verifying OpenSSL installation..."
-
-          REQUIRED_FILES=(
-            "app/src/main/jni/openssl/include/openssl/evp.h"
-            "app/src/main/jni/openssl/include/openssl/aes.h"
-            "app/src/main/jni/openssl/include/openssl/ssl.h"
-            "app/src/main/jni/openssl/include/openssl/crypto.h"
-            "app/src/main/jni/openssl/lib/arm64-v8a/libcrypto.a"
-            "app/src/main/jni/openssl/lib/arm64-v8a/libssl.a"
-            "app/src/main/jni/openssl/lib/armeabi-v7a/libcrypto.a"
-            "app/src/main/jni/openssl/lib/armeabi-v7a/libssl.a"
-            "app/src/main/jni/openssl/lib/x86_64/libcrypto.a"
-            "app/src/main/jni/openssl/lib/x86_64/libssl.a"
-            "app/src/main/jni/openssl/lib/x86/libcrypto.a"
-            "app/src/main/jni/openssl/lib/x86/libssl.a"
-          )
-
-          MISSING_FILES=()
-          for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$file" ]; then
-              MISSING_FILES+=("$file")
-            fi
-          done
-
-          if [ ${#MISSING_FILES[@]} -gt 0 ]; then
-            echo "❌ ERROR: OpenSSL build incomplete! Missing files:"
-            for file in "${MISSING_FILES[@]}"; do
-              echo "   - $file"
-            done
-            exit 1
-          fi
-
-          echo "✅ OpenSSL build complete and verified"
-          echo "   Headers: $(find app/src/main/jni/openssl/include -name '*.h' | wc -l) files"
-          echo "   Libraries: $(find app/src/main/jni/openssl/lib -name '*.a' | wc -l) files"
+      - name: Build BoringSSL
+        if: steps.check_tag.outputs.exists == 'false' && steps.cache-boringssl.outputs.cache-hit != 'true'
+        run: |
+          echo "Building BoringSSL with NDK: $ANDROID_NDK_HOME"
+          cd external/boringssl
+          python3 build_all_abis.py
+          cd ../..
+          echo "✅ BoringSSL build complete"
+          ls -lh external/boringssl/lib/*/
 
       - name: Make gradlew executable
         if: steps.check_tag.outputs.exists == 'false'
