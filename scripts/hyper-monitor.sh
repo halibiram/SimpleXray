@@ -84,6 +84,11 @@ analyze_failure_hyper() {
     rm -f /tmp/failed_jobs_$$.json /tmp/run_info_$$.json
 }
 
+# Hyper log fetcher'ı import et (eğer varsa)
+if [ -f "$(dirname "$0")/hyper-log-fetcher.sh" ]; then
+    source "$(dirname "$0")/hyper-log-fetcher.sh"
+fi
+
 # Hata loglarını hyper hızlı al
 get_error_logs_hyper() {
     local RUN_ID=$1
@@ -146,9 +151,17 @@ get_error_logs_hyper() {
         fi
     fi
     
-    # Yöntem 3: API üzerinden doğrudan log al (EN ETKİLİ YÖNTEM)
+    # Yöntem 3: Hyper Log Fetcher (tüm yöntemleri dener)
     if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
-        echo -e "${DIM}Yöntem 3: API üzerinden loglar alınıyor...${NC}" >&2
+        echo -e "${DIM}Yöntem 3: Hyper Log Fetcher deneniyor...${NC}" >&2
+        if type hyper_fetch_logs &> /dev/null; then
+            LOG_OUTPUT=$(hyper_fetch_logs "$RUN_ID" "$JOB_ID" 100 2>&1 || echo "")
+        fi
+    fi
+    
+    # Yöntem 4: API üzerinden doğrudan log al (EN ETKİLİ YÖNTEM)
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        echo -e "${DIM}Yöntem 4: API üzerinden loglar alınıyor...${NC}" >&2
         REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null || echo "")
         if [ -n "$REPO" ] && [ "$REPO" != "" ]; then
             # GitHub Actions API direkt logları döndürür
@@ -196,9 +209,9 @@ get_error_logs_hyper() {
         fi
     fi
     
-    # Yöntem 4: Step loglarını tek tek al
+    # Yöntem 5: Step loglarını tek tek al
     if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
-        echo -e "${DIM}Yöntem 4: Step loglarını alıyor...${NC}" >&2
+        echo -e "${DIM}Yöntem 5: Step loglarını alıyor...${NC}" >&2
         # Başarısız step'lerin loglarını al
         FAILED_STEPS=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null)
         if [ -n "$FAILED_STEPS" ] && [ "$FAILED_STEPS" != "" ]; then
