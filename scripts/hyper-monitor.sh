@@ -130,10 +130,33 @@ get_error_logs_hyper() {
     # Yöntem 3: API üzerinden doğrudan log al
     if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
         echo -e "${DIM}Yöntem 3: API üzerinden deneniyor...${NC}" >&2
-        # Job log URL'ini al
-        LOG_URL=$(gh api "/repos/:owner/:repo/actions/jobs/$JOB_ID/logs" --jq '.download_url' 2>/dev/null || echo "")
-        if [ -n "$LOG_URL" ] && [ "$LOG_URL" != "null" ] && [ "$LOG_URL" != "" ]; then
-            LOG_OUTPUT=$(timeout 30 curl -sL "$LOG_URL" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" | tail -100 || echo "")
+        REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null || echo "")
+        if [ -n "$REPO" ] && [ "$REPO" != "" ]; then
+            # GitHub Actions API endpoint'i
+            LOG_URL=$(gh api "/repos/$REPO/actions/jobs/$JOB_ID/logs" 2>/dev/null | jq -r '.download_url // empty' 2>/dev/null || echo "")
+            if [ -z "$LOG_URL" ] || [ "$LOG_URL" = "null" ] || [ "$LOG_URL" = "" ]; then
+                # Alternatif: Doğrudan log URL'ini oluştur
+                LOG_URL="https://github.com/$REPO/actions/runs/$RUN_ID/job/$JOB_ID"
+            fi
+            # Log URL varsa curl ile indir
+            if [ -n "$LOG_URL" ] && [ "$LOG_URL" != "null" ] && [ "$LOG_URL" != "" ] && [[ "$LOG_URL" == http* ]]; then
+                LOG_OUTPUT=$(timeout 30 curl -sL "$LOG_URL" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" | tail -100 || echo "")
+            fi
+        fi
+    fi
+    
+    # Yöntem 4: Step loglarını tek tek al
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        echo -e "${DIM}Yöntem 4: Step loglarını alıyor...${NC}" >&2
+        # Başarısız step'lerin loglarını al
+        FAILED_STEPS=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null)
+        if [ -n "$FAILED_STEPS" ] && [ "$FAILED_STEPS" != "" ]; then
+            echo -e "${CYAN}Başarısız Step'ler:${NC}" >&2
+            echo "$FAILED_STEPS" | while read -r STEP_NAME; do
+                echo -e "${DIM}  → $STEP_NAME${NC}" >&2
+            done
+            # En azından step isimlerini göster
+            LOG_OUTPUT=$(echo "Failed steps: $FAILED_STEPS" || echo "")
         fi
     fi
     
