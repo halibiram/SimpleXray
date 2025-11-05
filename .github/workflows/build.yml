@@ -120,7 +120,7 @@ jobs:
           mkdir -p ../app/src/main/jniLibs/x86
           mv xray ../app/src/main/jniLibs/x86/libxray.so
 
-      - name: Build OpenSSL from Source
+      - name: Build BoringSSL from Submodule
         run: |
           # NDK should already be available from Xray-core build step
           # Find NDK directory (should exist from previous step)
@@ -132,25 +132,31 @@ jobs:
           fi
           NDK_HOME=$(realpath android-ndk-*)
           echo "Using NDK: $NDK_HOME"
-          
-          # Download OpenSSL source
-          wget -q https://www.openssl.org/source/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          tar -xzf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          cd openssl-${{ env.OPENSSL_VERSION }}
-          
-          # Create output directory structure
-          mkdir -p ../app/src/main/jni/openssl/include
-          
-          # Function to build OpenSSL for a specific ABI
-          build_openssl() {
-            local NDK_ARCH=$1
-            local OPENSSL_TARGET=$2
-            local OUTPUT_ARCH=$3
-            local TOOLCHAIN_PREFIX=$4
+
+          # Install build tools
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang lld cmake
+
+          # BoringSSL is already a git submodule, ensure it's initialized
+          BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+          if [ ! -d "$BORINGSSL_DIR" ]; then
+            echo "❌ BoringSSL submodule not found!"
+            echo "Please ensure BoringSSL is initialized as a git submodule:"
+            echo "  git submodule update --init --recursive"
+            exit 1
+          fi
+
+          cd "$BORINGSSL_DIR"
+
+          # Function to build BoringSSL for a specific ABI using CMake
+          build_boringssl() {
+            local OUTPUT_ARCH=$1
+            local TOOLCHAIN_PREFIX=$2
+            local CMAKE_ARCH=$3
             
-            echo "Building OpenSSL for $OUTPUT_ARCH (target: $OPENSSL_TARGET)..."
+            echo "Building BoringSSL for $OUTPUT_ARCH..."
             
-            # Use modern NDK toolchain directly (no standalone toolchain needed)
+            # Use modern NDK toolchain directly
             local TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
             export PATH=$TOOLCHAIN_DIR/bin:$PATH
             export CC=$TOOLCHAIN_PREFIX-clang
@@ -161,45 +167,40 @@ jobs:
             export ANDROID_NDK_HOME=$NDK_HOME
             export ANDROID_NDK_ROOT=$NDK_HOME
             
-            # Configure OpenSSL with explicit compiler settings
-            ./Configure $OPENSSL_TARGET \
-              --prefix=/tmp/openssl-$OUTPUT_ARCH \
-              CC=$CC \
-              CXX=$CXX \
-              AR=$AR \
-              RANLIB=$RANLIB \
-              STRIP=$STRIP \
-              no-shared \
-              no-ssl3 \
-              no-comp \
-              -D__ANDROID_API__=24
+            # Create build directory
+            BUILD_DIR="build_$OUTPUT_ARCH"
+            mkdir -p "$BUILD_DIR"
+            cd "$BUILD_DIR"
+            
+            # Configure BoringSSL with CMake
+            cmake .. \
+              -DCMAKE_SYSTEM_NAME=Android \
+              -DCMAKE_SYSTEM_VERSION=24 \
+              -DCMAKE_ANDROID_ARCH_ABI=$CMAKE_ARCH \
+              -DCMAKE_ANDROID_NDK=$NDK_HOME \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DOPENSSL_SMALL=1 \
+              -DOPENSSL_NO_DEPRECATED=1 \
+              -DOPENSSL_NO_ASM=0 \
+              -DBUILD_SHARED_LIBS=OFF \
+              -GNinja
             
             # Build
-            make clean
-            make -j$(nproc)
-            make install_sw
+            ninja -j$(nproc)
             
-            # Copy libraries to project
-            mkdir -p ../app/src/main/jni/openssl/lib/$OUTPUT_ARCH
-            cp /tmp/openssl-$OUTPUT_ARCH/lib/libcrypto.a ../app/src/main/jni/openssl/lib/$OUTPUT_ARCH/
-            cp /tmp/openssl-$OUTPUT_ARCH/lib/libssl.a ../app/src/main/jni/openssl/lib/$OUTPUT_ARCH/
+            # Copy libraries (BoringSSL creates libcrypto.a and libssl.a)
+            # These are automatically linked by CMake in the main build
+            cd ..
             
-            # Copy headers (only once)
-            if [ ! -d "../app/src/main/jni/openssl/include/openssl" ]; then
-              cp -r /tmp/openssl-$OUTPUT_ARCH/include/openssl ../app/src/main/jni/openssl/include/
-            fi
-            
-            make clean
+            echo "✅ BoringSSL build complete for $OUTPUT_ARCH"
           }
-          
-          # Build for all ABIs
-          build_openssl arm64 android-arm64 arm64-v8a "aarch64-linux-android24"
-          build_openssl arm android-arm armeabi-v7a "armv7a-linux-androideabi24"
-          build_openssl x86_64 android-x86_64 x86_64 "x86_64-linux-android24"
-          build_openssl x86 android-x86 x86 "i686-linux-android24"
-          
-          cd ..
-          echo "✅ OpenSSL build complete"
+
+          # Build for arm64-v8a only (optimized for mobile)
+          build_boringssl arm64-v8a "aarch64-linux-android24" "arm64-v8a"
+
+          cd ../../../../..
+          echo "✅ BoringSSL build complete"
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew

@@ -48,12 +48,40 @@ android {
         versionCode versionProps.APP_VERSION_CODE.toInteger()
         versionName versionProps.APP_VERSION_NAME
         ndk {
-            abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
+            // BoringSSL optimized for ARM64 with crypto extensions
+            abiFilters "arm64-v8a"
         }
+
+        // Runtime SSL mode configuration
+        def sslMode = System.getenv("SXR_SSL_MODE") ?: "boringssl"
+        resValue "string", "sxr_ssl_mode", sslMode
+        buildConfigField "String", "SXR_SSL_MODE", "\"${sslMode}\""
+
+        // Always use BoringSSL (OpenSSL removed)
+        buildConfigField "boolean", "USE_BORINGSSL", "true"
+        println "🔒 Building with BoringSSL"
+
+        // Experimental features (debug only)
+        def isRelease = gradle.startParameter.taskNames.any { it.contains("Release") }
+        buildConfigField "boolean", "EXPERIMENTAL_ENABLED", "${!isRelease}"
+
         externalNativeBuild {
+            cmake {
+                path "src/main/jni/perf-net/CMakeLists.txt"
+                version "3.22.0"
+                arguments "-DANDROID_STL=c++_shared"
+                arguments "-DOPENSSL_SMALL=1"
+                arguments "-DOPENSSL_NO_DEPRECATED=1"
+                arguments "-DOPENSSL_NO_ASM=0"
+                arguments "-DBUILD_SHARED_LIBS=OFF"
+                cppFlags "-std=c++17", "-DBORINGSSL_IMPLEMENTATION"
+            }
             ndkBuild {
+                path "src/main/jni/Android.mk"
                 arguments "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=."
                 arguments "APP_LDFLAGS+=-Wl,--build-id=none"
+                arguments "USE_BORINGSSL=1"
+                arguments "DISABLE_OPENSSL=1"
             }
         }
         targetSdk 35
@@ -64,6 +92,15 @@ android {
         // BuildConfig fields for update mechanism
         buildConfigField "String", "REPOSITORY_URL", "\"https://github.com/halibiram/SimpleXray\""
         buildConfigField "String[]", "SUPPORTED_ABIS", "new String[]{\"arm64-v8a\", \"x86_64\"}"
+        buildConfigField "boolean", "FEAT_STREAMING_PANEL", "false" // Feature flag for streaming panel UI
+        buildConfigField "boolean", "FEAT_GAME_PANEL", "false" // Feature flag for game optimization panel UI
+        buildConfigField "boolean", "FEAT_PERF_PANEL", "false" // Feature flag for performance diagnostics panel
+        buildConfigField "boolean", "FEAT_HYPER_UI", "false" // Feature flag for hyper UI performance components
+
+        // Crypto library build status (BoringSSL only)
+        def boringsslAvailable = file("../external/boringssl/lib/arm64-v8a/libcrypto.a").exists()
+        buildConfigField "boolean", "BORINGSSL_AVAILABLE_AT_BUILD", "${boringsslAvailable}"
+        buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "false"
     }
 
     signingConfigs {
@@ -92,6 +129,8 @@ android {
         }
     }
 
+    // COMPAT: JavaVersion.VERSION_21 is required for Android SDK 35
+    // Verified: Java 21 is fully compatible with Android SDK 35 and required for modern Android development
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
@@ -114,15 +153,23 @@ android {
     }
 
     externalNativeBuild {
+        cmake {
+            path "src/main/jni/perf-net/CMakeLists.txt"
+            version "3.22.0"
+        }
         ndkBuild {
             path "src/main/jni/Android.mk"
         }
     }
 
     lint {
-        checkReleaseBuilds = false
-        // Continue the build even when errors are found
+        // Enable lint checks for release builds but don't abort on errors
+        // This allows builds to complete while still reporting issues
+        checkReleaseBuilds = true
+        // Continue the build even when errors are found (warnings only)
         abortOnError = false
+        // Treat warnings as errors only in strict mode (not enabled by default)
+        warningsAsErrors = false
     }
 
     packagingOptions {
@@ -143,8 +190,8 @@ android {
         abi {
             enable true
             reset()
-            include "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
-            universalApk true
+            include "arm64-v8a"  // BoringSSL optimized for ARM64
+            universalApk false
         }
     }
 
@@ -164,6 +211,8 @@ android {
         buildConfig true
     }
 
+    // COMPAT: jvmToolchain(21) requires JDK 21 - required for building this project
+    // Note: JDK 21 is required for Android SDK 35 compatibility. Ensure JDK 21 is installed before building.
     kotlin {
         jvmToolchain(21)
     }
@@ -178,6 +227,42 @@ android {
             }
         }
     }
+}
+
+// Pre-build check for BoringSSL
+tasks.register("checkBoringSSL") {
+    doLast {
+        def boringsslDir = file("../external/boringssl")
+        def boringsslLibCryptoArm64 = file("../external/boringssl/lib/arm64-v8a/libcrypto.a")
+        def boringsslLibSslArm64 = file("../external/boringssl/lib/arm64-v8a/libssl.a")
+        
+        def hasBoringSSL = boringsslLibCryptoArm64.exists() && 
+                           boringsslLibSslArm64.exists()
+        
+        if (!hasBoringSSL) {
+            println("⚠️  WARNING: BoringSSL libraries not found!")
+            println("   BoringSSL directory: ${boringsslDir.absolutePath}")
+            println("   Expected files:")
+            println("     - ${boringsslLibCryptoArm64.absolutePath}")
+            println("     - ${boringsslLibSslArm64.absolutePath}")
+            println("")
+            println("   To build BoringSSL:")
+            println("   1. Run: ./external/boringssl/build_all_abis.py")
+            println("   2. Or follow instructions in external/boringssl/README.md")
+            println("")
+            println("   Note: Build will continue but crypto features may not work.")
+        } else {
+            println("✅ BoringSSL found: ${boringsslDir.absolutePath}")
+        }
+    }
+}
+
+// Run BoringSSL check before NDK build
+tasks.matching { task ->
+    task.name.startsWith("externalNativeBuild") && 
+    (task.name.contains("Debug") || task.name.contains("Release"))
+}.configureEach { task ->
+    task.dependsOn("checkBoringSSL")
 }
 
 dependencies {
@@ -226,6 +311,9 @@ dependencies {
 
     // WorkManager
     implementation "androidx.work:work-runtime-ktx:2.9.0"
+    
+    // Timber for logging
+    implementation "com.jakewharton.timber:timber:5.0.1"
 
     // Vico Charts
     implementation "com.patrykandpatrick.vico:compose:2.0.0-alpha.28"
@@ -242,9 +330,11 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-runtime-compose:2.8.7"
 
     // Testing dependencies
+    // Note: JUnit 4 is used for Android compatibility. JUnit 5 (Jupiter) requires additional setup.
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'io.mockk:mockk:1.13.8'
-    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'
+    // Updated to match coroutines version for better compatibility
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0'
     testImplementation 'androidx.arch.core:core-testing:2.2.0'
     testImplementation 'com.google.truth:truth:1.1.5'
     testImplementation 'org.json:json:20240303'

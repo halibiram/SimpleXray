@@ -27,13 +27,11 @@ LOCAL_SRC_FILES := \
 LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/include
 
-# OpenSSL includes (if available)
-# OpenSSL will be used if libraries are installed in app/src/main/jni/openssl/
-OPENSSL_DIR := $(LOCAL_PATH)/../../openssl
-ifneq ($(wildcard $(OPENSSL_DIR)/include/openssl/evp.h),)
-    LOCAL_C_INCLUDES += $(OPENSSL_DIR)/include
-    LOCAL_CPPFLAGS += -DUSE_OPENSSL=1
-endif
+# OpenSSL DISABLED - Using BoringSSL via CMake
+# BoringSSL is integrated via CMakeLists.txt
+# No OpenSSL includes or libraries should be used
+LOCAL_CPPFLAGS += -DUSE_BORINGSSL=1
+LOCAL_CPPFLAGS += -DDISABLE_OPENSSL=1
 
 # C++ flags
 LOCAL_CPPFLAGS := \
@@ -59,10 +57,9 @@ LOCAL_LDLIBS := \
     -llog \
     -latomic
 
-# OpenSSL libraries (if available)
-ifneq ($(wildcard $(OPENSSL_DIR)/include/openssl/evp.h),)
-    LOCAL_LDLIBS += -L$(OPENSSL_DIR)/lib/$(TARGET_ARCH_ABI) -lcrypto -lssl
-endif
+# OpenSSL libraries DISABLED - Using BoringSSL via CMake
+# BoringSSL libraries are linked via CMakeLists.txt
+# No OpenSSL libraries should be linked
 
 # Enable NEON
 LOCAL_ARM_NEON := true
