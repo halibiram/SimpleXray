@@ -156,6 +156,27 @@ jobs:
           }
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
+          
+          # Debug: List all build artifacts
+          echo "📋 Build directory structure:"
+          pwd
+          find . -name "*.a" -type f | head -20 || echo "No .a files found"
+          echo ""
+          echo "📋 Checking crypto directory:"
+          if [ -d "crypto" ]; then
+            ls -lah crypto/ | head -10
+            find crypto -name "*.a" -type f || echo "No .a files in crypto/"
+          else
+            echo "❌ crypto directory does not exist!"
+          fi
+          echo ""
+          echo "📋 Checking ssl directory:"
+          if [ -d "ssl" ]; then
+            ls -lah ssl/ | head -10
+            find ssl -name "*.a" -type f || echo "No .a files in ssl/"
+          else
+            echo "❌ ssl directory does not exist!"
+          fi
 
       - name: Verify BoringSSL Artifacts
         run: |
@@ -165,21 +186,50 @@ jobs:
           SSL_LIB="$BUILD_DIR/ssl/libssl.a"
           
           echo "🔍 Verifying BoringSSL artifacts for ${{ matrix.abi }}..."
-          echo "Expected paths:"
+          echo "Current directory: $(pwd)"
+          echo "Expected paths (absolute):"
           echo "  - $CRYPTO_LIB"
           echo "  - $SSL_LIB"
           
-          if [ ! -f "$CRYPTO_LIB" ]; then
-            echo "❌ libcrypto.a not found at $CRYPTO_LIB"
-            echo "Listing $BUILD_DIR/crypto:"
-            ls -la "$BUILD_DIR/crypto/" || echo "Directory does not exist"
+          # Check if directories exist
+          if [ ! -d "$BUILD_DIR" ]; then
+            echo "❌ Build directory does not exist: $BUILD_DIR"
+            echo "Listing parent directory:"
+            ls -la "$(dirname "$BUILD_DIR")" || echo "Parent directory does not exist"
             exit 1
           fi
           
+          # Check build directory contents
+          echo "📋 Build directory contents:"
+          ls -la "$BUILD_DIR" || echo "Cannot list build directory"
+          
+          # Search for all .a files in build directory
+          echo "📋 Searching for .a files in build directory:"
+          find "$BUILD_DIR" -name "*.a" -type f || echo "No .a files found"
+          
+          # Check crypto library
+          if [ ! -f "$CRYPTO_LIB" ]; then
+            echo "❌ libcrypto.a not found at $CRYPTO_LIB"
+            echo "Listing $BUILD_DIR/crypto:"
+            if [ -d "$BUILD_DIR/crypto" ]; then
+              ls -lah "$BUILD_DIR/crypto/" || echo "Cannot list crypto directory"
+              find "$BUILD_DIR/crypto" -name "*.a" -type f || echo "No .a files in crypto/"
+            else
+              echo "❌ crypto directory does not exist at $BUILD_DIR/crypto"
+            fi
+            exit 1
+          fi
+          
+          # Check ssl library
           if [ ! -f "$SSL_LIB" ]; then
             echo "❌ libssl.a not found at $SSL_LIB"
             echo "Listing $BUILD_DIR/ssl:"
-            ls -la "$BUILD_DIR/ssl/" || echo "Directory does not exist"
+            if [ -d "$BUILD_DIR/ssl" ]; then
+              ls -lah "$BUILD_DIR/ssl/" || echo "Cannot list ssl directory"
+              find "$BUILD_DIR/ssl" -name "*.a" -type f || echo "No .a files in ssl/"
+            else
+              echo "❌ ssl directory does not exist at $BUILD_DIR/ssl"
+            fi
             exit 1
           fi
           
