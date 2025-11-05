@@ -109,15 +109,43 @@ get_error_logs_hyper() {
         return
     fi
     
-    # İki yöntem dene: log-failed ve normal log
-    LOG_OUTPUT=$(timeout 30 gh run view $RUN_ID --log-failed --job $JOB_ID 2>&1 || timeout 30 gh run view $RUN_ID --log --job $JOB_ID 2>&1 | grep -A 20 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" || echo "")
+    # Önce job name'i bul (daha güvenilir)
+    JOB_NAME=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .name" 2>/dev/null | head -1)
     
-    if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ]; then
+    # İki yöntem dene: log-failed ve normal log
+    LOG_OUTPUT=""
+    
+    # Yöntem 1: --log-failed (sadece başarısız step'ler)
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        echo -e "${DIM}Yöntem 1: --log-failed deneniyor...${NC}" >&2
+        LOG_OUTPUT=$(timeout 30 gh run view $RUN_ID --log-failed --job "$JOB_ID" 2>&1 | grep -v "^$" | tail -100 || echo "")
+    fi
+    
+    # Yöntem 2: --log (tüm loglar, sonra filtrele)
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        echo -e "${DIM}Yöntem 2: --log deneniyor...${NC}" >&2
+        LOG_OUTPUT=$(timeout 30 gh run view $RUN_ID --log --job "$JOB_ID" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed|cmake.*failed)" | tail -100 || echo "")
+    fi
+    
+    # Yöntem 3: API üzerinden doğrudan log al
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        echo -e "${DIM}Yöntem 3: API üzerinden deneniyor...${NC}" >&2
+        # Job log URL'ini al
+        LOG_URL=$(gh api "/repos/:owner/:repo/actions/jobs/$JOB_ID/logs" --jq '.download_url' 2>/dev/null || echo "")
+        if [ -n "$LOG_URL" ] && [ "$LOG_URL" != "null" ] && [ "$LOG_URL" != "" ]; then
+            LOG_OUTPUT=$(timeout 30 curl -sL "$LOG_URL" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" | tail -100 || echo "")
+        fi
+    fi
+    
+    if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ] && [ "$LOG_OUTPUT" != "null" ]; then
+        echo -e "${GREEN}✅ Loglar alındı${NC}" >&2
         echo "$LOG_OUTPUT" | tail -60
     else
         echo -e "${YELLOW}⚠️  Loglar alınamadı veya boş${NC}"
+        echo -e "${CYAN}Job: ${JOB_NAME} (ID: $JOB_ID)${NC}"
         echo -e "${CYAN}Alternatif: Web'den kontrol edin:${NC}"
         echo -e "  gh run view $RUN_ID --web"
+        echo -e "  veya: https://github.com/$(gh repo view --json owner,name -q '.owner.login + "/" + .name')/actions/runs/$RUN_ID"
     fi
 }
 

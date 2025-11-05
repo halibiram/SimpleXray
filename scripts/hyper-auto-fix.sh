@@ -46,10 +46,31 @@ analyze_failure() {
         echo -e "${YELLOW}Başarısız Step: ${FAILED_STEP}${NC}"
     fi
     
-    # Logları al (timeout ile)
-    LOG_OUTPUT=$(timeout 20 gh run view $RUN_ID --log-failed --job $FAILED_JOB_ID 2>&1 || timeout 20 gh run view $RUN_ID --log --job $FAILED_JOB_ID 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|Libraries not found|No .a files)" || echo "")
+    # Logları al (timeout ile) - geliştirilmiş yöntem
+    LOG_OUTPUT=""
     
-    if [ -n "$LOG_OUTPUT" ]; then
+    # Yöntem 1: --log-failed
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        LOG_OUTPUT=$(timeout 20 gh run view $RUN_ID --log-failed --job "$FAILED_JOB_ID" 2>&1 | grep -v "^$" | tail -100 || echo "")
+    fi
+    
+    # Yöntem 2: --log
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        LOG_OUTPUT=$(timeout 20 gh run view $RUN_ID --log --job "$FAILED_JOB_ID" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|Libraries not found|No .a files)" | tail -100 || echo "")
+    fi
+    
+    # Yöntem 3: API
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null || echo "")
+        if [ -n "$REPO" ] && [ "$REPO" != "" ]; then
+            LOG_URL=$(gh api "/repos/$REPO/actions/jobs/$FAILED_JOB_ID/logs" --jq '.download_url' 2>/dev/null || echo "")
+            if [ -n "$LOG_URL" ] && [ "$LOG_URL" != "null" ] && [ "$LOG_URL" != "" ]; then
+                LOG_OUTPUT=$(timeout 20 curl -sL "$LOG_URL" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|Libraries not found|No .a files)" | tail -100 || echo "")
+            fi
+        fi
+    fi
+    
+    if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ] && [ "$LOG_OUTPUT" != "null" ]; then
         echo "$LOG_OUTPUT" | tail -40
     else
         echo -e "${YELLOW}⚠️  Loglar alınamadı${NC}"
