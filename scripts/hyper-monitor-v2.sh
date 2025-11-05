@@ -426,13 +426,15 @@ show_stats_v2() {
     echo -e "${DIM}Çalışma Süresi:${NC} ${ELAPSED}s"
     
     # Pattern istatistikleri
-    if [ ${#ERROR_HISTORY[@]} -gt 0 ]; then
+    if [ ${#ERROR_HISTORY[@]} -gt 0 ] 2>/dev/null; then
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${BOLD}📈 Hata Pattern'leri:${NC}"
         for pattern in "${!ERROR_HISTORY[@]}"; do
-            count=${ERROR_HISTORY[$pattern]}
-            if [ "$count" -gt 1 ]; then
-                echo -e "  ${YELLOW}$pattern:${NC} ${count}x tekrarlandı"
+            if [ -n "${ERROR_HISTORY[$pattern]}" ]; then
+                count=${ERROR_HISTORY[$pattern]}
+                if [ "$count" -gt 1 ] 2>/dev/null; then
+                    echo -e "  ${YELLOW}$pattern:${NC} ${count}x tekrarlandı"
+                fi
             fi
         done
     fi
