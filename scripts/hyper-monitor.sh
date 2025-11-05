@@ -124,23 +124,74 @@ get_error_logs_hyper() {
     # Yöntem 2: --log (tüm loglar, sonra filtrele)
     if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
         echo -e "${DIM}Yöntem 2: --log deneniyor...${NC}" >&2
-        LOG_OUTPUT=$(timeout 30 gh run view $RUN_ID --log --job "$JOB_ID" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed|cmake.*failed)" | tail -100 || echo "")
+        # Önce tüm logları al (grep olmadan)
+        RAW_LOG=$(timeout 30 gh run view $RUN_ID --log --job "$JOB_ID" 2>&1 || echo "")
+        if [ -n "$RAW_LOG" ] && [ "$RAW_LOG" != "" ]; then
+            # Step ismine göre filtrele
+            FAILED_STEP_NAMES=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null)
+            if [ -n "$FAILED_STEP_NAMES" ]; then
+                # Her başarısız step için logları al
+                echo "$FAILED_STEP_NAMES" | while read -r STEP_NAME; do
+                    if [ -n "$STEP_NAME" ]; then
+                        STEP_LOG=$(echo "$RAW_LOG" | grep -A 50 "Step: $STEP_NAME" || echo "$RAW_LOG" | grep -A 50 "$STEP_NAME" || echo "")
+                        if [ -n "$STEP_LOG" ]; then
+                            LOG_OUTPUT="${LOG_OUTPUT}${STEP_LOG}\n"
+                        fi
+                    fi
+                done
+            else
+                # Step ismi yoksa, hata mesajlarını ara
+                LOG_OUTPUT=$(echo "$RAW_LOG" | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed|cmake.*failed)" | tail -100 || echo "")
+            fi
+        fi
     fi
     
-    # Yöntem 3: API üzerinden doğrudan log al
+    # Yöntem 3: API üzerinden doğrudan log al (EN ETKİLİ YÖNTEM)
     if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
-        echo -e "${DIM}Yöntem 3: API üzerinden deneniyor...${NC}" >&2
+        echo -e "${DIM}Yöntem 3: API üzerinden loglar alınıyor...${NC}" >&2
         REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null || echo "")
         if [ -n "$REPO" ] && [ "$REPO" != "" ]; then
-            # GitHub Actions API endpoint'i
-            LOG_URL=$(gh api "/repos/$REPO/actions/jobs/$JOB_ID/logs" 2>/dev/null | jq -r '.download_url // empty' 2>/dev/null || echo "")
-            if [ -z "$LOG_URL" ] || [ "$LOG_URL" = "null" ] || [ "$LOG_URL" = "" ]; then
-                # Alternatif: Doğrudan log URL'ini oluştur
-                LOG_URL="https://github.com/$REPO/actions/runs/$RUN_ID/job/$JOB_ID"
-            fi
-            # Log URL varsa curl ile indir
-            if [ -n "$LOG_URL" ] && [ "$LOG_URL" != "null" ] && [ "$LOG_URL" != "" ] && [[ "$LOG_URL" == http* ]]; then
-                LOG_OUTPUT=$(timeout 30 curl -sL "$LOG_URL" 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" | tail -100 || echo "")
+            # GitHub Actions API direkt logları döndürür
+            RAW_API_LOG=$(timeout 30 gh api "repos/$REPO/actions/jobs/$JOB_ID/logs" 2>/dev/null || echo "")
+            if [ -n "$RAW_API_LOG" ] && [ "$RAW_API_LOG" != "" ]; then
+                # Başarısız step isimlerine göre filtrele
+                FAILED_STEP_NAMES=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null)
+                
+                if [ -n "$FAILED_STEP_NAMES" ] && [ "$FAILED_STEP_NAMES" != "" ]; then
+                    # Her başarısız step için logları bul (subshell sorunu için dosya kullan)
+                    TEMP_LOG_FILE="/tmp/job_log_$$.txt"
+                    echo "$RAW_API_LOG" > "$TEMP_LOG_FILE"
+                    
+                    for STEP_NAME in $FAILED_STEP_NAMES; do
+                        if [ -n "$STEP_NAME" ]; then
+                            # Step logunu bul
+                            STEP_LOG=$(grep -A 100 "##\[group\]$STEP_NAME" "$TEMP_LOG_FILE" 2>/dev/null || grep -A 100 "Step: $STEP_NAME" "$TEMP_LOG_FILE" 2>/dev/null || grep -A 100 "$STEP_NAME" "$TEMP_LOG_FILE" 2>/dev/null || echo "")
+                            if [ -n "$STEP_LOG" ] && [ "$STEP_LOG" != "" ]; then
+                                # Hata mesajlarını filtrele
+                                ERROR_LOG=$(echo "$STEP_LOG" | grep -A 50 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed|cmake.*failed|exit code)" | head -80 || echo "$STEP_LOG" | tail -50)
+                                if [ -n "$ERROR_LOG" ] && [ "$ERROR_LOG" != "" ]; then
+                                    if [ -z "$LOG_OUTPUT" ]; then
+                                        LOG_OUTPUT="$ERROR_LOG"
+                                    else
+                                        LOG_OUTPUT="${LOG_OUTPUT}\n${ERROR_LOG}"
+                                    fi
+                                fi
+                            fi
+                        fi
+                    done
+                    
+                    rm -f "$TEMP_LOG_FILE"
+                fi
+                
+                # Hala log yoksa, hata mesajlarını genel olarak ara
+                if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+                    LOG_OUTPUT=$(echo "$RAW_API_LOG" | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed|cmake.*failed|exit code)" | tail -100 || echo "")
+                fi
+                
+                # Hala log yoksa, son 100 satırı göster
+                if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+                    LOG_OUTPUT=$(echo "$RAW_API_LOG" | tail -100 || echo "")
+                fi
             fi
         fi
     fi
@@ -160,15 +211,42 @@ get_error_logs_hyper() {
         fi
     fi
     
-    if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ] && [ "$LOG_OUTPUT" != "null" ]; then
-        echo -e "${GREEN}✅ Loglar alındı${NC}" >&2
-        echo "$LOG_OUTPUT" | tail -60
-    else
-        echo -e "${YELLOW}⚠️  Loglar alınamadı veya boş${NC}"
+    # Log çıktısı yoksa, en azından başarısız step bilgilerini göster
+    if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ] || [ "$LOG_OUTPUT" = "null" ]; then
+        echo -e "${YELLOW}⚠️  Loglar GitHub CLI ile alınamadı${NC}"
         echo -e "${CYAN}Job: ${JOB_NAME} (ID: $JOB_ID)${NC}"
-        echo -e "${CYAN}Alternatif: Web'den kontrol edin:${NC}"
-        echo -e "  gh run view $RUN_ID --web"
-        echo -e "  veya: https://github.com/$(gh repo view --json owner,name -q '.owner.login + "/" + .name')/actions/runs/$RUN_ID"
+        
+        # Başarısız step'leri göster
+        FAILED_STEPS=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null)
+        if [ -n "$FAILED_STEPS" ] && [ "$FAILED_STEPS" != "" ]; then
+            echo -e "${RED}❌ Başarısız Step'ler:${NC}"
+            echo "$FAILED_STEPS" | while read -r STEP_NAME; do
+                if [ -n "$STEP_NAME" ]; then
+                    echo -e "${RED}  → $STEP_NAME${NC}"
+                fi
+            done
+        fi
+        
+        # Web URL'lerini göster
+        REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null || echo "")
+        if [ -n "$REPO" ]; then
+            echo -e "${CYAN}Web'den kontrol edin:${NC}"
+            echo -e "${BLUE}  Run: https://github.com/$REPO/actions/runs/$RUN_ID${NC}"
+            echo -e "${BLUE}  Job: https://github.com/$REPO/actions/runs/$RUN_ID/job/$JOB_ID${NC}"
+            echo -e "${CYAN}  veya: gh run view $RUN_ID --web${NC}"
+        fi
+        
+        # En azından step isimlerini log olarak göster
+        if [ -n "$FAILED_STEPS" ] && [ "$FAILED_STEPS" != "" ]; then
+            LOG_OUTPUT="Failed steps: $(echo "$FAILED_STEPS" | tr '\n' ', ' | sed 's/,$//')"
+        fi
+    else
+        echo -e "${GREEN}✅ Loglar alındı${NC}" >&2
+    fi
+    
+    # Log çıktısını göster
+    if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ] && [ "$LOG_OUTPUT" != "null" ]; then
+        echo "$LOG_OUTPUT" | tail -60
     fi
 }
 
