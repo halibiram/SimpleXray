@@ -1,5 +1,8 @@
 LOCAL_PATH := $(call my-dir)
 
+# Include crypto wrapper module
+include $(LOCAL_PATH)/../../../../crypto_wrapper/Android.mk
+
 # Performance network module
 include $(CLEAR_VARS)
 
@@ -13,6 +16,7 @@ LOCAL_SRC_FILES := \
     src/perf_zero_copy.cpp \
     src/perf_connection_pool.cpp \
     src/perf_crypto_neon.cpp \
+    src/perf_crypto_boringssl.cpp \
     src/perf_tls_session.cpp \
     src/perf_mtu_tuning.cpp \
     src/perf_ring_buffer.cpp \
@@ -32,7 +36,8 @@ LOCAL_SRC_FILES := \
 # Include directories
 LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/include \
-    $(LOCAL_PATH)/src/hyper
+    $(LOCAL_PATH)/src/hyper \
+    $(LOCAL_PATH)/../../../../crypto_wrapper
 
 # OpenSSL includes (if available)
 # OpenSSL will be used if libraries are installed in app/src/main/jni/openssl/
@@ -83,17 +88,19 @@ LOCAL_CPPFLAGS += \
     -frtti \
     -fexceptions
 
-# Architecture-specific flags
+# Architecture-specific flags with crypto extensions
 ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
-    LOCAL_CPPFLAGS += -march=armv8-a+simd
-    LOCAL_CFLAGS += -march=armv8-a+simd
+    LOCAL_CPPFLAGS += -march=armv8-a+crypto+simd
+    LOCAL_CFLAGS += -march=armv8-a+crypto+simd -DENABLE_ARM_CRYPTO_EXT=1
 else ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
     LOCAL_CPPFLAGS += -march=armv7-a -mfpu=neon
     LOCAL_CFLAGS += -march=armv7-a -mfpu=neon
 else ifeq ($(TARGET_ARCH_ABI),x86_64)
-    LOCAL_CPPFLAGS += -march=x86-64 -msse4.2
+    LOCAL_CPPFLAGS += -march=x86-64 -msse4.2 -maes -mssse3
+    LOCAL_CFLAGS += -march=x86-64 -msse4.2 -maes -mssse3
 else ifeq ($(TARGET_ARCH_ABI),x86)
-    LOCAL_CPPFLAGS += -march=i686 -msse3
+    LOCAL_CPPFLAGS += -march=i686 -msse3 -maes
+    LOCAL_CFLAGS += -march=i686 -msse3 -maes
 endif
 
 # System libraries  
@@ -101,13 +108,15 @@ LOCAL_LDLIBS := \
     -llog \
     -latomic
 
-# OpenSSL static libraries (if available)
+# Link crypto_wrapper (handles BoringSSL/OpenSSL selection)
+LOCAL_STATIC_LIBRARIES += crypto_wrapper
+
+# OpenSSL static libraries (legacy fallback, if crypto_wrapper doesn't have BoringSSL)
 ifneq ($(wildcard $(OPENSSL_HEADER)),)
     ifneq ($(wildcard $(OPENSSL_LIB_CRYPTO)),)
         ifneq ($(wildcard $(OPENSSL_LIB_SSL)),)
-            # Link OpenSSL static libraries directly
-            LOCAL_LDLIBS += $(OPENSSL_DIR)/lib/$(TARGET_ARCH_ABI)/libssl.a
-            LOCAL_LDLIBS += $(OPENSSL_DIR)/lib/$(TARGET_ARCH_ABI)/libcrypto.a
+            # Note: crypto_wrapper will handle actual linking
+            $(info ℹ️  OpenSSL available as fallback)
         endif
     endif
 endif
