@@ -394,12 +394,21 @@ monitor_loop() {
                         echo -e "${RED}Başarısız Job Sayısı:${NC} ${JOB_COUNT}"
                         echo -e "${RED}Ardışık Başarısızlık:${NC} ${CONSECUTIVE_FAILURES}\n"
                         
-                        # Logları göster
+                        # Logları göster - JOB_ID yoksa direkt API'den al
                         if [ -n "$JOB_ID" ] && [ "$JOB_ID" != "null" ] && [ -n "$(echo "$JOB_ID" | grep -E '^[0-9]+$')" ]; then
                             get_error_logs_hyper $RUN_ID $JOB_ID
                         else
-                            echo -e "${YELLOW}⚠️  Geçerli Job ID bulunamadı${NC}"
-                            echo -e "${CYAN}Web'den kontrol: gh run view $RUN_ID --web${NC}"
+                            # JOB_ID bulunamadıysa, direkt API'den başarısız job'ları bul ve logları al
+                            echo -e "${YELLOW}⚠️  Job ID analizden alınamadı, direkt API'den alınıyor...${NC}"
+                            FAILED_JOBS_DIRECT=$(gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .databaseId' 2>/dev/null)
+                            if [ -n "$FAILED_JOBS_DIRECT" ] && [ "$FAILED_JOBS_DIRECT" != "" ]; then
+                                FIRST_FAILED_JOB=$(echo "$FAILED_JOBS_DIRECT" | head -1)
+                                echo -e "${CYAN}✅ Başarısız Job ID bulundu: $FIRST_FAILED_JOB${NC}\n"
+                                get_error_logs_hyper $RUN_ID $FIRST_FAILED_JOB
+                            else
+                                echo -e "${YELLOW}⚠️  Geçerli Job ID bulunamadı${NC}"
+                                echo -e "${CYAN}Web'den kontrol: gh run view $RUN_ID --web${NC}"
+                            fi
                         fi
                         
                         # Düzeltme uygula
