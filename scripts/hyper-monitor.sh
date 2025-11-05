@@ -89,8 +89,26 @@ get_error_logs_hyper() {
     
     echo -e "${YELLOW}📄 Hata logları alınıyor...${NC}"
     
-    # Sadece son 50 satırı al (hızlı)
-    gh run view $RUN_ID --log-failed --job $JOB_ID 2>&1 | tail -50 | grep -E "(❌|error|Error|ERROR|failed|Failed|Libraries not found|No .a files)" || echo "Loglar alınamadı"
+    # Önce başarısız step'i bul
+    FAILED_STEP=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null | head -1)
+    
+    if [ -n "$FAILED_STEP" ]; then
+        echo -e "${CYAN}Başarısız Step: ${FAILED_STEP}${NC}"
+    fi
+    
+    # Logları al (timeout ile)
+    echo -e "${DIM}Loglar indiriliyor (timeout: 30s)...${NC}"
+    
+    # İki yöntem dene: log-failed ve normal log
+    LOG_OUTPUT=$(timeout 30 gh run view $RUN_ID --log-failed --job $JOB_ID 2>&1 || timeout 30 gh run view $RUN_ID --log --job $JOB_ID 2>&1 | grep -A 20 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" || echo "")
+    
+    if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ]; then
+        echo "$LOG_OUTPUT" | tail -60
+    else
+        echo -e "${YELLOW}⚠️  Loglar alınamadı veya boş${NC}"
+        echo -e "${CYAN}Alternatif: Web'den kontrol edin:${NC}"
+        echo -e "  gh run view $RUN_ID --web"
+    fi
 }
 
 # Otomatik düzeltme - Hyper akıllı

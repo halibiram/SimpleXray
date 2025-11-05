@@ -36,9 +36,25 @@ analyze_failure() {
     echo -e "${RED}❌ Hata: $MOST_COMMON${NC}"
     echo -e "${YELLOW}📋 Job ID: $FAILED_JOB_ID${NC}"
     
-    # Logları al (sadece son 30 satır)
+    # Logları al (güvenilir yöntem)
     echo -e "${CYAN}📄 Son hata logları:${NC}"
-    gh run view $RUN_ID --log-failed --job $FAILED_JOB_ID 2>&1 | tail -30 || echo "Loglar alınamadı"
+    
+    # Önce başarısız step'i bul
+    FAILED_STEP=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $FAILED_JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null | head -1)
+    
+    if [ -n "$FAILED_STEP" ]; then
+        echo -e "${YELLOW}Başarısız Step: ${FAILED_STEP}${NC}"
+    fi
+    
+    # Logları al (timeout ile)
+    LOG_OUTPUT=$(timeout 20 gh run view $RUN_ID --log-failed --job $FAILED_JOB_ID 2>&1 || timeout 20 gh run view $RUN_ID --log --job $FAILED_JOB_ID 2>&1 | grep -A 30 -E "(❌|error|Error|ERROR|failed|Failed|Libraries not found|No .a files)" || echo "")
+    
+    if [ -n "$LOG_OUTPUT" ]; then
+        echo "$LOG_OUTPUT" | tail -40
+    else
+        echo -e "${YELLOW}⚠️  Loglar alınamadı${NC}"
+        echo -e "${CYAN}Web'den kontrol: gh run view $RUN_ID --web${NC}"
+    fi
     
     echo "$MOST_COMMON|$FAILED_JOB_ID"
 }
