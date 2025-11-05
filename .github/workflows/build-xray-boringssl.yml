@@ -157,25 +157,45 @@ jobs:
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
           
-          # Debug: List all build artifacts
+          # Debug: List all build artifacts (we're still in BUILD_DIR)
+          echo "📋 Current directory: $(pwd)"
           echo "📋 Build directory structure:"
-          pwd
-          find . -name "*.a" -type f | head -20 || echo "No .a files found"
+          ls -la . || echo "Cannot list current directory"
+          echo ""
+          echo "📋 Searching for all .a files in build directory:"
+          find . -name "*.a" -type f || echo "No .a files found"
           echo ""
           echo "📋 Checking crypto directory:"
           if [ -d "crypto" ]; then
+            echo "✅ crypto directory exists"
             ls -lah crypto/ | head -10
             find crypto -name "*.a" -type f || echo "No .a files in crypto/"
           else
-            echo "❌ crypto directory does not exist!"
+            echo "❌ crypto directory does not exist in $(pwd)!"
+            echo "Listing parent directory:"
+            ls -la .. || true
           fi
           echo ""
           echo "📋 Checking ssl directory:"
           if [ -d "ssl" ]; then
+            echo "✅ ssl directory exists"
             ls -lah ssl/ | head -10
             find ssl -name "*.a" -type f || echo "No .a files in ssl/"
           else
-            echo "❌ ssl directory does not exist!"
+            echo "❌ ssl directory does not exist in $(pwd)!"
+            echo "Listing parent directory:"
+            ls -la .. || true
+          fi
+          
+          # Verify files exist before leaving build directory
+          if [ -f "crypto/libcrypto.a" ] && [ -f "ssl/libssl.a" ]; then
+            echo "✅ Both libraries found in build directory!"
+            ls -lh crypto/libcrypto.a ssl/libssl.a
+          else
+            echo "❌ Libraries not found in build directory!"
+            echo "Current directory: $(pwd)"
+            echo "Looking for: crypto/libcrypto.a and ssl/libssl.a"
+            exit 1
           fi
 
       - name: Verify BoringSSL Artifacts
