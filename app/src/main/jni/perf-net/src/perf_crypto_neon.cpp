@@ -61,8 +61,8 @@ extern "C" {
  */
 __attribute__((hot))
 JNIEXPORT jboolean JNICALL
-Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensions(JNIEnv *env, jclass clazz) {
-    (void)env; (void)clazz; // JNI required parameters, not used
+Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensionsImpl(JNIEnv *env, jobject thiz) {
+    (void)env; (void)thiz; // JNI required parameters, not used
     
     // Check cache first (lock-free atomic check)
     if (__builtin_expect(g_crypto_cache.cached.load(std::memory_order_acquire), 1)) {
@@ -655,8 +655,8 @@ Java_com_simplexray_an_performance_PerformanceManager_nativePrefetch(
  */
 #ifndef USE_BORINGSSL
 JNIEXPORT jboolean JNICALL
-Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEON(JNIEnv *env, jclass clazz) {
-    (void)env; (void)clazz; // JNI required parameters, not used
+Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEONImpl(JNIEnv *env, jobject thiz) {
+    (void)env; (void)thiz; // JNI required parameters, not used
 #if HAS_NEON
     return JNI_TRUE;
 #else

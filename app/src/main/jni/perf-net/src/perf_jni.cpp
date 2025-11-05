@@ -65,8 +65,8 @@ extern "C" {
     jfloat Java_com_simplexray_an_performance_PerformanceManager_nativeGetConnectionPoolUtilization(JNIEnv*, jclass);
     
     // Crypto
-    jboolean Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEON(JNIEnv*, jclass);
-    jboolean Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensions(JNIEnv*, jclass);
+    jboolean Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEONImpl(JNIEnv*, jobject);
+    jboolean Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensionsImpl(JNIEnv*, jobject);
     jint Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(JNIEnv*, jclass, jobject, jint, jint, jobject, jint, jobject);
     jint Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(JNIEnv*, jclass, jobject, jint, jint, jobject, jint, jobject, jobject);
     void Java_com_simplexray_an_performance_PerformanceManager_nativePrefetch(JNIEnv*, jclass, jobject, jint, jint);

@@ -33,14 +33,14 @@ static void ensure_initialized() {
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensions(
+Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensionsImpl(
     JNIEnv* env, jobject thiz) {
     ensure_initialized();
     return sxr_crypto_has_aes_hw() || sxr_crypto_has_sha_hw();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEON(
+Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEONImpl(
     JNIEnv* env, jobject thiz) {
     ensure_initialized();
     return sxr_crypto_has_neon();
