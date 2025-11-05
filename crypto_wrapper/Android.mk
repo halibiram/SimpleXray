@@ -20,7 +20,7 @@ else
 endif
 
 LOCAL_CPPFLAGS := -std=c++17 -fexceptions -frtti -O3
-LOCAL_LDLIBS := -llog -latomic
+LOCAL_LDLIBS := -llog
 include $(BUILD_STATIC_LIBRARY)
 
 ifeq ($(wildcard $(BORINGSSL_LIB_DIR)/libcrypto.a),$(BORINGSSL_LIB_DIR)/libcrypto.a)

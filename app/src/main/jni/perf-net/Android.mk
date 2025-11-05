@@ -1,7 +1,7 @@
 LOCAL_PATH := $(call my-dir)
 
 # Include crypto wrapper module
-include $(LOCAL_PATH)/../../../../crypto_wrapper/Android.mk
+include $(LOCAL_PATH)/../../../../../crypto_wrapper/Android.mk
 
 # Performance network module
 include $(CLEAR_VARS)
@@ -37,7 +37,7 @@ LOCAL_SRC_FILES := \
 LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/include \
     $(LOCAL_PATH)/src/hyper \
-    $(LOCAL_PATH)/../../../../crypto_wrapper
+    $(LOCAL_PATH)/../../../../../crypto_wrapper
 
 # OpenSSL includes (if available)
 # OpenSSL will be used if libraries are installed in app/src/main/jni/openssl/
@@ -103,10 +103,8 @@ else ifeq ($(TARGET_ARCH_ABI),x86)
     LOCAL_CFLAGS += -march=i686 -msse3 -maes
 endif
 
-# System libraries  
-LOCAL_LDLIBS := \
-    -llog \
-    -latomic
+# System libraries
+LOCAL_LDLIBS := -llog
 
 # Link crypto_wrapper (handles BoringSSL/OpenSSL selection)
 LOCAL_STATIC_LIBRARIES += crypto_wrapper
