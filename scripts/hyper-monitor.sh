@@ -243,7 +243,8 @@ monitor_loop() {
                         echo -e "${NC}"
                         
                         # Hyper analiz (stderr mesajlar, stdout veri)
-                        ANALYSIS=$(analyze_failure_hyper $RUN_ID 2>&1 | grep -E '^[^[:cntrl:]]*\|[^[:cntrl:]]*\|[^[:cntrl:]]*\|' | head -1)
+                        # stderr'i ayrı tut, sadece stdout'u al
+                        ANALYSIS=$(analyze_failure_hyper $RUN_ID 2>/dev/null | grep -E '^[^|]+\|[^|]+\|[^|]+' | head -1)
                         
                         if [ -z "$ANALYSIS" ] || [ "$ANALYSIS" = "" ]; then
                             echo -e "${YELLOW}⚠️  Analiz sonucu alınamadı${NC}"
@@ -251,11 +252,11 @@ monitor_loop() {
                             JOB_COUNT="0"
                             JOB_ID=""
                         else
-                            # Veriyi temizle (sadece pipe karakterleri arası)
-                            ANALYSIS=$(echo "$ANALYSIS" | grep -oE '[^|]+\|[^|]+\|[^|]+' | head -1)
-                            ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1)
-                            JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2)
-                            JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3)
+                            # Veriyi temizle (sadece pipe karakterleri arası, renk kodları yok)
+                            ANALYSIS=$(echo "$ANALYSIS" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[^|]+\|[^|]+\|[^|]+' | head -1)
+                            ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1 | tr -d '[:cntrl:]' | xargs)
+                            JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2 | tr -d '[:cntrl:]' | xargs)
+                            JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3 | tr -d '[:cntrl:]' | xargs)
                             # JOB_ID'yi temizle (sadece sayı)
                             JOB_ID=$(echo "$JOB_ID" | grep -oE '[0-9]+' | head -1)
                         fi
