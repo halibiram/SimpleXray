@@ -142,17 +142,15 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF"
           
           # Add ABI-specific compiler flags
-          if [ "${{ matrix.abi }}" = "armeabi-v7a" ]; then
-            echo "📱 Configuring for ARMv7 with NEON support"
-            CMAKE_CMD="$CMAKE_CMD -DCMAKE_C_FLAGS=-march=armv7-a -mfpu=neon -DCMAKE_CXX_FLAGS=-march=armv7-a -mfpu=neon"
-          elif [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
+          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
             echo "📱 Configuring for ARM64 with crypto extensions"
-            CMAKE_CMD="$CMAKE_CMD -DCMAKE_C_FLAGS=-march=armv8-a+simd+crypto -DCMAKE_CXX_FLAGS=-march=armv8-a+simd+crypto"
+            CMAKE_CMD="$CMAKE_CMD -DCMAKE_C_FLAGS=-march=armv8-a+simd+crypto"
+            CMAKE_CMD="$CMAKE_CMD -DCMAKE_CXX_FLAGS=-march=armv8-a+simd+crypto"
           fi
           
           CMAKE_CMD="$CMAKE_CMD -GNinja"
           
-          echo "Running: $CMAKE_CMD"
+          echo "Running CMake configuration..."
           eval $CMAKE_CMD || {
             echo "❌ CMake configuration failed for ${{ matrix.abi }}"
             echo "CMake version:"
