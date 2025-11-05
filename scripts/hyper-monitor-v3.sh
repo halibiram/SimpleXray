@@ -528,9 +528,9 @@ show_stats_v3() {
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${BOLD}📈 ML Pattern İstatistikleri:${NC}"
         for pattern in "${!ERROR_HISTORY[@]}"; do
-            if [ -n "${ERROR_HISTORY[$pattern]}" ]; then
+            if [ -n "$pattern" ] && [ -n "${ERROR_HISTORY[$pattern]}" ]; then
                 count=${ERROR_HISTORY[$pattern]}
-                if [ "$count" -gt 1 ] 2>/dev/null; then
+                if [ -n "$count" ] && [ "$count" -gt 1 ] 2>/dev/null; then
                     echo -e "  ${YELLOW}$pattern:${NC} ${count}x tekrarlandı"
                 fi
             fi
@@ -542,9 +542,11 @@ show_stats_v3() {
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${BOLD}📋 Workflow İstatistikleri:${NC}"
         for workflow in "${!WORKFLOW_STATS[@]}"; do
-            if [ -n "${WORKFLOW_STATS[$workflow]}" ]; then
+            if [ -n "$workflow" ] && [ -n "${WORKFLOW_STATS[$workflow]}" ]; then
                 count=${WORKFLOW_STATS[$workflow]}
-                echo -e "  ${BLUE}$workflow:${NC} ${count} başarısızlık"
+                if [ -n "$count" ]; then
+                    echo -e "  ${BLUE}$workflow:${NC} ${count} başarısızlık"
+                fi
             fi
         done
     fi
