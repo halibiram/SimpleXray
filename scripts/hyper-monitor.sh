@@ -267,18 +267,68 @@ get_error_logs_hyper() {
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         echo "$LOG_OUTPUT" | tail -60
         
-        # Log analizi yap
-        if type analyze_logs_detailed &> /dev/null; then
-            echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            analyze_logs_detailed "$LOG_OUTPUT" "$RUN_ID" "$JOB_ID"
-        elif type quick_analyze_logs &> /dev/null; then
-            echo -e "\n${CYAN}🔍 Hızlı Log Analizi:${NC}"
-            QUICK_ANALYSIS=$(quick_analyze_logs "$LOG_OUTPUT")
-            ERROR_TYPE=$(echo "$QUICK_ANALYSIS" | cut -d'|' -f1)
-            ERROR_COUNT=$(echo "$QUICK_ANALYSIS" | cut -d'|' -f2)
-            echo -e "${BLUE}Hata Türü:${NC} ${RED}$ERROR_TYPE${NC}"
-            echo -e "${BLUE}Hata Sayısı:${NC} ${RED}$ERROR_COUNT${NC}"
+        # AI ile detaylı log analizi
+        echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}🤖 AI Log Analizi${NC}"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+        
+        # Kritik hata mesajlarını özetle
+        CRITICAL_ERRORS=$(echo "$LOG_OUTPUT" | grep -iE "(error|Error|ERROR|failed|Failed|FAILED|exit code)" | head -10)
+        if [ -n "$CRITICAL_ERRORS" ]; then
+            echo -e "${RED}${BOLD}🔴 Kritik Hatalar:${NC}"
+            echo "$CRITICAL_ERRORS" | sed 's/^/  /' | head -5
+            echo ""
         fi
+        
+        # Hata türü tespiti ve analiz
+        if echo "$LOG_OUTPUT" | grep -qiE "clang: error.*unsupported.*march"; then
+            echo -e "${YELLOW}${BOLD}🔧 Hata Türü: Compiler Error (march flag)${NC}"
+            echo -e "${CYAN}Kök Neden:${NC} Clang compiler 'armv8-a+simd+crypto' formatını desteklemiyor"
+            echo -e "${CYAN}Çözüm:${NC}"
+            echo "  1. -march flag'ini kaldır veya doğru format kullan (armv8-a)"
+            echo "  2. CMAKE_C_FLAGS ve CMAKE_CXX_FLAGS'den -march=armv8-a+simd+crypto'yı kaldır"
+            echo "  3. CMake'in otomatik toolchain ayarlarına güven"
+            echo ""
+        elif echo "$LOG_OUTPUT" | grep -qiE "CMake Error"; then
+            echo -e "${YELLOW}${BOLD}🔧 Hata Türü: CMake Configuration Error${NC}"
+            CMAKE_ERROR=$(echo "$LOG_OUTPUT" | grep -iE "CMake Error" | head -3)
+            echo -e "${CYAN}Detay:${NC}"
+            echo "$CMAKE_ERROR" | sed 's/^/  /'
+            echo -e "${CYAN}Çözüm:${NC}"
+            echo "  1. CMakeLists.txt dosyasını kontrol et"
+            echo "  2. NDK toolchain dosyasını kontrol et"
+            echo "  3. CMake versiyonunu kontrol et"
+            echo ""
+        elif echo "$LOG_OUTPUT" | grep -qiE "Libraries not found"; then
+            echo -e "${YELLOW}${BOLD}🔧 Hata Türü: Library Not Found${NC}"
+            echo -e "${CYAN}Kök Neden:${NC} Build başarılı ama kütüphaneler beklenen yerde değil"
+            echo -e "${CYAN}Çözüm:${NC}"
+            echo "  1. Build output dizinini kontrol et"
+            echo "  2. Library path'lerini düzelt"
+            echo "  3. Artifact upload path'lerini kontrol et"
+            echo ""
+        elif echo "$LOG_OUTPUT" | grep -qiE "ninja.*failed"; then
+            echo -e "${YELLOW}${BOLD}🔧 Hata Türü: Build Error (Ninja)${NC}"
+            NINJA_ERROR=$(echo "$LOG_OUTPUT" | grep -iE "ninja.*failed" | head -3)
+            echo -e "${CYAN}Detay:${NC}"
+            echo "$NINJA_ERROR" | sed 's/^/  /'
+            echo -e "${CYAN}Çözüm:${NC}"
+            echo "  1. Build dizinini temizle"
+            echo "  2. Dependency'leri kontrol et"
+            echo "  3. Memory limit'i kontrol et"
+            echo ""
+        else
+            # Genel analiz
+            ERROR_COUNT=$(echo "$LOG_OUTPUT" | grep -iE "(error|failed)" | wc -l || echo "0")
+            echo -e "${YELLOW}${BOLD}🔧 Hata Türü: Genel Hata${NC}"
+            echo -e "${CYAN}Toplam Hata Sayısı:${NC} $ERROR_COUNT"
+            echo -e "${CYAN}Öneri:${NC} Logları detaylı inceleyin"
+            echo ""
+        fi
+        
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${DIM}💡 Detaylı analiz için log dosyasını kontrol edin${NC}"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
     fi
 }
 
