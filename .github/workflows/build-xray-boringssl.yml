@@ -127,6 +127,7 @@ jobs:
           mkdir -p "$BUILD_DIR"
           cd "$BUILD_DIR"
 
+          echo "🔧 Configuring CMake for ${{ matrix.abi }}..."
           cmake .. \
             -DCMAKE_SYSTEM_NAME=Android \
             -DCMAKE_SYSTEM_VERSION=24 \
@@ -138,9 +139,21 @@ jobs:
             -DOPENSSL_NO_DEPRECATED=1 \
             -DOPENSSL_NO_ASM=0 \
             -DBUILD_SHARED_LIBS=OFF \
-            -GNinja
+            -GNinja || {
+            echo "❌ CMake configuration failed for ${{ matrix.abi }}"
+            echo "CMake version:"
+            cmake --version
+            echo "NDK_HOME: $NDK_HOME"
+            exit 1
+          }
 
-          ninja -j$(nproc)
+          echo "🔨 Building BoringSSL with Ninja..."
+          ninja -j$(nproc) || {
+            echo "❌ Ninja build failed for ${{ matrix.abi }}"
+            echo "Build directory contents:"
+            ls -la . || true
+            exit 1
+          }
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
 
@@ -257,6 +270,7 @@ jobs:
           name: boringssl-${{ matrix.abi }}
           path: boringssl-${{ matrix.abi }}
           continue-on-error: false
+          if-no-files-found: error
 
       - name: Verify BoringSSL Artifacts Downloaded
         run: |
