@@ -41,7 +41,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
+
+      - name: Initialize Valid Submodules
+        run: |
+          # Only initialize the valid submodule (hev-socks5-tunnel)
+          git submodule sync || true
+          git submodule update --init app/src/main/jni/hev-socks5-tunnel || true
 
       - name: Setup NDK
         run: |
@@ -144,7 +150,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
+
+      - name: Initialize Valid Submodules
+        run: |
+          # Only initialize the valid submodule (hev-socks5-tunnel)
+          git submodule sync || true
+          git submodule update --init app/src/main/jni/hev-socks5-tunnel || true
 
       - name: Read Versions
         run: |
