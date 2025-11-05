@@ -166,16 +166,37 @@ jobs:
           
           # Build crypto and ssl libraries specifically
           echo "Building crypto and ssl targets..."
+          BUILD_SUCCESS=false
+          
+          # Try building specific targets first
           if ninja crypto ssl 2>&1; then
             echo "✅ Crypto and SSL targets built successfully"
+            BUILD_SUCCESS=true
           else
             echo "⚠️  Specific targets failed, trying full build..."
-            if ! ninja -j$(nproc) 2>&1; then
+            if ninja -j$(nproc) 2>&1; then
+              echo "✅ Full build completed"
+              BUILD_SUCCESS=true
+            else
               BUILD_EXIT_CODE=$?
               echo "❌ Ninja build failed for ${{ matrix.abi }} with exit code: $BUILD_EXIT_CODE"
               echo "Build directory contents:"
               ls -la . || true
+              echo ""
+              echo "Checking what was actually built:"
+              find . -name "*.a" -type f 2>/dev/null | head -10 || echo "No .a files found"
               exit $BUILD_EXIT_CODE
+            fi
+          fi
+          
+          # Verify build actually produced something
+          if [ "$BUILD_SUCCESS" = "true" ]; then
+            A_FILES=$(find . -name "*.a" -type f 2>/dev/null | wc -l)
+            if [ "$A_FILES" -eq "0" ]; then
+              echo "⚠️  Build reported success but no .a files found!"
+              echo "Build directory structure:"
+              find . -type f | head -20
+              exit 1
             fi
           fi
 
@@ -195,11 +216,14 @@ jobs:
               echo "✅ Libraries found in alternative locations:"
               echo "  crypto: $CRYPTO_LIB"
               echo "  ssl: $SSL_LIB"
-              # Create symlinks or copy to expected location
+              # Copy to expected location (use absolute paths)
               mkdir -p crypto ssl
-              cp "$CRYPTO_LIB" crypto/libcrypto.a || ln -sf "$(realpath $CRYPTO_LIB)" crypto/libcrypto.a
-              cp "$SSL_LIB" ssl/libssl.a || ln -sf "$(realpath $SSL_LIB)" ssl/libssl.a
-              echo "✅ Libraries linked to standard locations"
+              CRYPTO_ABS=$(cd "$(dirname "$CRYPTO_LIB")" && pwd)/$(basename "$CRYPTO_LIB")
+              SSL_ABS=$(cd "$(dirname "$SSL_LIB")" && pwd)/$(basename "$SSL_LIB")
+              cp "$CRYPTO_ABS" crypto/libcrypto.a
+              cp "$SSL_ABS" ssl/libssl.a
+              echo "✅ Libraries copied to standard locations"
+              ls -lh crypto/libcrypto.a ssl/libssl.a
             else
               echo "❌ Libraries not found anywhere!"
               echo "All .a files in build directory:"
