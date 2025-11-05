@@ -102,7 +102,7 @@ jobs:
             external/boringssl/lib
             external/boringssl/include
             external/boringssl/src
-          key: boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-v2
+          key: boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-v3
           restore-keys: |
             boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-
             boringssl-${{ runner.os }}-
