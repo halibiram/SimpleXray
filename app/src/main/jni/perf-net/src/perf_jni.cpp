@@ -6,6 +6,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <atomic>
+#include "perf_common.h"
 
 // Define JNI version constants if not available (for older NDK versions)
 #ifndef JNI_VERSION_1_8
@@ -27,12 +28,7 @@ extern "C" void perf_tls_session_cleanup();
 // Note: Not static because it's accessed via extern from other modules
 alignas(64) std::atomic<JavaVM*> g_jvm{nullptr};
 
-// Cached JNI class and method IDs (reduces JNI lookups)
-struct alignas(64) JNICache {
-    jclass byteBufferClass{nullptr};
-    jmethodID allocateDirectMethod{nullptr};
-    bool initialized{false};
-};
+// JNICache instance (declared in perf_common.h)
 JNICache g_jni_cache;  // Not static - accessed via extern from other modules
 
 // Forward declarations
