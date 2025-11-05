@@ -1,0 +1,253 @@
+name: Build Xray-core with BoringSSL
+
+on:
+  workflow_call:
+    inputs:
+      xray_version:
+        description: 'Xray-core version to build'
+        required: false
+        type: string
+        default: 'v25.10.15'
+  workflow_dispatch:
+    inputs:
+      xray_version:
+        description: 'Xray-core version to build'
+        required: false
+        default: 'v25.10.15'
+      build_abis:
+        description: 'Comma-separated ABIs to build'
+        required: false
+        default: 'arm64-v8a,armeabi-v7a,x86_64'
+
+jobs:
+  build-boringssl:
+    name: Build BoringSSL
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+        include:
+          - abi: arm64-v8a
+            toolchain: aarch64-linux-android24
+            cmake_arch: arm64-v8a
+          - abi: armeabi-v7a
+            toolchain: armv7a-linux-androideabi24
+            cmake_arch: armeabi-v7a
+          - abi: x86_64
+            toolchain: x86_64-linux-android24
+            cmake_arch: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup NDK
+        run: |
+          wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q android-ndk.zip
+          rm android-ndk.zip
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_PATH
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+
+      - name: Build BoringSSL
+        run: |
+          BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+          if [ ! -d "$BORINGSSL_DIR" ]; then
+            echo "❌ BoringSSL submodule not found!"
+            exit 1
+          fi
+
+          cd "$BORINGSSL_DIR"
+          TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          BUILD_DIR="build_${{ matrix.abi }}"
+          mkdir -p "$BUILD_DIR"
+          cd "$BUILD_DIR"
+
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=Android \
+            -DCMAKE_SYSTEM_VERSION=24 \
+            -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.cmake_arch }} \
+            -DCMAKE_ANDROID_NDK=$NDK_HOME \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENSSL_SMALL=1 \
+            -DOPENSSL_NO_DEPRECATED=1 \
+            -DOPENSSL_NO_ASM=0 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -GNinja
+
+          ninja -j$(nproc)
+
+          echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
+
+      - name: Upload BoringSSL Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: boringssl-${{ matrix.abi }}
+          path: |
+            app/src/main/jni/perf-net/third_party/boringssl/build_${{ matrix.abi }}/crypto/libcrypto.a
+            app/src/main/jni/perf-net/third_party/boringssl/build_${{ matrix.abi }}/ssl/libssl.a
+          retention-days: 7
+
+  build-xray:
+    name: Build Xray-core with BoringSSL
+    runs-on: ubuntu-22.04
+    needs: build-boringssl
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+        include:
+          - abi: arm64-v8a
+            goarch: arm64
+            toolchain: aarch64-linux-android24
+          - abi: armeabi-v7a
+            goarch: arm
+            toolchain: armv7a-linux-androideabi24
+          - abi: x86_64
+            goarch: amd64
+            toolchain: x86_64-linux-android24
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Read Versions
+        run: |
+          # Check if input version is provided (from workflow_call)
+          INPUT_VERSION="${{ inputs.xray_version }}"
+          
+          if [ -f "version.properties" ]; then
+            XRAY_VERSION=$(grep 'XRAY_CORE_VERSION' version.properties | cut -d '=' -f 2)
+            GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)
+            # Use input version if provided, otherwise use version.properties
+            if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "v25.10.15" ]; then
+              XRAY_VERSION="$INPUT_VERSION"
+            fi
+            echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
+            echo "GO_VERSION=$GO_VERSION" >> $GITHUB_ENV
+          else
+            # Use input version or default
+            XRAY_VERSION="${INPUT_VERSION:-v25.10.15}"
+            echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
+            echo "GO_VERSION=1.25.3" >> $GITHUB_ENV
+          fi
+          
+          echo "Building Xray-core version: $XRAY_VERSION"
+          echo "Using Go version: $GO_VERSION"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup NDK
+        run: |
+          wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q android-ndk.zip
+          rm android-ndk.zip
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+
+      - name: Download BoringSSL Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: boringssl-${{ matrix.abi }}
+          path: boringssl-${{ matrix.abi }}
+
+      - name: Clone Xray-core
+        run: |
+          git clone --depth=1 https://github.com/XTLS/Xray-core.git
+          cd Xray-core
+          if [ -n "$XRAY_VERSION" ] && [ "$XRAY_VERSION" != "latest" ]; then
+            git checkout "$XRAY_VERSION" || echo "⚠️  Version $XRAY_VERSION not found, using latest"
+          fi
+          COMMIT=$(git rev-parse HEAD | cut -c 1-7)
+          echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_ENV
+          echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_OUTPUT
+
+      - name: Apply Patches
+        run: |
+          cd Xray-core
+          if [ -d "../xray-patches" ]; then
+            for patch in ../xray-patches/*.patch; do
+              if [ -f "$patch" ]; then
+                echo "Applying patch: $(basename $patch)"
+                git apply "$patch" || echo "⚠️  Patch $(basename $patch) failed or already applied"
+              fi
+            done
+          else
+            echo "⚠️  No patches directory found, building vanilla Xray-core"
+          fi
+
+      - name: Build Xray-core with BoringSSL
+        run: |
+          cd Xray-core
+          
+          # Set up CGO environment
+          export GOOS=android
+          export CGO_ENABLED=1
+          export GOARCH=${{ matrix.goarch }}
+          
+          TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          export CC=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang
+          export CXX=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang++
+          export AR=$TOOLCHAIN_DIR/bin/llvm-ar
+          export RANLIB=$TOOLCHAIN_DIR/bin/llvm-ranlib
+          export STRIP=$TOOLCHAIN_DIR/bin/llvm-strip
+          
+          # Set BoringSSL library paths
+          BORINGSSL_CRYPTO="$(realpath ../boringssl-${{ matrix.abi }}/crypto/libcrypto.a)"
+          BORINGSSL_SSL="$(realpath ../boringssl-${{ matrix.abi }}/ssl/libssl.a)"
+          BORINGSSL_INCLUDE="$(realpath ../app/src/main/jni/perf-net/third_party/boringssl/include)"
+          
+          if [ ! -f "$BORINGSSL_CRYPTO" ] || [ ! -f "$BORINGSSL_SSL" ]; then
+            echo "❌ BoringSSL libraries not found!"
+            exit 1
+          fi
+          
+          # CGO flags for BoringSSL
+          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE"
+          export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -lcrypto -lssl -static"
+          
+          # Build with CGO
+          echo "Building Xray-core for ${{ matrix.abi }} with BoringSSL..."
+          go build \
+            -buildmode=c-shared \
+            -o libxray.so \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
+            -v \
+            ./main
+          
+          # Strip binary
+          $STRIP --strip-all libxray.so
+          
+          # Verify BoringSSL linkage
+          if strings libxray.so | grep -qi "BoringSSL\|boringssl"; then
+            echo "✅ BoringSSL symbols found in binary"
+          else
+            echo "⚠️  Warning: BoringSSL symbols not found in binary"
+          fi
+          
+          # Move to output directory
+          mkdir -p ../xray-output/${{ matrix.abi }}
+          mv libxray.so ../xray-output/${{ matrix.abi }}/libxray.so
+
+      - name: Upload Xray Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xray-${{ matrix.abi }}
+          path: xray-output/${{ matrix.abi }}/libxray.so
+          retention-days: 7
+

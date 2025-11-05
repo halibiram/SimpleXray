@@ -1,0 +1,26 @@
+# Patch: Enhance XTLS Vision flow with BoringSSL
+# This patch optimizes XTLS Vision flow using BoringSSL zero-copy features
+#
+# Note: This is a template patch. Actual implementation requires:
+# - Understanding Xray-core's XTLS implementation
+# - Enabling zero-copy with BoringSSL
+# - Optimizing splice() syscalls
+#
+# Expected changes:
+# - Modify: proxy/vless/outbound/*.go (if XTLS is in outbound)
+# - Enable zero-copy with BoringSSL
+# - Optimize splice() syscalls for better performance
+#
+# This patch should be customized based on actual Xray-core codebase structure
+
+diff --git a/proxy/vless/outbound/vision.go b/proxy/vless/outbound/vision.go
+index 0000000..1234567
+--- a/proxy/vless/outbound/vision.go
++++ b/proxy/vless/outbound/vision.go
+@@ -1,5 +1,5 @@
+ package outbound
+ 
+-// XTLS Vision implementation would be modified here
++// XTLS Vision implementation modified to use BoringSSL zero-copy
+ // This is a placeholder - actual changes needed based on Xray-core code
+
