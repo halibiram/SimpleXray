@@ -1,0 +1,186 @@
+name: "Auto Update Xray Core"
+
+on:
+  schedule:
+    # Run every day at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    # Allow manual trigger
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/auto-update-xray-core.yml'
+
+jobs:
+  check-and-update:
+    name: Check and Update Xray Core
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get Current Xray Version
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(grep 'XRAY_CORE_VERSION' version.properties | cut -d '=' -f 2)
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Current Xray Core version: $CURRENT_VERSION"
+
+      - name: Get Latest Xray Release
+        id: latest_release
+        run: |
+          # Get the latest release tag from XTLS/Xray-core
+          LATEST_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name')
+
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
+            echo "❌ Failed to fetch latest Xray Core version"
+            exit 1
+          fi
+
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          echo "🚀 Latest Xray Core version: $LATEST_VERSION"
+
+      - name: Compare Versions
+        id: compare
+        run: |
+          CURRENT="${{ steps.current_version.outputs.version }}"
+          LATEST="${{ steps.latest_release.outputs.version }}"
+
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "✅ Xray Core is already up to date ($CURRENT)"
+          else
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "🔄 Xray Core needs update: $CURRENT → $LATEST"
+          fi
+
+      - name: Update version.properties
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          LATEST_VERSION="${{ steps.latest_release.outputs.version }}"
+
+          # Update XRAY_CORE_VERSION in version.properties
+          sed -i "s/^XRAY_CORE_VERSION=.*/XRAY_CORE_VERSION=$LATEST_VERSION/" version.properties
+
+          echo "✅ Updated version.properties with Xray Core $LATEST_VERSION"
+
+          # Show the change
+          echo "📝 Changes:"
+          git diff version.properties
+
+      - name: Commit and Push Changes
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          LATEST_VERSION="${{ steps.latest_release.outputs.version }}"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit changes
+          git add version.properties
+          git commit -m "chore(xray-core): Update to $LATEST_VERSION [skip ci]
+
+Auto-update Xray Core from ${{ steps.current_version.outputs.version }} to $LATEST_VERSION
+
+This is an automated update triggered by the auto-update-xray-core workflow."
+
+          # Push changes (with retry logic)
+          MAX_RETRIES=4
+          RETRY_DELAY=2
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "📤 Push attempt $i/$MAX_RETRIES..."
+            if git push origin main; then
+              echo "✅ Changes pushed successfully"
+              exit 0
+            else
+              if [ $i -lt $MAX_RETRIES ]; then
+                echo "⚠️  Push failed, retrying in ${RETRY_DELAY}s..."
+                sleep $RETRY_DELAY
+                RETRY_DELAY=$((RETRY_DELAY * 2))
+              else
+                echo "❌ Failed to push after $MAX_RETRIES attempts"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Create Release Notes
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          LATEST_VERSION="${{ steps.latest_release.outputs.version }}"
+          CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
+
+          cat > xray_update_notes.md << EOF
+          ## Xray Core Updated to $LATEST_VERSION
+
+          **Previous Version:** $CURRENT_VERSION
+          **New Version:** $LATEST_VERSION
+
+          ### What's New
+          See the official Xray Core release notes:
+          https://github.com/XTLS/Xray-core/releases/tag/$LATEST_VERSION
+
+          ### Changes
+          - Updated \`XRAY_CORE_VERSION\` in version.properties
+          - This will trigger an automatic build and release
+
+          ---
+          🤖 This update was performed automatically by GitHub Actions
+          EOF
+
+          echo "📄 Release notes created"
+          cat xray_update_notes.md
+
+      - name: Send Telegram Notification
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
+
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "⚠️  Telegram secrets not configured, skipping notification"
+            exit 0
+          fi
+
+          LATEST_VERSION="${{ steps.latest_release.outputs.version }}"
+          CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
+
+          TEXT="🔄 *Xray Core Auto-Update*\\n\\n"
+          TEXT+="📦 *Previous:* \`$CURRENT_VERSION\`\\n"
+          TEXT+="🚀 *Updated to:* \`$LATEST_VERSION\`\\n\\n"
+          TEXT+="🔗 [View Release Notes](https://github.com/XTLS/Xray-core/releases/tag/$LATEST_VERSION)\\n\\n"
+          TEXT+="✨ An automatic build will start soon!"
+
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\": \"$CHAT_ID\", \"text\": \"$TEXT\", \"parse_mode\": \"Markdown\"}" \
+            "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" || echo "⚠️  Failed to send Telegram notification"
+
+          echo "✅ Telegram notification sent"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Xray Core Update Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current Version:** ${{ steps.current_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest Version:** ${{ steps.latest_release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Update Needed:** ${{ steps.compare.outputs.needs_update }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.compare.outputs.needs_update }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Update applied successfully!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The version.properties file has been updated and changes have been pushed to the main branch." >> $GITHUB_STEP_SUMMARY
+            echo "This will trigger an automatic build and release." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Already up to date!**" >> $GITHUB_STEP_SUMMARY
+          fi
