@@ -128,30 +128,31 @@ jobs:
 
           echo "🔧 Configuring CMake for ${{ matrix.abi }}..."
           
-          # Build CMake command with ABI-specific flags
-          CMAKE_CMD="cmake .. \
-            -DCMAKE_SYSTEM_NAME=Android \
-            -DCMAKE_SYSTEM_VERSION=24 \
-            -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.cmake_arch }} \
-            -DCMAKE_ANDROID_NDK=$NDK_HOME \
-            -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DOPENSSL_SMALL=1 \
-            -DOPENSSL_NO_DEPRECATED=1 \
-            -DOPENSSL_NO_ASM=0 \
-            -DBUILD_SHARED_LIBS=OFF"
+          # Base CMake arguments
+          CMAKE_ARGS=(
+            ".."
+            "-DCMAKE_SYSTEM_NAME=Android"
+            "-DCMAKE_SYSTEM_VERSION=24"
+            "-DCMAKE_ANDROID_ARCH_ABI=${{ matrix.cmake_arch }}"
+            "-DCMAKE_ANDROID_NDK=$NDK_HOME"
+            "-DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake"
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DOPENSSL_SMALL=1"
+            "-DOPENSSL_NO_DEPRECATED=1"
+            "-DOPENSSL_NO_ASM=0"
+            "-DBUILD_SHARED_LIBS=OFF"
+            "-GNinja"
+          )
           
           # Add ABI-specific compiler flags
           if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
             echo "📱 Configuring for ARM64 with crypto extensions"
-            CMAKE_CMD="$CMAKE_CMD -DCMAKE_C_FLAGS=-march=armv8-a+simd+crypto"
-            CMAKE_CMD="$CMAKE_CMD -DCMAKE_CXX_FLAGS=-march=armv8-a+simd+crypto"
+            CMAKE_ARGS+=("-DCMAKE_C_FLAGS=-march=armv8-a+simd+crypto")
+            CMAKE_ARGS+=("-DCMAKE_CXX_FLAGS=-march=armv8-a+simd+crypto")
           fi
           
-          CMAKE_CMD="$CMAKE_CMD -GNinja"
-          
-          echo "Running CMake configuration..."
-          eval $CMAKE_CMD || {
+          echo "Running CMake configuration with ${#CMAKE_ARGS[@]} arguments..."
+          cmake "${CMAKE_ARGS[@]}" || {
             echo "❌ CMake configuration failed for ${{ matrix.abi }}"
             echo "CMake version:"
             cmake --version
