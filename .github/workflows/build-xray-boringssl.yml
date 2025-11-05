@@ -216,13 +216,42 @@ jobs:
           fi
           
           # Verify files exist before leaving build directory
-          if [ -f "crypto/libcrypto.a" ] && [ -f "ssl/libssl.a" ]; then
+          echo "🔍 Final verification of built libraries..."
+          CRYPTO_LIB="crypto/libcrypto.a"
+          SSL_LIB="ssl/libssl.a"
+          
+          if [ -f "$CRYPTO_LIB" ] && [ -f "$SSL_LIB" ]; then
             echo "✅ Both libraries found in build directory!"
-            ls -lh crypto/libcrypto.a ssl/libssl.a
+            ls -lh "$CRYPTO_LIB" "$SSL_LIB"
+            echo "✅ Libraries verified successfully"
           else
             echo "❌ Libraries not found in build directory!"
             echo "Current directory: $(pwd)"
-            echo "Looking for: crypto/libcrypto.a and ssl/libssl.a"
+            echo "Looking for: $CRYPTO_LIB and $SSL_LIB"
+            echo ""
+            echo "Build directory contents:"
+            ls -la . || echo "Cannot list directory"
+            echo ""
+            echo "All .a files in build directory:"
+            find . -type f -name "*.a" 2>/dev/null | head -20 || echo "No .a files found"
+            echo ""
+            echo "Checking crypto directory:"
+            if [ -d "crypto" ]; then
+              ls -la crypto/ || echo "Cannot list crypto directory"
+            else
+              echo "crypto directory does not exist!"
+            fi
+            echo ""
+            echo "Checking ssl directory:"
+            if [ -d "ssl" ]; then
+              ls -la ssl/ || echo "Cannot list ssl directory"
+            else
+              echo "ssl directory does not exist!"
+            fi
+            echo ""
+            echo "⚠️  Build may have completed but libraries are in unexpected location"
+            echo "Checking parent directory:"
+            find .. -maxdepth 2 -name "*.a" -type f 2>/dev/null | head -10 || echo "No .a files in parent"
             exit 1
           fi
 
