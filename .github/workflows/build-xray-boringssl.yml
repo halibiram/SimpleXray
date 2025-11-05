@@ -144,6 +144,35 @@ jobs:
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
 
+      - name: Verify BoringSSL Artifacts
+        run: |
+          BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+          BUILD_DIR="$BORINGSSL_DIR/build_${{ matrix.abi }}"
+          CRYPTO_LIB="$BUILD_DIR/crypto/libcrypto.a"
+          SSL_LIB="$BUILD_DIR/ssl/libssl.a"
+          
+          echo "🔍 Verifying BoringSSL artifacts for ${{ matrix.abi }}..."
+          echo "Expected paths:"
+          echo "  - $CRYPTO_LIB"
+          echo "  - $SSL_LIB"
+          
+          if [ ! -f "$CRYPTO_LIB" ]; then
+            echo "❌ libcrypto.a not found at $CRYPTO_LIB"
+            echo "Listing $BUILD_DIR/crypto:"
+            ls -la "$BUILD_DIR/crypto/" || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          if [ ! -f "$SSL_LIB" ]; then
+            echo "❌ libssl.a not found at $SSL_LIB"
+            echo "Listing $BUILD_DIR/ssl:"
+            ls -la "$BUILD_DIR/ssl/" || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          echo "✅ Both artifacts found:"
+          ls -lh "$CRYPTO_LIB" "$SSL_LIB"
+
       - name: Upload BoringSSL Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -152,6 +181,7 @@ jobs:
             app/src/main/jni/perf-net/third_party/boringssl/build_${{ matrix.abi }}/crypto/libcrypto.a
             app/src/main/jni/perf-net/third_party/boringssl/build_${{ matrix.abi }}/ssl/libssl.a
           retention-days: 7
+          if-no-files-found: error
 
   build-xray:
     name: Build Xray-core with BoringSSL
@@ -226,6 +256,32 @@ jobs:
         with:
           name: boringssl-${{ matrix.abi }}
           path: boringssl-${{ matrix.abi }}
+          continue-on-error: false
+
+      - name: Verify BoringSSL Artifacts Downloaded
+        run: |
+          ARTIFACT_DIR="boringssl-${{ matrix.abi }}"
+          CRYPTO_LIB="$ARTIFACT_DIR/crypto/libcrypto.a"
+          SSL_LIB="$ARTIFACT_DIR/ssl/libssl.a"
+          
+          echo "🔍 Verifying downloaded BoringSSL artifacts..."
+          
+          if [ ! -f "$CRYPTO_LIB" ]; then
+            echo "❌ libcrypto.a not found in downloaded artifacts"
+            echo "Listing $ARTIFACT_DIR:"
+            find "$ARTIFACT_DIR" -type f || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          if [ ! -f "$SSL_LIB" ]; then
+            echo "❌ libssl.a not found in downloaded artifacts"
+            echo "Listing $ARTIFACT_DIR:"
+            find "$ARTIFACT_DIR" -type f || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          echo "✅ Both artifacts downloaded successfully:"
+          ls -lh "$CRYPTO_LIB" "$SSL_LIB"
 
       - name: Clone Xray-core
         run: |
