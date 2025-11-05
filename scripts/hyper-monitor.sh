@@ -84,9 +84,12 @@ analyze_failure_hyper() {
     rm -f /tmp/failed_jobs_$$.json /tmp/run_info_$$.json
 }
 
-# Hyper log fetcher'ı import et (eğer varsa)
+# Hyper log fetcher ve analyzer'ı import et (eğer varsa)
 if [ -f "$(dirname "$0")/hyper-log-fetcher.sh" ]; then
     source "$(dirname "$0")/hyper-log-fetcher.sh"
+fi
+if [ -f "$(dirname "$0")/hyper-log-analyzer.sh" ]; then
+    source "$(dirname "$0")/hyper-log-analyzer.sh"
 fi
 
 # Hata loglarını hyper hızlı al
@@ -257,9 +260,25 @@ get_error_logs_hyper() {
         echo -e "${GREEN}✅ Loglar alındı${NC}" >&2
     fi
     
-    # Log çıktısını göster
+    # Log çıktısını göster ve analiz et
     if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ] && [ "$LOG_OUTPUT" != "null" ]; then
+        echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}📄 Log İçeriği:${NC}"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         echo "$LOG_OUTPUT" | tail -60
+        
+        # Log analizi yap
+        if type analyze_logs_detailed &> /dev/null; then
+            echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            analyze_logs_detailed "$LOG_OUTPUT" "$RUN_ID" "$JOB_ID"
+        elif type quick_analyze_logs &> /dev/null; then
+            echo -e "\n${CYAN}🔍 Hızlı Log Analizi:${NC}"
+            QUICK_ANALYSIS=$(quick_analyze_logs "$LOG_OUTPUT")
+            ERROR_TYPE=$(echo "$QUICK_ANALYSIS" | cut -d'|' -f1)
+            ERROR_COUNT=$(echo "$QUICK_ANALYSIS" | cut -d'|' -f2)
+            echo -e "${BLUE}Hata Türü:${NC} ${RED}$ERROR_TYPE${NC}"
+            echo -e "${BLUE}Hata Sayısı:${NC} ${RED}$ERROR_COUNT${NC}"
+        fi
     fi
 }
 
