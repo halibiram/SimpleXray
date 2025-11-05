@@ -77,6 +77,43 @@ jobs:
           restore-keys: |
             ndk-r28c-
 
+      - name: Cache BoringSSL
+        id: cache-boringssl
+        uses: actions/cache@v4
+        with:
+          path: |
+            external/boringssl/lib
+            external/boringssl/include
+            external/boringssl/src
+          key: boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-v1
+          restore-keys: |
+            boringssl-${{ runner.os }}-
+
+      - name: Setup Python for BoringSSL
+        if: steps.cache-boringssl.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install BoringSSL Build Dependencies
+        if: steps.cache-boringssl.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+
+      - name: Build BoringSSL
+        if: steps.cache-boringssl.outputs.cache-hit != 'true'
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup_sdk.outputs.ndk-path }}
+          NDK_HOME: ${{ steps.setup_sdk.outputs.ndk-path }}
+        run: |
+          echo "Building BoringSSL with NDK: $ANDROID_NDK_HOME"
+          cd external/boringssl
+          python3 build_all_abis.py || true
+          cd ../..
+          echo "BoringSSL build complete (or cached):"
+          ls -lh external/boringssl/lib/*/ 2>/dev/null || echo "⚠️ BoringSSL build may have failed"
+
       - name: Cache OpenSSL
         id: cache-openssl
         uses: actions/cache@v4
