@@ -195,8 +195,17 @@ def verify_archive_arch(archive_path, target_arch):
 
                         is_compatible = any(pattern.lower() in file_output for pattern in patterns)
 
+                        # For ARM64, also check that it's NOT x86 or 32-bit ARM
                         if target_arch == 'arm64-v8a':
                             is_compatible = is_compatible and 'x86-64' not in file_output and 'x86_64' not in file_output
+                            # Exclude 32-bit ARM (must be 64-bit and have aarch64/arm64 markers)
+                            if '32-bit' in file_output or ('eabi5' in file_output and 'aarch64' not in file_output):
+                                is_compatible = False
+                        # For 32-bit ARM, exclude 64-bit ARM and x86
+                        elif target_arch == 'armeabi-v7a':
+                            is_compatible = is_compatible and 'aarch64' not in file_output and 'arm64' not in file_output
+                            is_compatible = is_compatible and 'x86-64' not in file_output and 'x86_64' not in file_output
+                        # For x86_64, check that it's NOT ARM
                         elif target_arch == 'x86_64':
                             is_compatible = is_compatible and 'arm' not in file_output and 'aarch64' not in file_output
 
@@ -299,13 +308,21 @@ def filter_archive_by_arch(archive_path, target_arch):
                         check=True
                     )
                     file_output = file_result.stdout.lower()
-                    
+
                     # Check if this file matches target architecture
                     is_compatible = any(pattern.lower() in file_output for pattern in patterns)
-                    
-                    # For ARM64, also check that it's NOT x86_64
+
+                    # For ARM64, also check that it's NOT x86 or 32-bit ARM
                     if target_arch == 'arm64-v8a':
+                        # Exclude x86 architectures
                         is_compatible = is_compatible and 'x86-64' not in file_output and 'x86_64' not in file_output and 'intel 80386' not in file_output
+                        # Exclude 32-bit ARM (must be 64-bit and have aarch64/arm64 markers)
+                        if '32-bit' in file_output or ('eabi5' in file_output and 'aarch64' not in file_output):
+                            is_compatible = False
+                    # For 32-bit ARM, exclude 64-bit ARM and x86
+                    elif target_arch == 'armeabi-v7a':
+                        is_compatible = is_compatible and 'aarch64' not in file_output and 'arm64' not in file_output
+                        is_compatible = is_compatible and 'x86-64' not in file_output and 'x86_64' not in file_output
                     # For x86_64, check that it's NOT ARM
                     elif target_arch == 'x86_64':
                         is_compatible = is_compatible and 'arm' not in file_output and 'aarch64' not in file_output
@@ -322,6 +339,12 @@ def filter_archive_by_arch(archive_path, target_arch):
                             readelf_output = readelf_result.stdout.lower()
                             is_compatible = any(pattern.lower() in readelf_output for pattern in patterns)
                             if target_arch == 'arm64-v8a':
+                                is_compatible = is_compatible and 'x86-64' not in readelf_output and 'x86_64' not in readelf_output
+                                # Check for ARM64 (AArch64) in Machine field
+                                if 'aarch64' not in readelf_output and 'arm64' not in readelf_output:
+                                    is_compatible = False
+                            elif target_arch == 'armeabi-v7a':
+                                is_compatible = is_compatible and 'aarch64' not in readelf_output and 'arm64' not in readelf_output
                                 is_compatible = is_compatible and 'x86-64' not in readelf_output and 'x86_64' not in readelf_output
                             elif target_arch == 'x86_64':
                                 is_compatible = is_compatible and 'arm' not in readelf_output and 'aarch64' not in readelf_output
