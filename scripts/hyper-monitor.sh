@@ -42,10 +42,13 @@ show_banner() {
     echo -e "${DIM}Check Interval: ${CHECK_INTERVAL}s | Max Retries: ${MAX_RETRIES}${NC}\n"
 }
 
-# Failure analizi - Hyper hızlı (sadece veri döndürür, echo yok)
+# Failure analizi - Hyper hızlı (sadece veri döndürür, stderr'e mesaj yaz)
 analyze_failure_hyper() {
     local RUN_ID=$1
     local START_ANALYSIS=$(date +%s%N)
+    
+    # Mesajları stderr'e yaz
+    echo -e "${CYAN}🔍 HYPER ANALİZ BAŞLATILIYOR...${NC}" >&2
     
     # Paralel olarak tüm bilgileri topla (stdout'a yazma, sadece dosyaya)
     (
@@ -71,7 +74,10 @@ analyze_failure_hyper() {
     local END_ANALYSIS=$(date +%s%N)
     local ANALYSIS_TIME=$(( (END_ANALYSIS - START_ANALYSIS) / 1000000 ))
     
-    # Sonuçları sadece stdout'a yaz (renk kodları yok)
+    # Mesajı stderr'e yaz
+    echo -e "${GREEN}✅ Analiz tamamlandı (${ANALYSIS_TIME}ms)${NC}" >&2
+    
+    # Sonuçları sadece stdout'a yaz (renk kodları yok, sadece veri)
     echo "$MOST_COMMON|$FAILED_JOB_COUNT|$FIRST_FAILED_JOB_ID|$RUN_INFO"
     
     # Temizlik
@@ -236,9 +242,8 @@ monitor_loop() {
                         echo "╚════════════════════════════════════════════════════════════════╝"
                         echo -e "${NC}"
                         
-                        # Hyper analiz (stdout'dan veri al)
-                        echo -e "${CYAN}🔍 HYPER ANALİZ BAŞLATILIYOR...${NC}"
-                        ANALYSIS=$(analyze_failure_hyper $RUN_ID 2>&1 | grep -E '^[^[:cntrl:]]*\|' | head -1)
+                        # Hyper analiz (stderr mesajlar, stdout veri)
+                        ANALYSIS=$(analyze_failure_hyper $RUN_ID 2>&1 | grep -E '^[^[:cntrl:]]*\|[^[:cntrl:]]*\|[^[:cntrl:]]*\|' | head -1)
                         
                         if [ -z "$ANALYSIS" ] || [ "$ANALYSIS" = "" ]; then
                             echo -e "${YELLOW}⚠️  Analiz sonucu alınamadı${NC}"
@@ -246,14 +251,14 @@ monitor_loop() {
                             JOB_COUNT="0"
                             JOB_ID=""
                         else
+                            # Veriyi temizle (sadece pipe karakterleri arası)
+                            ANALYSIS=$(echo "$ANALYSIS" | grep -oE '[^|]+\|[^|]+\|[^|]+' | head -1)
                             ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1)
                             JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2)
                             JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3)
                             # JOB_ID'yi temizle (sadece sayı)
                             JOB_ID=$(echo "$JOB_ID" | grep -oE '[0-9]+' | head -1)
                         fi
-                        
-                        echo -e "${GREEN}✅ Analiz tamamlandı${NC}"
                         
                         echo -e "${RED}Hata Tipi:${NC} ${ERROR_TYPE}"
                         echo -e "${RED}Başarısız Job Sayısı:${NC} ${JOB_COUNT}"
