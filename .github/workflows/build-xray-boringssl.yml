@@ -148,12 +148,27 @@ jobs:
           }
 
           echo "🔨 Building BoringSSL with Ninja..."
-          ninja -j$(nproc) || {
-            echo "❌ Ninja build failed for ${{ matrix.abi }}"
+          echo "Ninja version:"
+          ninja --version || echo "Ninja not found"
+          echo "Build targets:"
+          ninja -t targets all 2>/dev/null | head -20 || echo "Cannot list targets"
+          echo ""
+          echo "Starting build..."
+          if ninja -j$(nproc) -v 2>&1 | tee /tmp/ninja-build.log; then
+            echo "✅ Ninja build completed"
+          else
+            BUILD_EXIT_CODE=$?
+            echo "❌ Ninja build failed for ${{ matrix.abi }} with exit code: $BUILD_EXIT_CODE"
+            echo "Last 50 lines of build output:"
+            tail -50 /tmp/ninja-build.log || echo "Build log not available"
+            echo ""
             echo "Build directory contents:"
             ls -la . || true
-            exit 1
-          }
+            echo ""
+            echo "CMake cache:"
+            cat CMakeCache.txt 2>/dev/null | grep -E "(CMAKE_|ANDROID_|TOOLCHAIN)" | head -20 || echo "CMakeCache.txt not found"
+            exit $BUILD_EXIT_CODE
+          fi
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
           
@@ -339,8 +354,6 @@ jobs:
         with:
           name: boringssl-${{ matrix.abi }}
           path: boringssl-${{ matrix.abi }}
-          continue-on-error: false
-          if-no-files-found: error
 
       - name: Verify BoringSSL Artifacts Downloaded
         run: |
