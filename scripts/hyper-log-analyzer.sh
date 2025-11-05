@@ -2,7 +2,7 @@
 
 # Hyper Log Analyzer - GitHub Actions loglarını analiz eder ve hata türlerini tespit eder
 
-set -euo pipefail
+set -eo pipefail
 
 # Renk kodları
 RED='\033[0;31m'
