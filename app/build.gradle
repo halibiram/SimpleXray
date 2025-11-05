@@ -50,14 +50,38 @@ android {
         ndk {
             abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
         }
+
+        // Runtime SSL mode configuration
+        def sslMode = System.getenv("SXR_SSL_MODE") ?: "boringssl"
+        resValue "string", "sxr_ssl_mode", sslMode
+        buildConfigField "String", "SXR_SSL_MODE", "\"${sslMode}\""
+
+        // BoringSSL vs OpenSSL selection
+        def useBoringssl = project.hasProperty('useBoringssl') ?
+                          project.property('useBoringssl').toBoolean() : true
+        buildConfigField "boolean", "USE_BORINGSSL", "${useBoringssl}"
+
+        if (useBoringssl) {
+            println "🔒 Building with BoringSSL"
+        } else {
+            println "🔒 Building with OpenSSL (legacy)"
+        }
+
+        // Experimental features (debug only)
+        def isRelease = gradle.startParameter.taskNames.any { it.contains("Release") }
+        buildConfigField "boolean", "EXPERIMENTAL_ENABLED", "${!isRelease}"
+
         externalNativeBuild {
             ndkBuild {
                 arguments "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=."
                 arguments "APP_LDFLAGS+=-Wl,--build-id=none"
 
-                // OpenSSL support (automatically detected by Android.mk)
-                // To force disable: arguments "-DUSE_OPENSSL=0"
-                // OpenSSL will be automatically enabled if libraries are found
+                // Crypto library selection
+                if (useBoringssl) {
+                    arguments "USE_BORINGSSL=1"
+                } else {
+                    arguments "USE_OPENSSL=1"
+                }
             }
         }
         targetSdk 35
@@ -73,8 +97,10 @@ android {
         buildConfigField "boolean", "FEAT_PERF_PANEL", "false" // Feature flag for performance diagnostics panel
         buildConfigField "boolean", "FEAT_HYPER_UI", "false" // Feature flag for hyper UI performance components
 
-        // OpenSSL build status (checked at runtime via JNI)
+        // Crypto library build status
+        def boringsslAvailable = file("../external/boringssl/lib/arm64-v8a/libcrypto.a").exists()
         def opensslAvailable = file("src/main/jni/openssl/lib/arm64-v8a/libcrypto.a").exists()
+        buildConfigField "boolean", "BORINGSSL_AVAILABLE_AT_BUILD", "${boringsslAvailable}"
         buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "${opensslAvailable}"
     }
 
