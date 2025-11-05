@@ -95,6 +95,19 @@ def clone_boringssl():
     """Clone BoringSSL repository if not present"""
     if BORINGSSL_SRC.exists():
         print(f"✓ BoringSSL source already exists at {BORINGSSL_SRC}")
+        # Get current commit hash
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                cwd=BORINGSSL_SRC,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            commit_hash = result.stdout.strip()[:12]
+            print(f"  Current commit: {commit_hash}")
+        except subprocess.CalledProcessError:
+            print("  Warning: Could not get commit hash")
         return
 
     print("⚙ Cloning BoringSSL repository...")
@@ -104,7 +117,20 @@ def clone_boringssl():
         str(BORINGSSL_SRC)
     ]
     subprocess.run(cmd, check=True)
-    print("✓ BoringSSL cloned successfully")
+
+    # Print commit hash
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=BORINGSSL_SRC,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        commit_hash = result.stdout.strip()[:12]
+        print(f"✓ BoringSSL cloned successfully (commit: {commit_hash})")
+    except subprocess.CalledProcessError:
+        print("✓ BoringSSL cloned successfully")
 
 def build_abi(abi_name, abi_config, ndk_path):
     """Build BoringSSL for a specific ABI"""

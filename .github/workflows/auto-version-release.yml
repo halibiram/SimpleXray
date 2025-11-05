@@ -34,44 +34,49 @@ jobs:
           echo "latest_tag=$latest_tag" >> $GITHUB_OUTPUT
           echo "Latest Xray-core version: v$latest_tag"
 
-      - name: Get latest OpenSSL version
-        id: get_openssl
-        run: |
-          # Get latest OpenSSL 3.x stable release
-          latest_openssl=$(curl -s "https://api.github.com/repos/openssl/openssl/releases" | \
-            grep -o '"tag_name": "openssl-3\.[0-9]\+\.[0-9]\+"' | \
-            head -1 | \
-            sed 's/"tag_name": "openssl-//; s/"//g')
 
-          if [ -z "$latest_openssl" ]; then
-            echo "Failed to get latest OpenSSL version" >&2
+      - name: Get latest BoringSSL commit
+        id: get_boringssl
+        run: |
+          # Get latest commit hash from BoringSSL master branch
+          latest_boringssl=$(curl -s "https://boringssl.googlesource.com/boringssl/+log/refs/heads/master?format=JSON" | \
+            sed '1d' | jq -r '.log[0].commit' 2>/dev/null | cut -c1-12)
+
+          if [ -z "$latest_boringssl" ]; then
+            echo "Failed to get latest BoringSSL commit, using fallback method..." >&2
+            # Fallback: use git ls-remote
+            latest_boringssl=$(git ls-remote https://boringssl.googlesource.com/boringssl HEAD | cut -f1 | cut -c1-12)
+          fi
+
+          if [ -z "$latest_boringssl" ]; then
+            echo "Failed to get latest BoringSSL commit" >&2
             exit 1
           fi
 
-          echo "latest_openssl=$latest_openssl" >> $GITHUB_OUTPUT
-          echo "Latest OpenSSL version: $latest_openssl"
+          echo "latest_boringssl=$latest_boringssl" >> $GITHUB_OUTPUT
+          echo "Latest BoringSSL commit: $latest_boringssl"
 
       - name: Read current version.properties
         id: read_version
         run: |
           current_xray=$(grep '^XRAY_CORE_VERSION=' version.properties | sed 's/.*= *//; s/v//; s/ //g' | tr -d '\r')
-          current_openssl=$(grep '^OPENSSL_VERSION=' version.properties | sed 's/.*= *//; s/ //g' | tr -d '\r')
+          current_boringssl=$(grep '^BORINGSSL_COMMIT=' version.properties | sed 's/.*= *//; s/ //g' | tr -d '\r')
           echo "current_xray=$current_xray" >> $GITHUB_OUTPUT
-          echo "current_openssl=$current_openssl" >> $GITHUB_OUTPUT
+          echo "current_boringssl=$current_boringssl" >> $GITHUB_OUTPUT
           echo "Current XRAY_CORE_VERSION: v$current_xray"
-          echo "Current OPENSSL_VERSION: $current_openssl"
+          echo "Current BORINGSSL_COMMIT: $current_boringssl"
 
       - name: Compare versions
         id: compare
         run: |
           latest_tag="${{ steps.get_tag.outputs.latest_tag }}"
           current_xray="${{ steps.read_version.outputs.current_xray }}"
-          latest_openssl="${{ steps.get_openssl.outputs.latest_openssl }}"
-          current_openssl="${{ steps.read_version.outputs.current_openssl }}"
+          latest_boringssl="${{ steps.get_boringssl.outputs.latest_boringssl }}"
+          current_boringssl="${{ steps.read_version.outputs.current_boringssl }}"
 
           update_needed=false
           xray_updated=false
-          openssl_updated=false
+          boringssl_updated=false
 
           # Check Xray version
           if [ "$(echo -e "$current_xray\n$latest_tag" | sort -V | head -n 1)" != "$latest_tag" ]; then
@@ -84,26 +89,26 @@ jobs:
             echo "new_xray_version=v$current_xray" >> $GITHUB_OUTPUT
           fi
 
-          # Check OpenSSL version
-          if [ "$current_openssl" != "$latest_openssl" ]; then
-            echo "OpenSSL update available: $current_openssl -> $latest_openssl"
-            echo "new_openssl_version=$latest_openssl" >> $GITHUB_OUTPUT
+          # Check BoringSSL commit
+          if [ "$current_boringssl" = "master" ] || [ "$current_boringssl" != "$latest_boringssl" ]; then
+            echo "BoringSSL update available: $current_boringssl -> $latest_boringssl"
+            echo "new_boringssl_commit=$latest_boringssl" >> $GITHUB_OUTPUT
             update_needed=true
-            openssl_updated=true
+            boringssl_updated=true
           else
-            echo "OpenSSL version is up-to-date: $current_openssl"
-            echo "new_openssl_version=$current_openssl" >> $GITHUB_OUTPUT
+            echo "BoringSSL is up-to-date: $current_boringssl"
+            echo "new_boringssl_commit=$current_boringssl" >> $GITHUB_OUTPUT
           fi
 
           if [ "$update_needed" = true ]; then
             echo "update_needed=true" >> $GITHUB_OUTPUT
             echo "xray_updated=$xray_updated" >> $GITHUB_OUTPUT
-            echo "openssl_updated=$openssl_updated" >> $GITHUB_OUTPUT
+            echo "boringssl_updated=$boringssl_updated" >> $GITHUB_OUTPUT
           else
             echo "No updates needed" >&2
             echo "update_needed=false" >> $GITHUB_OUTPUT
             echo "xray_updated=false" >> $GITHUB_OUTPUT
-            echo "openssl_updated=false" >> $GITHUB_OUTPUT
+            echo "boringssl_updated=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Notify if no update needed
@@ -135,7 +140,7 @@ jobs:
           git pull origin ${{ github.ref }}
 
           xray_updated="${{ steps.compare.outputs.xray_updated }}"
-          openssl_updated="${{ steps.compare.outputs.openssl_updated }}"
+          boringssl_updated="${{ steps.compare.outputs.boringssl_updated }}"
 
           # Prepare commit message
           commit_msg="chore: Update dependencies"
@@ -149,11 +154,11 @@ jobs:
             commit_details="${commit_details}\n- Xray-core to ${{ steps.compare.outputs.new_xray_version }}\n- Go to ${{ steps.download.outputs.go_version }}"
           fi
 
-          # Update OpenSSL if needed
-          if [ "$openssl_updated" = "true" ]; then
-            sed -i "s/^OPENSSL_VERSION=.*/OPENSSL_VERSION=${{ steps.compare.outputs.new_openssl_version }}/" version.properties
-            echo "Updated OpenSSL to ${{ steps.compare.outputs.new_openssl_version }}"
-            commit_details="${commit_details}\n- OpenSSL to ${{ steps.compare.outputs.new_openssl_version }}"
+          # Update BoringSSL if needed
+          if [ "$boringssl_updated" = "true" ]; then
+            sed -i "s/^BORINGSSL_COMMIT=.*/BORINGSSL_COMMIT=${{ steps.compare.outputs.new_boringssl_commit }}/" version.properties
+            echo "Updated BoringSSL to ${{ steps.compare.outputs.new_boringssl_commit }}"
+            commit_details="${commit_details}\n- BoringSSL to ${{ steps.compare.outputs.new_boringssl_commit }}"
           fi
 
           git config user.name "lhear"
@@ -180,7 +185,7 @@ EOF
           git push https://x-access-token:${{ secrets.PAT }}@github.com/${{ github.repository }}.git
           echo "new_app_name=$new_app_name" >> $GITHUB_OUTPUT
           echo "xray_updated=$xray_updated" >> $GITHUB_OUTPUT
-          echo "openssl_updated=$openssl_updated" >> $GITHUB_OUTPUT
+          echo "boringssl_updated=$boringssl_updated" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         if: steps.compare.outputs.update_needed == 'true'
@@ -190,7 +195,7 @@ EOF
           body: |
             ### Changes
             ${{ steps.update_versions.outputs.xray_updated == 'true' && format('- **Xray-core**: Updated to version **{0}**', steps.get_tag.outputs.latest_tag) || '' }}
-            ${{ steps.update_versions.outputs.openssl_updated == 'true' && format('- **OpenSSL**: Updated to version **{0}**', steps.compare.outputs.new_openssl_version) || '' }}
+            ${{ steps.update_versions.outputs.boringssl_updated == 'true' && format('- **BoringSSL**: Updated to commit **{0}**', steps.compare.outputs.new_boringssl_commit) || '' }}
           draft: false
           prerelease: false
           token: ${{ secrets.PAT }}
