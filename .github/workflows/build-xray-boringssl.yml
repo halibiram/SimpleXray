@@ -163,27 +163,50 @@ jobs:
           echo "🔨 Building BoringSSL with Ninja..."
           echo "Ninja version:"
           ninja --version || echo "Ninja not found"
-          echo "Build targets:"
-          ninja -t targets all 2>/dev/null | head -20 || echo "Cannot list targets"
-          echo ""
-          echo "Starting build..."
-          if ninja -j$(nproc) -v 2>&1 | tee /tmp/ninja-build.log; then
-            echo "✅ Ninja build completed"
+          
+          # Build crypto and ssl libraries specifically
+          echo "Building crypto and ssl targets..."
+          if ninja crypto ssl 2>&1; then
+            echo "✅ Crypto and SSL targets built successfully"
           else
-            BUILD_EXIT_CODE=$?
-            echo "❌ Ninja build failed for ${{ matrix.abi }} with exit code: $BUILD_EXIT_CODE"
-            echo "Last 50 lines of build output:"
-            tail -50 /tmp/ninja-build.log || echo "Build log not available"
-            echo ""
-            echo "Build directory contents:"
-            ls -la . || true
-            echo ""
-            echo "CMake cache:"
-            cat CMakeCache.txt 2>/dev/null | grep -E "(CMAKE_|ANDROID_|TOOLCHAIN)" | head -20 || echo "CMakeCache.txt not found"
-            exit $BUILD_EXIT_CODE
+            echo "⚠️  Specific targets failed, trying full build..."
+            if ! ninja -j$(nproc) 2>&1; then
+              BUILD_EXIT_CODE=$?
+              echo "❌ Ninja build failed for ${{ matrix.abi }} with exit code: $BUILD_EXIT_CODE"
+              echo "Build directory contents:"
+              ls -la . || true
+              exit $BUILD_EXIT_CODE
+            fi
           fi
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
+          
+          # Immediately check for libraries in standard locations
+          echo "🔍 Checking for built libraries..."
+          if [ -f "crypto/libcrypto.a" ] && [ -f "ssl/libssl.a" ]; then
+            echo "✅ Libraries found in standard location"
+            ls -lh crypto/libcrypto.a ssl/libssl.a
+          else
+            echo "⚠️  Libraries not in standard location, searching..."
+            CRYPTO_LIB=$(find . -name "libcrypto.a" -type f 2>/dev/null | head -1)
+            SSL_LIB=$(find . -name "libssl.a" -type f 2>/dev/null | head -1)
+            
+            if [ -n "$CRYPTO_LIB" ] && [ -n "$SSL_LIB" ]; then
+              echo "✅ Libraries found in alternative locations:"
+              echo "  crypto: $CRYPTO_LIB"
+              echo "  ssl: $SSL_LIB"
+              # Create symlinks or copy to expected location
+              mkdir -p crypto ssl
+              cp "$CRYPTO_LIB" crypto/libcrypto.a || ln -sf "$(realpath $CRYPTO_LIB)" crypto/libcrypto.a
+              cp "$SSL_LIB" ssl/libssl.a || ln -sf "$(realpath $SSL_LIB)" ssl/libssl.a
+              echo "✅ Libraries linked to standard locations"
+            else
+              echo "❌ Libraries not found anywhere!"
+              echo "All .a files in build directory:"
+              find . -name "*.a" -type f 2>/dev/null || echo "No .a files found"
+              exit 1
+            fi
+          fi
           
           # Debug: List all build artifacts (we're still in BUILD_DIR)
           echo "📋 Current directory: $(pwd)"
