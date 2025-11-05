@@ -52,10 +52,12 @@ struct alignas(64) CryptoCapCache {
 };
 static CryptoCapCache g_crypto_cache;
 
+#ifndef USE_BORINGSSL
 extern "C" {
 
 /**
  * Check if ARMv8 Crypto Extensions are available (cached)
+ * NOTE: This function is provided by perf_crypto_boringssl.cpp when using BoringSSL
  */
 __attribute__((hot))
 JNIEXPORT jboolean JNICALL
@@ -124,9 +126,14 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensions(
     
     return has_crypto ? JNI_TRUE : JNI_FALSE;
 }
+#endif // !USE_BORINGSSL
 
 /**
  * AES-128 encrypt using ARMv8 Crypto Extensions
+ * NOTE: This function is provided by perf_crypto_boringssl.cpp when using BoringSSL
+ */
+#ifndef USE_BORINGSSL
+/**
  * 
  * ⚠️ SECURITY WARNING: This implementation is NOT cryptographically secure! ⚠️
  * 
@@ -148,7 +155,6 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensions(
  * Current implementation is BROKEN and provides NO security guarantees.
  */
 __attribute__((hot))
-#pragma clang attribute push(__attribute__((optimize("O3"))), apply_to=function)
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     JNIEnv *env, jclass clazz, jobject input, jint input_offset, jint input_len,
@@ -278,14 +284,13 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     
     // Handle remainder (cold path)
     if (__builtin_expect(remainder > 0, 0)) {
-        __builtin_memcpy_inline(out + blocks * 16, in + blocks * 16, remainder);
+        memcpy(out + blocks * 16, in + blocks * 16, remainder);
         // Pad with zeros (not secure - should use PKCS#7 in production)
-        __builtin_memset(out + blocks * 16 + remainder, 0, 16 - remainder);
+        memset(out + blocks * 16 + remainder, 0, 16 - remainder);
     }
     
     return input_len;
 #endif
-#pragma clang attribute pop
     
     // Original broken code (DISABLED):
     /*
@@ -370,9 +375,14 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     return input_len;
     */
 }
+#endif // !USE_BORINGSSL
 
 /**
  * ChaCha20 using NEON SIMD
+ * NOTE: This function is provided by perf_crypto_boringssl.cpp when using BoringSSL
+ */
+#ifndef USE_BORINGSSL
+/**
  * 
  * ⚠️ SECURITY WARNING: This implementation is NOT ChaCha20! ⚠️
  * 
@@ -395,7 +405,6 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
  * It's essentially a Caesar cipher, not a real stream cipher.
  */
 __attribute__((hot))
-#pragma clang attribute push(__attribute__((optimize("O3"))), apply_to=function)
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     JNIEnv *env, jclass clazz, jobject input, jint input_offset, jint input_len,
@@ -518,7 +527,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     
     return input_len;
 #endif
-#pragma clang attribute pop
+#endif // !USE_BORINGSSL
     
     // Original broken code (DISABLED):
     /*
@@ -642,7 +651,9 @@ Java_com_simplexray_an_performance_PerformanceManager_nativePrefetch(
 
 /**
  * Check if NEON is available
+ * NOTE: This function is provided by perf_crypto_boringssl.cpp when using BoringSSL
  */
+#ifndef USE_BORINGSSL
 JNIEXPORT jboolean JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEON(JNIEnv *env, jclass clazz) {
     (void)env; (void)clazz; // JNI required parameters, not used
@@ -652,6 +663,8 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeHasNEON(JNIEnv *env,
     return JNI_FALSE;
 #endif
 }
-
 } // extern "C"
+#endif // !USE_BORINGSSL
+
+extern "C" {
 

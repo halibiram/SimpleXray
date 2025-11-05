@@ -19,8 +19,8 @@ struct alignas(64) BurstTracker {
     uint64_t byteCount;     // 8 bytes - bytes in current window
     uint64_t windowStartNs; // 8 bytes - window start timestamp
     BurstLevel level;       // 4 bytes - current burst level
-    // Padding to 64 bytes
-    uint8_t reserved[28];
+    // Padding to 64 bytes (5*8 + 4 = 44, need 20 more)
+    uint8_t reserved[20];
 };
 
 static_assert(sizeof(BurstTracker) == 64, "BurstTracker must be 64 bytes");

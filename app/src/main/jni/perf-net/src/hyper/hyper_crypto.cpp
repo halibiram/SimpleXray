@@ -16,6 +16,7 @@
 #include <sys/syscall.h>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/types.h>
 
 #ifdef USE_OPENSSL
 #include <openssl/evp.h>
@@ -61,7 +62,9 @@ static void pin_thread_to_core(int core_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(core_id, &cpuset);
-    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    // On Android, use sched_setaffinity with thread ID instead of pthread_setaffinity_np
+    pid_t tid = gettid();
+    sched_setaffinity(tid, sizeof(cpu_set_t), &cpuset);
 }
 
 // Crypto worker thread

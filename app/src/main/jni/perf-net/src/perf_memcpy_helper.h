@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,7 +48,7 @@ static inline void perf_fast_memcpy(void* __restrict__ dst, const void* __restri
         }
         // Handle remainder
         if (i < len) {
-            __builtin_memcpy_inline(d + i, s + i, len - i);
+            memcpy(d + i, s + i, len - i);
         }
         return;
     }

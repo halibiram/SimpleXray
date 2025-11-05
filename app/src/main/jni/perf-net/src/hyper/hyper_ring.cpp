@@ -7,6 +7,7 @@
 #include <jni.h>
 #include <atomic>
 #include <cstring>
+#include <new>
 #include <android/log.h>
 #include <malloc.h>
 
@@ -64,11 +65,13 @@ Java_com_simplexray_an_hyper_backend_HyperBackend_nativeCreateRing(
         return 0;
     }
     
-    HyperRing* ring = new (std::align_val_t(64)) HyperRing();
-    if (!ring) {
+    // Allocate aligned memory for HyperRing
+    void* ring_ptr = memalign(64, sizeof(HyperRing));
+    if (!ring_ptr) {
         LOGE("Failed to allocate HyperRing");
         return 0;
     }
+    HyperRing* ring = new (ring_ptr) HyperRing();
     
     // Round capacity to power of two
     size_t pow2_capacity = round_up_power2(static_cast<size_t>(capacity));
@@ -78,9 +81,10 @@ Java_com_simplexray_an_hyper_backend_HyperBackend_nativeCreateRing(
     // Allocate ring slots (aligned)
     void* slots_ptr = nullptr;
     int align_result = posix_memalign(&slots_ptr, 64, pow2_capacity * sizeof(RingSlot));
-    if (align_result != 0 || !slots_ptr) {
+        if (align_result != 0 || !slots_ptr) {
         LOGE("Failed to allocate ring slots: %zu bytes", pow2_capacity * sizeof(RingSlot));
-        delete ring;
+        ring->~HyperRing();
+        free(ring);
         return 0;
     }
     ring->slots = static_cast<RingSlot*>(slots_ptr);
@@ -279,7 +283,8 @@ Java_com_simplexray_an_hyper_backend_HyperBackend_nativeDestroyRing(
         if (ring->payload_pool) {
             free(ring->payload_pool);
         }
-        delete ring;
+        ring->~HyperRing();
+        free(ring);
         LOGD("Hyper ring destroyed");
     }
 }

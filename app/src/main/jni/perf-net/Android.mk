@@ -1,7 +1,13 @@
 LOCAL_PATH := $(call my-dir)
 
+# Save the current LOCAL_PATH before including crypto_wrapper
+PERF_NET_LOCAL_PATH := $(LOCAL_PATH)
+
 # Include crypto wrapper module
-include $(LOCAL_PATH)/../../../../../crypto_wrapper/Android.mk
+include $(PERF_NET_LOCAL_PATH)/../../../../../crypto_wrapper/Android.mk
+
+# Restore LOCAL_PATH for this module (CLEAR_VARS doesn't clear LOCAL_PATH)
+LOCAL_PATH := $(PERF_NET_LOCAL_PATH)
 
 # Performance network module
 include $(CLEAR_VARS)
@@ -26,7 +32,6 @@ LOCAL_SRC_FILES := \
     src/perf_qos.cpp \
     src/perf_mmap_batch.cpp \
     src/perf_tcp_fastopen.cpp \
-    src/perf_openssl_detect.cpp \
     src/hyper/hyper_ring.cpp \
     src/hyper/hyper_crypto.cpp \
     src/hyper/hyper_burst.cpp \

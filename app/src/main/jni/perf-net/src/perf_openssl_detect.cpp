@@ -21,54 +21,14 @@
 extern "C" {
 
 /**
- * Check if OpenSSL is available (compiled with USE_OPENSSL)
+ * NOTE: The following functions are now implemented in perf_crypto_boringssl.cpp
+ * using the crypto_wrapper API:
+ * - nativeHasOpenSSL
+ * - nativeGetOpenSSLVersion  
+ * - nativeGetOpenSSLBuildInfo
+ * 
+ * This file now only contains benchmark functions.
  */
-JNIEXPORT jboolean JNICALL
-Java_com_simplexray_an_performance_OpenSSLDetector_nativeHasOpenSSL(
-    JNIEnv *env, jobject thiz) {
-    (void)env;
-    (void)thiz;
-
-#ifdef USE_OPENSSL
-    return JNI_TRUE;
-#else
-    return JNI_FALSE;
-#endif
-}
-
-/**
- * Get OpenSSL version string
- */
-JNIEXPORT jstring JNICALL
-Java_com_simplexray_an_performance_OpenSSLDetector_nativeGetOpenSSLVersion(
-    JNIEnv *env, jobject thiz) {
-    (void)thiz;
-
-#ifdef USE_OPENSSL
-    // Get version string (e.g., "OpenSSL 3.3.0 9 Apr 2024")
-    const char* version = OpenSSL_version(OPENSSL_VERSION);
-    return env->NewStringUTF(version);
-#else
-    return env->NewStringUTF("Not compiled with OpenSSL");
-#endif
-}
-
-/**
- * Get OpenSSL build information
- */
-JNIEXPORT jstring JNICALL
-Java_com_simplexray_an_performance_OpenSSLDetector_nativeGetOpenSSLBuildInfo(
-    JNIEnv *env, jobject thiz) {
-    (void)thiz;
-
-#ifdef USE_OPENSSL
-    // Get build info (e.g., "compiler: gcc -fPIC -pthread ...")
-    const char* build_info = OpenSSL_version(OPENSSL_CFLAGS);
-    return env->NewStringUTF(build_info);
-#else
-    return env->NewStringUTF("No build info available");
-#endif
-}
 
 /**
  * Benchmark AES encryption

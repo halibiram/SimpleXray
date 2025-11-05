@@ -6,6 +6,8 @@
 
 #include <jni.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <android/log.h>
 #include <time.h>
 #include "crypto.h"
