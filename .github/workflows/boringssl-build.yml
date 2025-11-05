@@ -1,0 +1,170 @@
+name: "BoringSSL Build & Test"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'app/src/main/jni/perf-net/**'
+      - '.github/workflows/boringssl-build.yml'
+  pull_request:
+    paths:
+      - 'app/src/main/jni/perf-net/**'
+
+jobs:
+  build-boringssl:
+    name: Build BoringSSL & Native Lib
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        ndk-version: ['28.2.13676358']
+        abi: ['arm64-v8a']
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: true
+      
+      - name: Initialize BoringSSL Submodule
+        run: |
+          echo "🔐 Initializing BoringSSL submodule..."
+          git submodule sync --recursive
+          git submodule update --init --recursive app/src/main/jni/perf-net/third_party/boringssl || {
+            echo "⚠️  Submodule init failed, cloning manually..."
+            mkdir -p app/src/main/jni/perf-net/third_party/boringssl
+            if [ ! -d "app/src/main/jni/perf-net/third_party/boringssl/.git" ]; then
+              git clone https://boringssl.googlesource.com/boringssl app/src/main/jni/perf-net/third_party/boringssl
+            fi
+          }
+          
+          # Verify BoringSSL is present
+          if [ ! -f "app/src/main/jni/perf-net/third_party/boringssl/CMakeLists.txt" ]; then
+            echo "❌ ERROR: BoringSSL not found"
+            exit 1
+          fi
+          echo "✅ BoringSSL initialized"
+      
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+          cache: "gradle"
+      
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Read Versions
+        run: |
+          echo "NDK_VERSION=$(grep 'NDK_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
+      
+      - name: Cache BoringSSL Build
+        uses: actions/cache@v4
+        id: boringssl-cache
+        with:
+          path: |
+            app/src/main/jni/perf-net/third_party/boringssl
+            .build/boringssl
+          key: boringssl-${{ matrix.ndk-version }}-${{ matrix.abi }}-${{ hashFiles('app/src/main/jni/perf-net/third_party/boringssl/**') }}
+          restore-keys: |
+            boringssl-${{ matrix.ndk-version }}-${{ matrix.abi }}-
+      
+      - name: Build Native Library with BoringSSL
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          CMAKE_BUILD_PARALLEL_LEVEL: 4
+        run: |
+          echo "🔨 Building perf-net native library with BoringSSL..."
+          cd app/src/main/jni/perf-net
+          
+          # Create build directory
+          mkdir -p ../../../../.build/cmake/${{ matrix.abi }}
+          cd ../../../../.build/cmake/${{ matrix.abi }}
+          
+          # Configure CMake
+          cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-21 \
+            -DANDROID_NDK=$ANDROID_NDK_HOME \
+            ../../../../app/src/main/jni/perf-net
+          
+          # Build
+          cmake --build . --parallel 4 --target perf-net
+          
+          echo "✅ Native library built"
+      
+      - name: Verify BoringSSL Symbols
+        run: |
+          echo "🔍 Verifying BoringSSL linkage..."
+          
+          # Find built library
+          LIB_PATH=$(find .build/cmake -name "libperf-net.so" -type f | head -n 1)
+          
+          if [ -z "$LIB_PATH" ]; then
+            echo "❌ ERROR: libperf-net.so not found"
+            exit 1
+          fi
+          
+          echo "Library: $LIB_PATH"
+          
+          # Check for BoringSSL symbols (should be present)
+          if ! nm -D "$LIB_PATH" 2>/dev/null | grep -q "SSL"; then
+            echo "⚠️  Warning: No SSL symbols found (may be statically linked)"
+          fi
+          
+          # Check for OpenSSL symbols (should NOT be present)
+          if nm -D "$LIB_PATH" 2>/dev/null | grep -qi "OPENSSL"; then
+            echo "❌ ERROR: OpenSSL symbols found! Should use BoringSSL only."
+            nm -D "$LIB_PATH" | grep -i "OPENSSL" | head -n 10
+            exit 1
+          fi
+          
+          # Check static symbols
+          if nm "$LIB_PATH" 2>/dev/null | grep -q "BORINGSSL"; then
+            echo "✅ BoringSSL symbols found (static linkage)"
+          fi
+          
+          echo "✅ Symbol verification passed"
+      
+      - name: Build APK
+        run: |
+          echo "🔨 Building APK with BoringSSL..."
+          ./gradlew assembleDebug --stacktrace
+      
+      - name: Verify APK Contains Native Library
+        run: |
+          echo "🔍 Verifying APK contents..."
+          
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -n 1)
+          
+          if [ -z "$APK_PATH" ]; then
+            echo "❌ ERROR: APK not found"
+            exit 1
+          fi
+          
+          echo "APK: $APK_PATH"
+          
+          # Check if libperf-net.so is in APK
+          if unzip -l "$APK_PATH" | grep -q "lib.*/perf-net.so"; then
+            echo "✅ libperf-net.so found in APK"
+          else
+            echo "❌ ERROR: libperf-net.so not found in APK"
+            unzip -l "$APK_PATH" | grep -E "lib/|\.so" | head -n 20
+            exit 1
+          fi
+      
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boringssl-native-lib-${{ matrix.abi }}
+          path: |
+            .build/cmake/**/libperf-net.so
+            app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+

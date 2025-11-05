@@ -17,10 +17,13 @@
 #include <pthread.h>
 #include <sched.h>
 
-#ifdef USE_OPENSSL
+#ifdef USE_BORINGSSL
+#define OPENSSL_HEADER_STATIC
 #include <openssl/evp.h>
 #include <openssl/aes.h>
 #include <openssl/chacha.h>
+#include "../crypto_adapter.h"
+#include <cstring>
 #endif
 
 #if defined(__aarch64__) || defined(__arm__)
@@ -100,28 +103,48 @@ static void crypto_worker(int worker_id, CryptoPool* pool) {
             size_t inputLen = job->slot->payloadSize;
             
             // Use NEON-accelerated crypto if available
-            #ifdef USE_OPENSSL
+            #ifdef USE_BORINGSSL
             if (HAS_NEON) {
-                // Use OpenSSL with hardware acceleration
-                // Simplified: encrypt with ChaCha20
+                // Use BoringSSL with hardware acceleration
+                // Check capabilities and use recommended cipher
+                CryptoCapabilities caps;
+                crypto_adapter_init(&caps);
+                
+                const char* cipher_name = crypto_adapter_get_recommended_cipher(&caps);
                 EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
                 if (ctx) {
                     uint8_t key[32] = {0}; // In production, use actual key
                     uint8_t iv[12] = {0};  // In production, use actual IV
                     
-                    EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, iv);
-                    int outlen = 0;
-                    EVP_EncryptUpdate(ctx, static_cast<unsigned char*>(job->output), 
-                                     &outlen, static_cast<const unsigned char*>(input), 
-                                     static_cast<int>(inputLen));
-                    EVP_EncryptFinal_ex(ctx, static_cast<unsigned char*>(job->output) + outlen, &outlen);
-                    EVP_CIPHER_CTX_free(ctx);
-                    job->outputSize = static_cast<size_t>(outlen);
+                    const EVP_CIPHER* cipher = nullptr;
+                    if (strcmp(cipher_name, "aes-256-gcm") == 0) {
+                        cipher = EVP_aes_256_gcm();
+                    } else {
+                        cipher = EVP_chacha20_poly1305();
+                    }
+                    
+                    if (cipher && EVP_EncryptInit_ex(ctx, cipher, nullptr, key, iv) == 1) {
+                        int outlen = 0;
+                        EVP_EncryptUpdate(ctx, static_cast<unsigned char*>(job->output), 
+                                         &outlen, static_cast<const unsigned char*>(input), 
+                                         static_cast<int>(inputLen));
+                        EVP_EncryptFinal_ex(ctx, static_cast<unsigned char*>(job->output) + outlen, &outlen);
+                        EVP_CIPHER_CTX_free(ctx);
+                        job->outputSize = static_cast<size_t>(outlen);
+                    } else {
+                        if (ctx) EVP_CIPHER_CTX_free(ctx);
+                        // Fallback to software
+                        goto software_fallback;
+                    }
+                } else {
+                    goto software_fallback;
                 }
-            } else
+            } else {
+                software_fallback:
             #endif
             {
                 // Software fallback (simple XOR for demo)
+                // In production, this should use BoringSSL software implementation
                 uint8_t* in = static_cast<uint8_t*>(input);
                 uint8_t* out = static_cast<uint8_t*>(job->output);
                 for (size_t i = 0; i < inputLen; i++) {
@@ -129,6 +152,9 @@ static void crypto_worker(int worker_id, CryptoPool* pool) {
                 }
                 job->outputSize = inputLen;
             }
+#ifdef USE_BORINGSSL
+            }
+#endif
             
             local->processedCount++;
             local->totalBytes += inputLen;

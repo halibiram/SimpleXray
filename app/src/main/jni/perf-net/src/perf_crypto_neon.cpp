@@ -14,12 +14,14 @@
 #include <sys/auxv.h>
 #endif
 
-// OpenSSL support (compiled with -DUSE_OPENSSL=1 if OpenSSL is available)
-#ifdef USE_OPENSSL
+// BoringSSL support (replaces OpenSSL)
+#ifdef USE_BORINGSSL
+#define OPENSSL_HEADER_STATIC
 #include <openssl/evp.h>
 #include <openssl/aes.h>
 #include <openssl/chacha.h>
 #include <openssl/err.h>
+#include "crypto_adapter.h"
 #endif
 
 #if defined(__aarch64__) || defined(__arm__)
@@ -148,7 +150,6 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeHasCryptoExtensions(
  * Current implementation is BROKEN and provides NO security guarantees.
  */
 __attribute__((hot))
-#pragma clang attribute push(__attribute__((optimize("O3"))), apply_to=function)
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     JNIEnv *env, jclass clazz, jobject input, jint input_offset, jint input_len,
@@ -182,7 +183,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
         return -1;
     }
     
-    // Use OpenSSL EVP API (high-level, recommended)
+    // Use BoringSSL EVP API (high-level, recommended)
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx) {
         LOGE("Failed to create EVP context");
@@ -221,11 +222,10 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     EVP_CIPHER_CTX_free(ctx);
     return total_outlen;
 #else
-    // OpenSSL not available - use software fallback
+    // BoringSSL not available - use software fallback
     // Note: This is a simple software AES implementation
-    // For production use, install OpenSSL for hardware acceleration
-    LOGE("WARNING: OpenSSL not available, using software AES fallback");
-    LOGE("For better performance, install OpenSSL in app/src/main/jni/openssl/");
+    // For production use, BoringSSL should be available via CMake
+    LOGE("WARNING: BoringSSL not available, using software AES fallback");
     
     void* input_ptr = env->GetDirectBufferAddress(input);
     void* output_ptr = env->GetDirectBufferAddress(output);
@@ -278,14 +278,13 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     
     // Handle remainder (cold path)
     if (__builtin_expect(remainder > 0, 0)) {
-        __builtin_memcpy_inline(out + blocks * 16, in + blocks * 16, remainder);
+        std::memcpy(out + blocks * 16, in + blocks * 16, remainder);
         // Pad with zeros (not secure - should use PKCS#7 in production)
-        __builtin_memset(out + blocks * 16 + remainder, 0, 16 - remainder);
+        std::memset(out + blocks * 16 + remainder, 0, 16 - remainder);
     }
     
     return input_len;
 #endif
-#pragma clang attribute pop
     
     // Original broken code (DISABLED):
     /*
@@ -395,15 +394,14 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
  * It's essentially a Caesar cipher, not a real stream cipher.
  */
 __attribute__((hot))
-#pragma clang attribute push(__attribute__((optimize("O3"))), apply_to=function)
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     JNIEnv *env, jclass clazz, jobject input, jint input_offset, jint input_len,
     jobject output, jint output_offset, jobject key, jobject nonce) {
     (void)clazz; // JNI required parameter, not used
     
-#ifdef USE_OPENSSL
-    // OpenSSL implementation (secure, production-ready)
+#ifdef USE_BORINGSSL
+    // BoringSSL implementation (secure, production-ready)
     void* input_ptr = env->GetDirectBufferAddress(input);
     void* output_ptr = env->GetDirectBufferAddress(output);
     void* key_ptr = env->GetDirectBufferAddress(key);
@@ -438,22 +436,40 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
         return -1;
     }
     
-    // Use OpenSSL ChaCha20 implementation
-    // Note: OpenSSL ChaCha20 uses 32-byte key and 12-byte nonce
+    // Use BoringSSL ChaCha20 implementation
+    // Note: BoringSSL ChaCha20 uses 32-byte key and 12-byte nonce
     // Counter starts at 0 for first block
-    uint32_t counter = 0;
     
-    // CRYPTO_chacha_20 is OpenSSL's ChaCha20 implementation
-    // Parameters: output, input, input_len, key, nonce, counter
-    CRYPTO_chacha_20(out, in, input_len, key_data, nonce_data, counter);
+    // Use EVP API for ChaCha20
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        LOGE("Failed to create EVP context for ChaCha20");
+        return -1;
+    }
     
+    // Initialize ChaCha20
+    if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), nullptr, key_data, nonce_data) != 1) {
+        LOGE("Failed to initialize ChaCha20");
+        EVP_CIPHER_CTX_free(ctx);
+        return -1;
+    }
+    
+    // Set counter (IV is 12 bytes, we need to set the counter part)
+    // BoringSSL handles counter internally when using EVP API
+    int outlen = 0;
+    if (EVP_EncryptUpdate(ctx, out, &outlen, in, input_len) != 1) {
+        LOGE("ChaCha20 encryption failed");
+        EVP_CIPHER_CTX_free(ctx);
+        return -1;
+    }
+    
+    EVP_CIPHER_CTX_free(ctx);
     return input_len;
 #else
-    // OpenSSL not available - use software fallback
+    // BoringSSL not available - use software fallback
     // Note: This is a simple stream cipher implementation
-    // For production use, install OpenSSL for proper ChaCha20
-    LOGE("WARNING: OpenSSL not available, using software ChaCha20 fallback");
-    LOGE("For better performance, install OpenSSL in app/src/main/jni/openssl/");
+    // For production use, BoringSSL should be available via CMake
+    LOGE("WARNING: BoringSSL not available, using software ChaCha20 fallback");
     
     void* input_ptr = env->GetDirectBufferAddress(input);
     void* output_ptr = env->GetDirectBufferAddress(output);
@@ -518,7 +534,6 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     
     return input_len;
 #endif
-#pragma clang attribute pop
     
     // Original broken code (DISABLED):
     /*
