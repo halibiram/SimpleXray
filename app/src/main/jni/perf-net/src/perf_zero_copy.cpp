@@ -14,6 +14,7 @@
 #include <limits.h>
 #include <linux/version.h>
 #include <fcntl.h>
+#include "perf_common.h"
 
 #define LOG_TAG "PerfZeroCopy"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -305,8 +306,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAllocateDirectBuffer
         return nullptr;
     }
     
-    // Use cached JNI class/method IDs (from perf_jni.cpp)
-    extern JNICache g_jni_cache;
+    // Use cached JNI class/method IDs (from perf_jni.cpp via perf_common.h)
     if (__builtin_expect(g_jni_cache.initialized && g_jni_cache.byteBufferClass && g_jni_cache.allocateDirectMethod, 1)) {
         jobject buffer = env->CallStaticObjectMethod(
             g_jni_cache.byteBufferClass, g_jni_cache.allocateDirectMethod, capacity);

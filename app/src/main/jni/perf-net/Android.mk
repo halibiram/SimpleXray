@@ -22,6 +22,7 @@ LOCAL_SRC_FILES := \
     src/perf_qos.cpp \
     src/perf_mmap_batch.cpp \
     src/perf_tcp_fastopen.cpp \
+    src/perf_openssl_detect.cpp \
     src/hyper/hyper_ring.cpp \
     src/hyper/hyper_crypto.cpp \
     src/hyper/hyper_burst.cpp \
@@ -47,19 +48,27 @@ ifneq ($(wildcard $(OPENSSL_HEADER)),)
             # OpenSSL is fully available
             LOCAL_C_INCLUDES += $(OPENSSL_DIR)/include
             LOCAL_CPPFLAGS += -DUSE_OPENSSL=1
-            $(info OpenSSL found: $(OPENSSL_DIR))
+            LOCAL_CFLAGS += -DUSE_OPENSSL=1
+            $(info ✅ OpenSSL enabled: $(OPENSSL_DIR))
+            $(info    - Headers: $(OPENSSL_HEADER))
+            $(info    - libcrypto: $(OPENSSL_LIB_CRYPTO))
+            $(info    - libssl: $(OPENSSL_LIB_SSL))
         else
-            $(warning OpenSSL header found but libssl.a missing for $(TARGET_ARCH_ABI))
+            $(warning ⚠️  OpenSSL header found but libssl.a missing for $(TARGET_ARCH_ABI))
             $(warning Expected: $(OPENSSL_LIB_SSL))
+            $(warning Building without OpenSSL acceleration)
         endif
     else
-        $(warning OpenSSL header found but libcrypto.a missing for $(TARGET_ARCH_ABI))
+        $(warning ⚠️  OpenSSL header found but libcrypto.a missing for $(TARGET_ARCH_ABI))
         $(warning Expected: $(OPENSSL_LIB_CRYPTO))
+        $(warning Building without OpenSSL acceleration)
     endif
 else
-    $(warning OpenSSL not found at $(OPENSSL_DIR))
-    $(warning Run: ./scripts/download-openssl.sh to download OpenSSL libraries)
-    $(warning Or manually install OpenSSL to: $(OPENSSL_DIR))
+    $(warning ⚠️  OpenSSL not found at $(OPENSSL_DIR))
+    $(warning To enable OpenSSL acceleration:)
+    $(warning   1. Run: ./scripts/build-openssl-full.sh)
+    $(warning   2. Or:  ./scripts/download-openssl.sh)
+    $(warning Building without OpenSSL (software fallback only))
 endif
 
 # C++ flags
