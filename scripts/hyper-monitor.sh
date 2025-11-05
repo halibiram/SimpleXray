@@ -42,14 +42,12 @@ show_banner() {
     echo -e "${DIM}Check Interval: ${CHECK_INTERVAL}s | Max Retries: ${MAX_RETRIES}${NC}\n"
 }
 
-# Failure analizi - Hyper hızlı
+# Failure analizi - Hyper hızlı (sadece veri döndürür, echo yok)
 analyze_failure_hyper() {
     local RUN_ID=$1
     local START_ANALYSIS=$(date +%s%N)
     
-    echo -e "${CYAN}🔍 HYPER ANALİZ BAŞLATILIYOR...${NC}"
-    
-    # Paralel olarak tüm bilgileri topla
+    # Paralel olarak tüm bilgileri topla (stdout'a yazma, sadece dosyaya)
     (
         gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.conclusion == "failure") | {name: .name, id: .databaseId, steps: [.steps[] | select(.conclusion == "failure") | .name]}' > /tmp/failed_jobs_$$.json 2>/dev/null
     ) &
@@ -60,22 +58,20 @@ analyze_failure_hyper() {
     ) &
     INFO_PID=$!
     
-    wait $JOB_PID $INFO_PID
+    wait $JOB_PID $INFO_PID 2>/dev/null
     
     FAILED_JOBS=$(cat /tmp/failed_jobs_$$.json 2>/dev/null || echo "[]")
     RUN_INFO=$(cat /tmp/run_info_$$.json 2>/dev/null || echo "{}")
     
     # En yaygın hata tipini bul (hyper hızlı)
-    MOST_COMMON=$(echo "$FAILED_JOBS" | jq -r '.[].steps[].name' 2>/dev/null | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' || echo "unknown")
+    MOST_COMMON=$(echo "$FAILED_JOBS" | jq -r '.[].steps[].name' 2>/dev/null | grep -v '^$' | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' || echo "unknown")
     FAILED_JOB_COUNT=$(echo "$FAILED_JOBS" | jq 'length' 2>/dev/null || echo "0")
-    FIRST_FAILED_JOB_ID=$(echo "$FAILED_JOBS" | jq -r '.[0].id' 2>/dev/null || echo "")
+    FIRST_FAILED_JOB_ID=$(echo "$FAILED_JOBS" | jq -r '.[0].id // empty' 2>/dev/null | grep -E '^[0-9]+$' | head -1 || echo "")
     
     local END_ANALYSIS=$(date +%s%N)
     local ANALYSIS_TIME=$(( (END_ANALYSIS - START_ANALYSIS) / 1000000 ))
     
-    echo -e "${GREEN}✅ Analiz tamamlandı (${ANALYSIS_TIME}ms)${NC}"
-    
-    # Sonuçları döndür
+    # Sonuçları sadece stdout'a yaz (renk kodları yok)
     echo "$MOST_COMMON|$FAILED_JOB_COUNT|$FIRST_FAILED_JOB_ID|$RUN_INFO"
     
     # Temizlik
@@ -98,6 +94,14 @@ get_error_logs_hyper() {
     
     # Logları al (timeout ile)
     echo -e "${DIM}Loglar indiriliyor (timeout: 30s)...${NC}"
+    
+    # JOB_ID'yi temizle (sadece sayı)
+    JOB_ID=$(echo "$JOB_ID" | grep -oE '[0-9]+' | head -1)
+    
+    if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "" ]; then
+        echo -e "${YELLOW}⚠️  Geçersiz Job ID${NC}"
+        return
+    fi
     
     # İki yöntem dene: log-failed ve normal log
     LOG_OUTPUT=$(timeout 30 gh run view $RUN_ID --log-failed --job $JOB_ID 2>&1 || timeout 30 gh run view $RUN_ID --log --job $JOB_ID 2>&1 | grep -A 20 -E "(❌|error|Error|ERROR|failed|Failed|FAILED|Libraries not found|No .a files|Build.*failed|ninja.*failed)" || echo "")
@@ -232,19 +236,35 @@ monitor_loop() {
                         echo "╚════════════════════════════════════════════════════════════════╝"
                         echo -e "${NC}"
                         
-                        # Hyper analiz
-                        ANALYSIS=$(analyze_failure_hyper $RUN_ID)
-                        ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1)
-                        JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2)
-                        JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3)
+                        # Hyper analiz (stdout'dan veri al)
+                        echo -e "${CYAN}🔍 HYPER ANALİZ BAŞLATILIYOR...${NC}"
+                        ANALYSIS=$(analyze_failure_hyper $RUN_ID 2>&1 | grep -E '^[^[:cntrl:]]*\|' | head -1)
+                        
+                        if [ -z "$ANALYSIS" ] || [ "$ANALYSIS" = "" ]; then
+                            echo -e "${YELLOW}⚠️  Analiz sonucu alınamadı${NC}"
+                            ERROR_TYPE="unknown"
+                            JOB_COUNT="0"
+                            JOB_ID=""
+                        else
+                            ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1)
+                            JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2)
+                            JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3)
+                            # JOB_ID'yi temizle (sadece sayı)
+                            JOB_ID=$(echo "$JOB_ID" | grep -oE '[0-9]+' | head -1)
+                        fi
+                        
+                        echo -e "${GREEN}✅ Analiz tamamlandı${NC}"
                         
                         echo -e "${RED}Hata Tipi:${NC} ${ERROR_TYPE}"
                         echo -e "${RED}Başarısız Job Sayısı:${NC} ${JOB_COUNT}"
                         echo -e "${RED}Ardışık Başarısızlık:${NC} ${CONSECUTIVE_FAILURES}\n"
                         
                         # Logları göster
-                        if [ -n "$JOB_ID" ] && [ "$JOB_ID" != "null" ]; then
+                        if [ -n "$JOB_ID" ] && [ "$JOB_ID" != "null" ] && [ -n "$(echo "$JOB_ID" | grep -E '^[0-9]+$')" ]; then
                             get_error_logs_hyper $RUN_ID $JOB_ID
+                        else
+                            echo -e "${YELLOW}⚠️  Geçerli Job ID bulunamadı${NC}"
+                            echo -e "${CYAN}Web'den kontrol: gh run view $RUN_ID --web${NC}"
                         fi
                         
                         # Düzeltme uygula
