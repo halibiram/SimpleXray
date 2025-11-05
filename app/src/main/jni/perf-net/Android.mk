@@ -39,42 +39,11 @@ LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/src/hyper \
     $(LOCAL_PATH)/../../../../../crypto_wrapper
 
-# OpenSSL includes (if available)
-# OpenSSL will be used if libraries are installed in app/src/main/jni/openssl/
-OPENSSL_DIR := $(LOCAL_PATH)/../../openssl
-OPENSSL_HEADER := $(OPENSSL_DIR)/include/openssl/evp.h
-OPENSSL_LIB_CRYPTO := $(OPENSSL_DIR)/lib/$(TARGET_ARCH_ABI)/libcrypto.a
-OPENSSL_LIB_SSL := $(OPENSSL_DIR)/lib/$(TARGET_ARCH_ABI)/libssl.a
-
-# Check if OpenSSL is available
-ifneq ($(wildcard $(OPENSSL_HEADER)),)
-    ifneq ($(wildcard $(OPENSSL_LIB_CRYPTO)),)
-        ifneq ($(wildcard $(OPENSSL_LIB_SSL)),)
-            # OpenSSL is fully available
-            LOCAL_C_INCLUDES += $(OPENSSL_DIR)/include
-            LOCAL_CPPFLAGS += -DUSE_OPENSSL=1
-            LOCAL_CFLAGS += -DUSE_OPENSSL=1
-            $(info ✅ OpenSSL enabled: $(OPENSSL_DIR))
-            $(info    - Headers: $(OPENSSL_HEADER))
-            $(info    - libcrypto: $(OPENSSL_LIB_CRYPTO))
-            $(info    - libssl: $(OPENSSL_LIB_SSL))
-        else
-            $(warning ⚠️  OpenSSL header found but libssl.a missing for $(TARGET_ARCH_ABI))
-            $(warning Expected: $(OPENSSL_LIB_SSL))
-            $(warning Building without OpenSSL acceleration)
-        endif
-    else
-        $(warning ⚠️  OpenSSL header found but libcrypto.a missing for $(TARGET_ARCH_ABI))
-        $(warning Expected: $(OPENSSL_LIB_CRYPTO))
-        $(warning Building without OpenSSL acceleration)
-    endif
-else
-    $(warning ⚠️  OpenSSL not found at $(OPENSSL_DIR))
-    $(warning To enable OpenSSL acceleration:)
-    $(warning   1. Run: ./scripts/build-openssl-full.sh)
-    $(warning   2. Or:  ./scripts/download-openssl.sh)
-    $(warning Building without OpenSSL (software fallback only))
-endif
+# BoringSSL is used via crypto_wrapper
+# Always use BoringSSL (no OpenSSL fallback)
+LOCAL_CPPFLAGS += -DUSE_BORINGSSL=1
+LOCAL_CFLAGS += -DUSE_BORINGSSL=1
+$(info ✅ Using BoringSSL via crypto_wrapper)
 
 # C++ flags
 LOCAL_CPPFLAGS += \
@@ -106,18 +75,8 @@ endif
 # System libraries
 LOCAL_LDLIBS := -llog
 
-# Link crypto_wrapper (handles BoringSSL/OpenSSL selection)
+# Link crypto_wrapper (uses BoringSSL)
 LOCAL_STATIC_LIBRARIES += crypto_wrapper
-
-# OpenSSL static libraries (legacy fallback, if crypto_wrapper doesn't have BoringSSL)
-ifneq ($(wildcard $(OPENSSL_HEADER)),)
-    ifneq ($(wildcard $(OPENSSL_LIB_CRYPTO)),)
-        ifneq ($(wildcard $(OPENSSL_LIB_SSL)),)
-            # Note: crypto_wrapper will handle actual linking
-            $(info ℹ️  OpenSSL available as fallback)
-        endif
-    endif
-endif
 
 # Enable NEON
 LOCAL_ARM_NEON := true

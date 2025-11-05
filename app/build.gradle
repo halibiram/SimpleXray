@@ -56,16 +56,9 @@ android {
         resValue "string", "sxr_ssl_mode", sslMode
         buildConfigField "String", "SXR_SSL_MODE", "\"${sslMode}\""
 
-        // BoringSSL vs OpenSSL selection
-        def useBoringssl = project.hasProperty('useBoringssl') ?
-                          project.property('useBoringssl').toBoolean() : true
-        buildConfigField "boolean", "USE_BORINGSSL", "${useBoringssl}"
-
-        if (useBoringssl) {
-            println "🔒 Building with BoringSSL"
-        } else {
-            println "🔒 Building with OpenSSL (legacy)"
-        }
+        // Always use BoringSSL (OpenSSL removed)
+        buildConfigField "boolean", "USE_BORINGSSL", "true"
+        println "🔒 Building with BoringSSL"
 
         // Experimental features (debug only)
         def isRelease = gradle.startParameter.taskNames.any { it.contains("Release") }
@@ -75,13 +68,7 @@ android {
             ndkBuild {
                 arguments "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=."
                 arguments "APP_LDFLAGS+=-Wl,--build-id=none"
-
-                // Crypto library selection
-                if (useBoringssl) {
-                    arguments "USE_BORINGSSL=1"
-                } else {
-                    arguments "USE_OPENSSL=1"
-                }
+                arguments "USE_BORINGSSL=1"
             }
         }
         targetSdk 35
@@ -97,11 +84,10 @@ android {
         buildConfigField "boolean", "FEAT_PERF_PANEL", "false" // Feature flag for performance diagnostics panel
         buildConfigField "boolean", "FEAT_HYPER_UI", "false" // Feature flag for hyper UI performance components
 
-        // Crypto library build status
+        // Crypto library build status (BoringSSL only)
         def boringsslAvailable = file("../external/boringssl/lib/arm64-v8a/libcrypto.a").exists()
-        def opensslAvailable = file("src/main/jni/openssl/lib/arm64-v8a/libcrypto.a").exists()
         buildConfigField "boolean", "BORINGSSL_AVAILABLE_AT_BUILD", "${boringsslAvailable}"
-        buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "${opensslAvailable}"
+        buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "false"
     }
 
     signingConfigs {
@@ -226,45 +212,40 @@ android {
     }
 }
 
-// Pre-build check for OpenSSL
-tasks.register("checkOpenSSL") {
+// Pre-build check for BoringSSL
+tasks.register("checkBoringSSL") {
     doLast {
-        def opensslDir = file("src/main/jni/openssl")
-        def opensslHeader = file("src/main/jni/openssl/include/openssl/evp.h")
-        def opensslLibCryptoArm64 = file("src/main/jni/openssl/lib/arm64-v8a/libcrypto.a")
-        def opensslLibSslArm64 = file("src/main/jni/openssl/lib/arm64-v8a/libssl.a")
+        def boringsslDir = file("../external/boringssl")
+        def boringsslLibCryptoArm64 = file("../external/boringssl/lib/arm64-v8a/libcrypto.a")
+        def boringsslLibSslArm64 = file("../external/boringssl/lib/arm64-v8a/libssl.a")
         
-        def hasOpenSSL = opensslHeader.exists() && 
-                         opensslLibCryptoArm64.exists() && 
-                         opensslLibSslArm64.exists()
+        def hasBoringSSL = boringsslLibCryptoArm64.exists() && 
+                           boringsslLibSslArm64.exists()
         
-        if (!hasOpenSSL) {
-            println("⚠️  WARNING: OpenSSL not found!")
-            println("   OpenSSL directory: ${opensslDir.absolutePath}")
+        if (!hasBoringSSL) {
+            println("⚠️  WARNING: BoringSSL libraries not found!")
+            println("   BoringSSL directory: ${boringsslDir.absolutePath}")
             println("   Expected files:")
-            println("     - ${opensslHeader.absolutePath}")
-            println("     - ${opensslLibCryptoArm64.absolutePath}")
-            println("     - ${opensslLibSslArm64.absolutePath}")
+            println("     - ${boringsslLibCryptoArm64.absolutePath}")
+            println("     - ${boringsslLibSslArm64.absolutePath}")
             println("")
-            println("   To install OpenSSL:")
-            println("   1. Run: ./scripts/download-openssl.sh (Linux/Mac)")
-            println("   2. Or:  scripts\\download-openssl.bat (Windows)")
-            println("   3. Or manually download from:")
-            println("      https://github.com/leenjewel/openssl_for_ios_and_android")
+            println("   To build BoringSSL:")
+            println("   1. Run: ./external/boringssl/build_all_abis.py")
+            println("   2. Or follow instructions in external/boringssl/README.md")
             println("")
-            println("   Note: App will use software crypto fallback without OpenSSL.")
+            println("   Note: Build will continue but crypto features may not work.")
         } else {
-            println("✅ OpenSSL found: ${opensslDir.absolutePath}")
+            println("✅ BoringSSL found: ${boringsslDir.absolutePath}")
         }
     }
 }
 
-// Run OpenSSL check before NDK build
+// Run BoringSSL check before NDK build
 tasks.matching { task ->
     task.name.startsWith("externalNativeBuild") && 
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
-    task.dependsOn("checkOpenSSL")
+    task.dependsOn("checkBoringSSL")
 }
 
 dependencies {
