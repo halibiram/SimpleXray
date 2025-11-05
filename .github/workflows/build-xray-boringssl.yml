@@ -70,19 +70,44 @@ jobs:
           # Create directory structure if it doesn't exist
           mkdir -p "$(dirname "$BORINGSSL_DIR")"
           
-          # Check if BoringSSL directory exists
-          if [ ! -d "$BORINGSSL_DIR" ] || [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
+          # Check if BoringSSL is already cloned and valid
+          if [ -d "$BORINGSSL_DIR" ] && [ -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
+            echo "✅ BoringSSL directory already exists and is valid"
+          else
             echo "📦 Cloning BoringSSL..."
+            
+            # Remove any existing directory or submodule reference
             if [ -d "$BORINGSSL_DIR" ]; then
+              echo "🧹 Removing existing BoringSSL directory..."
               rm -rf "$BORINGSSL_DIR"
             fi
-            git clone --depth=1 https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" || {
-              echo "❌ Failed to clone BoringSSL"
+            
+            # Remove any .git submodule reference file that might exist
+            if [ -f "$(dirname "$BORINGSSL_DIR")/.git" ]; then
+              echo "🧹 Removing submodule reference..."
+              rm -f "$(dirname "$BORINGSSL_DIR")/.git"
+            fi
+            
+            # Try cloning from googlesource first
+            if git clone --depth=1 https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" 2>&1; then
+              echo "✅ BoringSSL cloned successfully from googlesource"
+            else
+              echo "⚠️  Failed to clone from googlesource, trying GitHub mirror..."
+              # Clean up partial clone if any
+              rm -rf "$BORINGSSL_DIR"
+              # Fallback to GitHub mirror
+              git clone --depth=1 https://github.com/google/boringssl.git "$BORINGSSL_DIR" || {
+                echo "❌ Failed to clone BoringSSL from both sources"
+                exit 1
+              }
+              echo "✅ BoringSSL cloned successfully from GitHub"
+            fi
+            
+            # Verify clone was successful
+            if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
+              echo "❌ BoringSSL CMakeLists.txt not found after clone!"
               exit 1
-            }
-            echo "✅ BoringSSL cloned successfully"
-          else
-            echo "✅ BoringSSL directory already exists"
+            fi
           fi
 
       - name: Build BoringSSL
@@ -186,6 +211,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Setup NDK
         run: |
