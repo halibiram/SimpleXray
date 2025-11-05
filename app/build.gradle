@@ -54,6 +54,10 @@ android {
             ndkBuild {
                 arguments "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=."
                 arguments "APP_LDFLAGS+=-Wl,--build-id=none"
+
+                // OpenSSL support (automatically detected by Android.mk)
+                // To force disable: arguments "-DUSE_OPENSSL=0"
+                // OpenSSL will be automatically enabled if libraries are found
             }
         }
         targetSdk 35
@@ -68,6 +72,10 @@ android {
         buildConfigField "boolean", "FEAT_GAME_PANEL", "false" // Feature flag for game optimization panel UI
         buildConfigField "boolean", "FEAT_PERF_PANEL", "false" // Feature flag for performance diagnostics panel
         buildConfigField "boolean", "FEAT_HYPER_UI", "false" // Feature flag for hyper UI performance components
+
+        // OpenSSL build status (checked at runtime via JNI)
+        def opensslAvailable = file("src/main/jni/openssl/lib/arm64-v8a/libcrypto.a").exists()
+        buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "${opensslAvailable}"
     }
 
     signingConfigs {
