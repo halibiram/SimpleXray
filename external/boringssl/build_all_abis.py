@@ -139,6 +139,10 @@ def build_abi(abi_name, abi_config, ndk_path):
     print(f"{'='*60}")
 
     build_dir = BUILD_DIR / abi_name
+    # Clean build directory to prevent cross-contamination
+    if build_dir.exists():
+        print(f"🧹 Cleaning previous build for {abi_name}...")
+        shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
 
     toolchain_file = ndk_path / 'build/cmake/android.toolchain.cmake'
@@ -159,20 +163,53 @@ def build_abi(abi_name, abi_config, ndk_path):
     ] + abi_config['cmake_flags'] + [str(BORINGSSL_SRC)]
 
     print(f"⚙ Configuring CMake for {abi_name}...")
+    print(f"  CMake args: {' '.join(cmake_args)}")
     subprocess.run(cmake_args, cwd=build_dir, check=True)
+    
+    # Verify CMake configuration
+    if abi_name == 'arm64-v8a':
+        # Check that CMake configured for correct architecture
+        config_log = (build_dir / 'CMakeCache.txt')
+        if config_log.exists():
+            with open(config_log, 'r') as f:
+                cache_content = f.read()
+                if 'CMAKE_ANDROID_ARCH_ABI:STRING=arm64-v8a' not in cache_content:
+                    print(f"⚠️  Warning: CMake cache may not have correct ABI setting")
+                if 'aarch64' not in cache_content.lower():
+                    print(f"⚠️  Warning: CMake may not be configured for aarch64")
 
     print(f"⚙ Building {abi_name}...")
     subprocess.run(['ninja'], cwd=build_dir, check=True)
 
+    # Verify libraries were built
+    libcrypto_path = build_dir / 'libcrypto.a'
+    libssl_path = build_dir / 'libssl.a'
+    
+    if not libcrypto_path.exists():
+        print(f"❌ ERROR: libcrypto.a not found in build directory")
+        sys.exit(1)
+    if not libssl_path.exists():
+        print(f"❌ ERROR: libssl.a not found in build directory")
+        sys.exit(1)
+
     # Copy libraries
     lib_output = LIB_DIR / abi_name
+    if lib_output.exists():
+        shutil.rmtree(lib_output)
     lib_output.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(build_dir / 'libcrypto.a', lib_output / 'libcrypto.a')
-    shutil.copy2(build_dir / 'libssl.a', lib_output / 'libssl.a')
+    shutil.copy2(libcrypto_path, lib_output / 'libcrypto.a')
+    shutil.copy2(libssl_path, lib_output / 'libssl.a')
+
+    # Verify copied libraries
+    if not (lib_output / 'libcrypto.a').exists() or not (lib_output / 'libssl.a').exists():
+        print(f"❌ ERROR: Failed to copy libraries")
+        sys.exit(1)
 
     print(f"✓ {abi_name} build complete")
     print(f"  Libraries: {lib_output}/")
+    print(f"  libcrypto.a: {(lib_output / 'libcrypto.a').stat().st_size / 1024 / 1024:.2f} MB")
+    print(f"  libssl.a: {(lib_output / 'libssl.a').stat().st_size / 1024 / 1024:.2f} MB")
 
 def copy_headers():
     """Copy BoringSSL headers to include directory"""

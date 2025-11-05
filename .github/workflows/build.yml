@@ -85,8 +85,9 @@ jobs:
             external/boringssl/lib
             external/boringssl/include
             external/boringssl/src
-          key: boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-v1
+          key: boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-v2
           restore-keys: |
+            boringssl-${{ runner.os }}-${{ hashFiles('external/boringssl/build_all_abis.py') }}-
             boringssl-${{ runner.os }}-
 
       - name: Setup Python for BoringSSL
@@ -101,18 +102,90 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake
 
+      - name: Setup NDK for BoringSSL
+        if: steps.cache-boringssl.outputs.cache-hit != 'true'
+        run: |
+          # Try to get NDK path from Android SDK setup
+          NDK_PATH="${{ steps.setup_sdk.outputs.ndk-path }}"
+          
+          # If not set, try to find NDK in common locations or download it
+          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+            echo "NDK path from setup_sdk not found, checking cache..."
+            if [ -d "android-ndk-r28c" ]; then
+              NDK_PATH=$(realpath android-ndk-r28c)
+            elif [ -n "$(ls -d android-ndk-* 2>/dev/null)" ]; then
+              NDK_PATH=$(realpath android-ndk-*)
+            else
+              echo "Downloading NDK r28c..."
+              wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+              unzip -q android-ndk.zip
+              rm android-ndk.zip
+              NDK_PATH=$(realpath android-ndk-*)
+            fi
+          fi
+          
+          if [ ! -d "$NDK_PATH" ]; then
+            echo "❌ ERROR: NDK not found at $NDK_PATH"
+            exit 1
+          fi
+          
+          echo "Using NDK: $NDK_PATH"
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          
+          # Verify NDK toolchain exists
+          TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake"
+          if [ ! -f "$TOOLCHAIN_FILE" ]; then
+            echo "❌ ERROR: NDK toolchain file not found at $TOOLCHAIN_FILE"
+            exit 1
+          fi
+          echo "✓ NDK toolchain verified: $TOOLCHAIN_FILE"
+
       - name: Build BoringSSL
         if: steps.cache-boringssl.outputs.cache-hit != 'true'
         env:
-          ANDROID_NDK_HOME: ${{ steps.setup_sdk.outputs.ndk-path }}
-          NDK_HOME: ${{ steps.setup_sdk.outputs.ndk-path }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
         run: |
           echo "Building BoringSSL with NDK: $ANDROID_NDK_HOME"
+          
+          # Clean any existing build artifacts to ensure fresh build
           cd external/boringssl
-          python3 build_all_abis.py || true
+          rm -rf build lib
+          
+          # Build BoringSSL for all ABIs
+          python3 build_all_abis.py
+          
+          # Verify the build was successful
+          if [ ! -f "lib/arm64-v8a/libcrypto.a" ] || [ ! -f "lib/arm64-v8a/libssl.a" ]; then
+            echo "❌ ERROR: BoringSSL build failed - libraries not found"
+            exit 1
+          fi
+          
+          # Verify library architecture using readelf/file if available
+          echo "🔍 Verifying library architectures..."
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            if [ -f "lib/$abi/libcrypto.a" ]; then
+              # Use readelf to check architecture (if available)
+              if command -v readelf >/dev/null 2>&1; then
+                echo "Checking libcrypto.a for $abi..."
+                # Extract first object file and check its architecture
+                ar t "lib/$abi/libcrypto.a" | head -1 | xargs -I {} ar x "lib/$abi/libcrypto.a" {} 2>/dev/null || true
+                FIRST_OBJ=$(ar t "lib/$abi/libcrypto.a" | head -1)
+                if [ -n "$FIRST_OBJ" ] && [ -f "$FIRST_OBJ" ]; then
+                  MACHINE=$(readelf -h "$FIRST_OBJ" 2>/dev/null | grep "Machine:" | awk '{print $2}' || echo "unknown")
+                  echo "  $abi: $MACHINE"
+                  rm -f "$FIRST_OBJ" 2>/dev/null || true
+                fi
+              fi
+              echo "  ✓ $abi/libcrypto.a exists ($(du -h lib/$abi/libcrypto.a | cut -f1))"
+            else
+              echo "  ⚠️  $abi/libcrypto.a not found"
+            fi
+          done
+          
           cd ../..
-          echo "BoringSSL build complete (or cached):"
-          ls -lh external/boringssl/lib/*/ 2>/dev/null || echo "⚠️ BoringSSL build may have failed"
+          echo "✅ BoringSSL build complete and verified"
 
       - name: Cache OpenSSL
         id: cache-openssl
