@@ -77,3 +77,4 @@ fi
 echo -e "\n${GREEN}✅ Tamamlandı${NC}"
 
 
+

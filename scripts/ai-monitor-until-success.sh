@@ -112,3 +112,4 @@ echo -e "${YELLOW}Manuel kontrol gerekebilir!${NC}"
 exit 1
 
 
+
