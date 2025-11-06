@@ -170,22 +170,72 @@ jobs:
           git checkout ${{ env.XRAY_VERSION }}
           COMMID=$(git rev-parse HEAD | cut -c 1-7)
 
+          # Set Android NDK environment variables (absolute paths required for NDK r28c)
+          export ANDROID_NDK_HOME="$NDK_HOME"
+          export ANDROID_API=24
+          export NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
           export GOOS=android
           export CGO_ENABLED=1
 
-          echo "Building for arm64-v8a..."
-          export GOARCH=arm64
-          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
-          go build -o xray -trimpath -buildvcs=false -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" -v ./main
-          mkdir -p ../app/src/main/jniLibs/arm64-v8a
-          mv xray ../app/src/main/jniLibs/arm64-v8a/libxray.so
+          # Build function with hybrid static/dynamic linking
+          build_xray() {
+            local ABI=$1
+            local GOARCH=$2
+            local NDK_ARCH=$3
+            local TOOLCHAIN=$4
+            
+            echo "Building for $ABI..."
+            
+            export GOARCH=$GOARCH
+            export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$TOOLCHAIN-clang
+            export CXX=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$TOOLCHAIN-clang++
+            
+            # Android system library path (NDK r28c: liblog.so is in usr/lib/$NDK_ARCH/$ANDROID_API/)
+            ANDROID_LIB_DIR="$NDK_SYSROOT/usr/lib/$NDK_ARCH/$ANDROID_API"
+            
+            # Set LIBRARY_PATH environment variable (most reliable method)
+            export LIBRARY_PATH="$ANDROID_LIB_DIR:$LIBRARY_PATH"
+            
+            # CGO flags with absolute sysroot paths (required for NDK r28c)
+            export CGO_CFLAGS="--sysroot=$NDK_SYSROOT"
+            
+            # CGO_LDFLAGS: Hybrid static/dynamic linking
+            # -Wl,-Bdynamic: Use dynamic linking for Android system libs (.so files)
+            # -llog -landroid: Android system libraries (only available as .so, not .a)
+            # -lc -lm -ldl: Standard C libraries (dynamic)
+            # --sysroot: Tell linker where to find system libraries
+            export CGO_LDFLAGS="\
+              -Wl,-Bdynamic \
+              -L$ANDROID_LIB_DIR \
+              -L$NDK_SYSROOT/usr/lib \
+              -L$NDK_SYSROOT/usr/lib64 \
+              -llog -landroid -lc -lm -ldl \
+              --sysroot=$NDK_SYSROOT"
+            
+            echo "  GOARCH: $GOARCH"
+            echo "  CC: $CC"
+            echo "  Android Lib Dir: $ANDROID_LIB_DIR"
+            echo "  CGO_LDFLAGS: $CGO_LDFLAGS"
+            
+            go build \
+              -o xray \
+              -trimpath \
+              -buildvcs=false \
+              -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" \
+              -v \
+              ./main
+            
+            mkdir -p ../app/src/main/jniLibs/$ABI
+            mv xray ../app/src/main/jniLibs/$ABI/libxray.so
+            echo "✅ Built Xray for $ABI"
+          }
 
-          echo "Building for x86_64..."
-          export GOARCH=amd64
-          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang
-          go build -o xray -trimpath -buildvcs=false -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" -v ./main
-          mkdir -p ../app/src/main/jniLibs/x86_64
-          mv xray ../app/src/main/jniLibs/x86_64/libxray.so
+          # Build for arm64-v8a
+          build_xray "arm64-v8a" "arm64" "aarch64-linux-android" "aarch64-linux-android24"
+
+          # Build for x86_64
+          build_xray "x86_64" "amd64" "x86_64-linux-android" "x86_64-linux-android24"
 
       - name: Verify BoringSSL Integration
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
