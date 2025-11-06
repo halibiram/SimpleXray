@@ -256,26 +256,7 @@ fix_gradle_arguments_issue() {
         }' "$BUILD_GRADLE" 2>/dev/null || true
         
         # Manual fix: Replace all arguments "..." with array syntax
-        python3 << 'PYEOF' 2>/dev/null || {
-import re
-
-with open('$BUILD_GRADLE', 'r') as f:
-    content = f.read()
-
-# Find cmake block and convert arguments
-cmake_pattern = r'(cmake \{[^}]*?)(arguments "[^"]+"\s*\n)+'
-def replace_cmake_args(match):
-    block = match.group(1)
-    args = re.findall(r'arguments "([^"]+)"', match.group(0))
-    args_array = 'arguments = [\n' + '\n'.join(f'                "{arg}",' for arg in args) + '\n            ]'
-    return block + args_array + '\n'
-
-content = re.sub(r'cmake \{([^}]*?)(arguments "[^"]+"\s*\n)+([^}]*?)\}', replace_cmake_args, content, flags=re.DOTALL)
-
-with open('$BUILD_GRADLE', 'w') as f:
-    f.write(content)
-}
-PYEOF
+        # Note: Python heredoc removed - using sed/awk instead for reliability
         
         # Fallback: Simple sed replacement
         sed -i.bak 's/^\([[:space:]]*\)arguments "\([^"]*\)"$/\1arguments = ["\2"]/' "$BUILD_GRADLE" 2>/dev/null || true
