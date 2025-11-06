@@ -85,39 +85,72 @@ stop_monitoring() {
     echo -e "${GREEN}✅ Monitoring stopped${NC}\n"
 }
 
-# Check for failures - returns failed run info
+# Check for failures - returns failed run info (ENHANCED)
 check_failures() {
     local FAILED_RUNS=()
     local FOUND_FAILURE=false
     
     for WORKFLOW_NAME in "${WORKFLOWS[@]}"; do
-        RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}' || echo "")
+        # Method 1: Direct failure check from run list
+        FAILED_RUN_DIRECT=$(gh run list --workflow="$WORKFLOW_NAME" --limit 5 --json databaseId,status,conclusion 2>/dev/null | \
+            jq -r '.[] | select(.conclusion == "failure") | "\(.databaseId)|\(.status)"' 2>/dev/null | head -1 || echo "")
         
-        if [ -z "$RUN_ID" ] || ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
-            echo -e "${DIM}[DEBUG] No valid RUN_ID for $WORKFLOW_NAME${NC}" >&2
+        if [ -n "$FAILED_RUN_DIRECT" ]; then
+            RUN_ID=$(echo "$FAILED_RUN_DIRECT" | cut -d'|' -f1)
+            STATUS=$(echo "$FAILED_RUN_DIRECT" | cut -d'|' -f2)
+            CONCLUSION="failure"
+            echo -e "${RED}[DEBUG] ⚠️  FAILURE FOUND (Direct): $WORKFLOW_NAME (Run $RUN_ID)${NC}" | tee -a /tmp/ai-fixer-v3.1.log >&2
+            FAILED_RUNS+=("$RUN_ID|$WORKFLOW_NAME")
+            FOUND_FAILURE=true
             continue
         fi
         
-        if command -v jq &> /dev/null; then
-            STATUS=$(gh run view "$RUN_ID" --json status --jq '.status' 2>/dev/null || echo "unknown")
-            CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion // "in_progress"' 2>/dev/null || echo "in_progress")
-        else
-            RUN_INFO=$(gh run view "$RUN_ID" 2>/dev/null || echo "")
-            STATUS=$(echo "$RUN_INFO" | grep -i "status:" | awk '{print $2}' | head -1 || echo "unknown")
-            CONCLUSION=$(echo "$RUN_INFO" | grep -i "conclusion:" | awk '{print $2}' | head -1 || echo "in_progress")
+        # Method 2: Get latest run and check
+        RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}' || echo "")
+        
+        if [ -z "$RUN_ID" ] || ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+            echo -e "${DIM}[DEBUG] No valid RUN_ID for $WORKFLOW_NAME${NC}" | tee -a /tmp/ai-fixer-v3.1.log >&2
+            continue
         fi
         
-        echo -e "${DIM}[DEBUG] $WORKFLOW_NAME: Run $RUN_ID, Status=$STATUS, Conclusion=$CONCLUSION${NC}" >&2
+        # Enhanced check with multiple methods
+        if command -v jq &> /dev/null; then
+            # Method A: JSON query
+            RUN_DATA=$(gh run view "$RUN_ID" --json status,conclusion 2>/dev/null || echo "{}")
+            STATUS=$(echo "$RUN_DATA" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+            CONCLUSION=$(echo "$RUN_DATA" | jq -r '.conclusion // "in_progress"' 2>/dev/null || echo "in_progress")
+            
+            # Fallback if conclusion is null
+            if [ "$CONCLUSION" = "null" ] || [ -z "$CONCLUSION" ]; then
+                CONCLUSION="in_progress"
+            fi
+        else
+            # Method B: Text parsing
+            RUN_INFO=$(gh run view "$RUN_ID" 2>/dev/null || echo "")
+            STATUS=$(echo "$RUN_INFO" | grep -iE "status:" | awk '{print $2}' | head -1 || echo "unknown")
+            CONCLUSION=$(echo "$RUN_INFO" | grep -iE "conclusion:" | awk '{print $2}' | head -1 || echo "in_progress")
+            
+            # Also check for failure keywords in output
+            if echo "$RUN_INFO" | grep -qiE "failed|failure|error"; then
+                if [ "$STATUS" = "completed" ]; then
+                    CONCLUSION="failure"
+                fi
+            fi
+        fi
         
-        if [ "$CONCLUSION" = "failure" ]; then
+        echo -e "${DIM}[DEBUG] $WORKFLOW_NAME: Run $RUN_ID, Status=$STATUS, Conclusion=$CONCLUSION${NC}" | tee -a /tmp/ai-fixer-v3.1.log >&2
+        
+        # Check for failure (multiple conditions)
+        if [ "$CONCLUSION" = "failure" ] || ([ "$STATUS" = "completed" ] && [ "$CONCLUSION" != "success" ] && [ "$CONCLUSION" != "in_progress" ] && [ "$CONCLUSION" != "queued" ]); then
             FAILED_RUNS+=("$RUN_ID|$WORKFLOW_NAME")
             FOUND_FAILURE=true
-            echo -e "${RED}[DEBUG] ⚠️  FAILURE FOUND: $WORKFLOW_NAME (Run $RUN_ID)${NC}" >&2
+            echo -e "${RED}[DEBUG] ⚠️  FAILURE FOUND: $WORKFLOW_NAME (Run $RUN_ID, Status=$STATUS, Conclusion=$CONCLUSION)${NC}" | tee -a /tmp/ai-fixer-v3.1.log >&2
         fi
     done
     
     if [ ${#FAILED_RUNS[@]} -gt 0 ]; then
         printf '%s\n' "${FAILED_RUNS[@]}"
+        echo -e "${RED}[AI-MVC v3.1] ✅ FAILURE TESPİT EDİLDİ: ${#FAILED_RUNS[@]} workflow başarısız${NC}" | tee -a /tmp/ai-fixer-v3.1.log
         return 0
     fi
     
