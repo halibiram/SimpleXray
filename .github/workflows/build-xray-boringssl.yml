@@ -527,8 +527,10 @@ jobs:
           fi
 
           # CGO flags for BoringSSL
-          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE"
-          export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -lcrypto -lssl -static"
+          # Add NDK sysroot library path for Android system libraries (e.g., -llog)
+          NDK_SYSROOT_LIB="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.toolchain }}/24"
+          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -L$NDK_SYSROOT_LIB -lcrypto -lssl -llog -static"
 
           # Build Xray-core
           # Note: Without actual CGO bridge code in Xray-core, we build vanilla Xray
