@@ -129,13 +129,6 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path "src/main/jni/perf-net/CMakeLists.txt"
-            version "3.22.1"
-        }
-    }
-
     lint {
         // Enable lint checks for release builds but don't abort on errors
         // This allows builds to complete while still reporting issues
