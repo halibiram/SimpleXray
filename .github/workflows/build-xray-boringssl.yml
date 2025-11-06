@@ -575,8 +575,9 @@ jobs:
               ./main
           else
             echo "Patches detected, attempting CGO build with BoringSSL..."
+            # Use -buildmode=default instead of c-shared to avoid automatic Android library linking
+            # c-shared mode automatically adds -llog which causes linker errors
             go build \
-              -buildmode=c-shared \
               -o libxray.so \
               -trimpath \
               -buildvcs=false \
