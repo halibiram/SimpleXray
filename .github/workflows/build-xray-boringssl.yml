@@ -504,14 +504,11 @@ jobs:
         run: |
           cd Xray-core
 
-          # Set up CGO environment
+          # Set up Go environment
           export GOOS=android
-          export CGO_ENABLED=1
           export GOARCH=${{ matrix.goarch }}
 
           TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-          export CC=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang
-          export CXX=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang++
           export AR=$TOOLCHAIN_DIR/bin/llvm-ar
           export RANLIB=$TOOLCHAIN_DIR/bin/llvm-ranlib
           export STRIP=$TOOLCHAIN_DIR/bin/llvm-strip
@@ -526,53 +523,20 @@ jobs:
             exit 1
           fi
 
-          # CGO flags for BoringSSL
-          # Add NDK sysroot library path for Android system libraries (e.g., -llog)
-          # NDK r28c sysroot structure: sysroot/usr/lib/<arch>/<api_level>/
-          NDK_SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          NDK_SYSROOT_LIB="$NDK_SYSROOT/usr/lib/${{ matrix.toolchain }}/24"
-          
-          # Verify sysroot library path exists, fallback to alternative locations
-          if [ ! -d "$NDK_SYSROOT_LIB" ]; then
-            echo "⚠️  Expected sysroot lib path not found: $NDK_SYSROOT_LIB"
-            echo "Searching for alternative log library location..."
-            # Try alternative paths
-            ALT_PATHS=(
-              "$NDK_SYSROOT/usr/lib/${{ matrix.toolchain }}/"
-              "$NDK_SYSROOT/usr/lib/"
-              "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/"
-            )
-            for ALT_PATH in "${ALT_PATHS[@]}"; do
-              if [ -d "$ALT_PATH" ] && find "$ALT_PATH" -name "liblog.so" -o -name "liblog.a" 2>/dev/null | head -1 | grep -q .; then
-                NDK_SYSROOT_LIB="$ALT_PATH"
-                echo "✅ Found log library at: $NDK_SYSROOT_LIB"
-                break
-              fi
-            done
-          fi
-          
-          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
-          
-          # liblog is not required for vanilla Xray-core build
-          # Remove -llog completely as it's causing linker errors and isn't needed
-          echo "ℹ️  Building without Android log library (-llog) - not required for Xray-core"
-          export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -L$NDK_SYSROOT_LIB -lcrypto -lssl -static"
-
           # Build Xray-core
           # Note: Without actual CGO bridge code in Xray-core, we build vanilla Xray
           # BoringSSL integration is handled by perf-net native module (already integrated)
-          echo "Building Xray-core for ${{ matrix.abi }}..."
-
-          # Try building with CGO if patches were applied, otherwise build vanilla
-          if git diff --quiet HEAD; then
-            echo "No patches applied, building vanilla Xray-core"
-            go build \
-              -o libxray.so \
-              -trimpath \
-              -buildvcs=false \
-              -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
-              -v \
-              ./main
+          # Disable CGO to avoid Android system library linking issues (-llog, etc.)
+          echo "Building vanilla Xray-core for ${{ matrix.abi }} (CGO disabled)..."
+          export CGO_ENABLED=0
+          
+          go build \
+            -o libxray.so \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
+            -v \
+            ./main
           else
             echo "Patches detected, attempting CGO build with BoringSSL..."
             # Use -buildmode=default instead of c-shared to avoid automatic Android library linking
