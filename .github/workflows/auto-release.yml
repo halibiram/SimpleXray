@@ -44,8 +44,9 @@ jobs:
       - name: Initialize Valid Submodules
         run: |
           # Only initialize the valid submodule (hev-socks5-tunnel)
+          # Use --recursive to initialize nested submodules (yaml, lwip, hev-task-system)
           git submodule sync || true
-          git submodule update --init app/src/main/jni/hev-socks5-tunnel || true
+          git submodule update --init --recursive app/src/main/jni/hev-socks5-tunnel || true
           echo "✅ Submodules initialized"
 
       - name: Read Versions
