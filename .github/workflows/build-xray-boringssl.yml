@@ -550,10 +550,9 @@ jobs:
             exit 1
           fi
 
-          # Build Xray-core
+          # Build Xray-core with BoringSSL
           # Note: Android cross-compilation requires CGO_ENABLED=1 (Go limitation)
-          # But we can use linker flags to ignore missing system libraries like -llog
-          echo "Building vanilla Xray-core for ${{ matrix.abi }}..."
+          echo "Building Xray-core with BoringSSL for ${{ matrix.abi }}..."
           export GOOS=android
           export CGO_ENABLED=1
           export GOARCH=${{ matrix.goarch }}
@@ -562,9 +561,16 @@ jobs:
           export CC=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang
           export CXX=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang++
           
-          # Use linker flags to ignore missing -llog (not needed for vanilla Xray)
-          # -Wl,--allow-shlib-undefined allows undefined shared library symbols
-          export CGO_LDFLAGS="-Wl,--allow-shlib-undefined"
+          # Set CGO flags to link BoringSSL
+          BORINGSSL_LIB_DIR=$(dirname "$BORINGSSL_CRYPTO")
+          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE"
+          export CGO_LDFLAGS="-L$BORINGSSL_LIB_DIR -lcrypto -lssl -static -Wl,--allow-shlib-undefined"
+          
+          echo "🔗 BoringSSL linking configuration:"
+          echo "   CGO_CFLAGS: $CGO_CFLAGS"
+          echo "   CGO_LDFLAGS: $CGO_LDFLAGS"
+          echo "   BoringSSL Crypto: $BORINGSSL_CRYPTO"
+          echo "   BoringSSL SSL: $BORINGSSL_SSL"
           
           go build \
             -o libxray.so \
