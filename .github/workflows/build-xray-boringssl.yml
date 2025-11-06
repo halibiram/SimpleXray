@@ -586,38 +586,21 @@ jobs:
           BORINGSSL_CRYPTO_DIR=$(dirname "$BORINGSSL_CRYPTO")
           BORINGSSL_SSL_DIR=$(dirname "$BORINGSSL_SSL")
           
-          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE"
+          # Set sysroot for Android NDK
+          NDK_SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           
-          # Find Android log library in NDK (API level 24 from toolchain name)
-          # Try multiple possible locations for liblog
-          NDK_LIB_DIRS=(
-            "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.toolchain }}/24"
-            "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.toolchain }}"
-            "$NDK_HOME/platforms/android-24/arch-${{ matrix.goarch }}/usr/lib"
-          )
+          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
           
-          LOG_LIB_FLAG="-Wl,--allow-shlib-undefined"
-          for NDK_LIB_DIR in "${NDK_LIB_DIRS[@]}"; do
-            if [ -f "$NDK_LIB_DIR/liblog.a" ]; then
-              echo "✅ Found liblog.a in NDK: $NDK_LIB_DIR/liblog.a"
-              LOG_LIB_FLAG="-L$NDK_LIB_DIR -llog"
-              break
-            elif [ -f "$NDK_LIB_DIR/liblog.so" ]; then
-              echo "✅ Found liblog.so in NDK: $NDK_LIB_DIR/liblog.so"
-              LOG_LIB_FLAG="-L$NDK_LIB_DIR -llog"
-              break
-            fi
-          done
+          # Android system libraries: liblog and libandroid
+          # NDK r28c uses new layout, so we specify sysroot and let linker find libraries
+          # -llog: Android logging library (required by Xray-core's Android logging calls)
+          # -landroid: Android native library (may be needed by some Go modules)
+          # --sysroot: Tell linker where to find system libraries
+          export CGO_LDFLAGS="-L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR -lcrypto -lssl -static -llog -landroid --sysroot=$NDK_SYSROOT -Wl,--as-needed"
           
-          if [ "$LOG_LIB_FLAG" = "-Wl,--allow-shlib-undefined" ]; then
-            echo "⚠️  liblog not found in NDK, using --allow-shlib-undefined"
-            echo "   Searched in: ${NDK_LIB_DIRS[*]}"
-          fi
-          
-          # Include both directories and link both libraries
-          # Use -Wl,--allow-shlib-undefined to ignore missing system libs if log not found
-          # -Wl,--as-needed removes unused library dependencies
-          export CGO_LDFLAGS="-L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR -lcrypto -lssl -static $LOG_LIB_FLAG -Wl,--as-needed"
+          echo "📋 Android system libraries configuration:"
+          echo "   NDK Sysroot: $NDK_SYSROOT"
+          echo "   Linking: -llog -landroid"
           
           echo "🔗 BoringSSL linking configuration:"
           echo "   CGO_CFLAGS: $CGO_CFLAGS"
