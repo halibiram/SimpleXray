@@ -1,7 +1,8 @@
 # Hyper-Intelligent Autonomous Build Fixer MVC Agent
 
-**Version**: 1.0.0  
+**Version**: 3.1.0  
 **Created**: 2024-01-01  
+**Updated**: 2024-11-06 (v3.1 - Enhanced Stop-on-Failure)  
 **Status**: Active and Ready
 
 ## Purpose
@@ -154,10 +155,27 @@ Output messages during operation:
 [AI-MVC] Observing pipeline...
 ```
 
-## Loop Behavior
+## Loop Behavior - CORE RULE
+
+**🔴 CRITICAL RULE: Continue fixing until successful build is achieved**
 
 **NEVER stop** if the build is failing.  
-Continue until a **successful build** is achieved.
+**ALWAYS continue** fixing until a **successful build** is achieved.  
+**NO EXCEPTIONS** - This is a fundamental, non-negotiable rule.
+
+### Implementation Details:
+- When a failure is detected: **STOP monitoring immediately**
+- Apply fix **immediately** without delay
+- Commit and push fix **immediately**
+- Resume monitoring and **continue** until success
+- If max attempts reached: **Reset counter and continue anyway**
+- **NEVER exit** with failure status while builds are failing
+- Only exit when **ALL workflows show SUCCESS**
+
+### v3.1 Enhanced Behavior:
+- Failure detected → Stop monitoring → Fix → Push → Resume
+- Maximum attempts reached → Extend limit → Continue
+- This rule takes precedence over all other constraints
 
 ## Fallback Strategy
 
