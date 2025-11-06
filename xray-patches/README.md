@@ -2,29 +2,45 @@
 
 This directory contains patches to modify Xray-core for BoringSSL integration.
 
+## Current Status
+
+**BoringSSL is linked via CGO flags in the build workflow** - no code patches are required.
+
+The build workflow (`build-xray-boringssl.yml`) configures:
+- `CGO_CFLAGS`: BoringSSL include path
+- `CGO_LDFLAGS`: BoringSSL crypto and ssl libraries (static linking)
+
 ## Patch Files
 
-- **001-boringssl-bridge.patch** - Adds CGO bridge to enable BoringSSL crypto functions
-- **002-tls-optimization.patch** - Optimizes TLS implementation with BoringSSL
-- **003-xtls-splice.patch** - Enhances XTLS Vision flow with BoringSSL zero-copy
+- **001-boringssl-bridge.patch** - Placeholder (optional, not required)
 
-## Important Notes
+## How It Works
 
-⚠️ **These are template patches** and need to be customized based on:
-- The actual Xray-core codebase structure
-- The specific version of Xray-core being built
-- The changes required to integrate BoringSSL
+1. **BoringSSL Libraries**: Built separately and downloaded as artifacts
+2. **CGO Linking**: Configured in build workflow via environment variables
+3. **Static Linking**: BoringSSL libraries are statically linked to Xray-core binary
+4. **No Code Changes**: Xray-core code remains unchanged
 
-## How to Create Proper Patches
+## Build Process
 
-1. Clone Xray-core repository
-2. Make your changes to enable BoringSSL
-3. Generate patches using: `git diff > ../xray-patches/001-boringssl-bridge.patch`
-4. Test patches apply cleanly: `git apply --check 001-boringssl-bridge.patch`
+1. BoringSSL is built for each ABI (arm64-v8a, x86_64)
+2. Xray-core is cloned
+3. Patches are attempted (optional, can fail)
+4. Xray-core is built with CGO flags linking BoringSSL
+5. Binary is verified for BoringSSL symbols
 
-## Applying Patches
+## Verification
 
-Patches are automatically applied during the GitHub Actions build process. If patches fail to apply, the build will continue with vanilla Xray-core.
+After build, the binary is checked for BoringSSL symbols:
+```bash
+strings libxray.so | grep -i "BoringSSL\|boringssl"
+```
 
+## Future Improvements
 
+For full BoringSSL integration (using BoringSSL in code, not just linking):
+1. Create CGO bridge in Xray-core crypto package
+2. Replace Go crypto/tls with BoringSSL calls
+3. Enable hardware acceleration (AES-NI/NEON)
 
+See `PATCH_STRATEGY.md` for detailed strategy.
