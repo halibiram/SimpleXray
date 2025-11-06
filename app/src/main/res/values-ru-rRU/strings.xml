@@ -43,7 +43,7 @@
     <string name="import_failed">Не удалось импортировать: в буфере обмена не найдена конфигурация</string>
     <string name="source">Исходный код</string>
     <string name="version">Версия</string>
-    <string name="kernel">Ядро</string>
+    <string name="kernel">Ядро Xray</string>
     <string name="open_source">Репозиторий с исходным кодом</string>
     <string name="backup">Резервная копия</string>
     <string name="restore">Восстановить</string>

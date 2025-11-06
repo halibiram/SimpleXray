@@ -49,7 +49,7 @@
     <string name="import_failed">Import failed: No config found on clipboard</string>
     <string name="source">Source Code</string>
     <string name="version">Version</string>
-    <string name="kernel">Kernel</string>
+    <string name="kernel">Kernel Xray</string>
     <string name="open_source">Open Source Repository</string>
     <string name="backup">Backup</string>
     <string name="restore">Restore</string>

@@ -314,42 +314,76 @@ class MainViewModel(application: Application) :
 
     // PERF: Process creation is expensive - consider caching version result
     private fun loadKernelVersion() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val result = runSuspendCatchingWithError {
-                val libraryDir = TProxyService.getNativeLibraryDir(application)
-                if (libraryDir == null) {
-                    throw IllegalStateException("Native library directory not found")
-                }
-                // SEC: Validate libraryDir path before using in command
-                val xrayPath = File(libraryDir, "libxray.so")
-                if (!xrayPath.exists() || !xrayPath.canRead()) {
-                    throw IllegalStateException("Xray binary not found or not readable: ${xrayPath.absolutePath}")
-                }
-                // Use array form to prevent command injection
-                val process = Runtime.getRuntime().exec(arrayOf(xrayPath.absolutePath, "-version"))
-                val firstLine = InputStreamReader(process.inputStream).use { isr ->
-                    BufferedReader(isr).use { reader ->
-                        reader.readLine()
+                // Use the copied executable from XrayCoreLauncher, or copy it if needed
+                val xrayCore = File(application.filesDir, "xray_core")
+                if (!xrayCore.exists() || !xrayCore.canExecute()) {
+                    // Try to copy executable if it doesn't exist
+                    val libraryDir = application.applicationInfo.nativeLibraryDir
+                    if (libraryDir == null) {
+                        throw IllegalStateException("Native library directory not found")
+                    }
+                    val libxray = File(libraryDir, "libxray.so")
+                    if (!libxray.exists() || !libxray.canRead()) {
+                        throw IllegalStateException("Xray binary not found or not readable: ${libxray.absolutePath}")
+                    }
+                    // Copy libxray.so to xray_core
+                    libxray.inputStream().use { input ->
+                        xrayCore.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    // Make it executable (same as XrayCoreLauncher)
+                    if (!xrayCore.setExecutable(true)) {
+                        throw IllegalStateException("Failed to set executable permission on xray_core")
+                    }
+                    if (!xrayCore.canExecute()) {
+                        throw IllegalStateException("Failed to make xray_core executable")
                     }
                 }
-                try {
-                    // Add timeout to prevent indefinite blocking
-                    val exited = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-                    if (!exited) {
-                        AppLogger.w("Process did not exit within timeout, destroying")
-                        process.destroyForcibly()
-                        throw TimeoutException("Process execution timeout")
+                
+                // Use ProcessBuilder to prevent command injection
+                val process = ProcessBuilder(xrayCore.absolutePath, "-version")
+                    .redirectErrorStream(true)
+                    .start()
+                
+                // Read output before waiting for process to complete
+                val output = try {
+                    BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                        reader.readLine() ?: ""
                     }
+                } catch (e: IOException) {
+                    AppLogger.w("Failed to read process output", e)
+                    process.destroyForcibly()
+                    throw IllegalStateException("Failed to read xray version output: ${e.message}")
+                }
+                
+                // Wait for process to complete with timeout
+                val exited = try {
+                    process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
                 } catch (e: InterruptedException) {
                     AppLogger.w("Process wait interrupted", e)
                     process.destroyForcibly()
                     throw e
-                } finally {
-                    if (process.isAlive) {
-                        process.destroy()
-                    }
                 }
-                firstLine ?: throw IllegalStateException("No output from xray version command")
+                
+                if (!exited) {
+                    AppLogger.w("Process did not exit within timeout, destroying")
+                    process.destroyForcibly()
+                    throw TimeoutException("Process execution timeout")
+                }
+                
+                val exitCode = process.exitValue()
+                if (exitCode != 0) {
+                    throw IllegalStateException("Xray version command failed with exit code: $exitCode")
+                }
+                
+                if (output.isBlank()) {
+                    throw IllegalStateException("No output from xray version command")
+                }
+                
+                output.trim()
             }
             
             result.fold(
@@ -361,8 +395,7 @@ class MainViewModel(application: Application) :
                     )
                 },
                 onFailure = { throwable ->
-                    val appError = throwable.toAppError()
-                    ErrorHandler.handleError(appError, TAG)
+                    AppLogger.w("Failed to load kernel version: ${throwable.message}", throwable)
                     _settingsState.value = _settingsState.value.copy(
                         info = _settingsState.value.info.copy(
                             kernelVersion = "N/A"

@@ -43,7 +43,7 @@
     <string name="import_failed">导入失败: 粘贴板上未找到配置</string>
     <string name="source">源代码</string>
     <string name="version">版本</string>
-    <string name="kernel">内核</string>
+    <string name="kernel">内核 Xray</string>
     <string name="open_source">打开源代码库</string>
     <string name="backup">备份</string>
     <string name="restore">恢复</string>

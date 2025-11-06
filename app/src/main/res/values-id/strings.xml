@@ -43,7 +43,7 @@
     <string name="import_failed">Gagal mengimpor: Tidak ada konfigurasi yang ditemukan di papan klip</string>
     <string name="source">Kode Sumber</string>
     <string name="version">Versi</string>
-    <string name="kernel">Kernel</string>
+    <string name="kernel">Kernel Xray</string>
     <string name="open_source">Repositori Sumber Terbuka</string>
     <string name="backup">Cadangkan</string>
     <string name="restore">Pulihkan</string>
