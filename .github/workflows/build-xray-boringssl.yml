@@ -612,18 +612,26 @@ jobs:
           # CGO flags with absolute sysroot paths (required for NDK r28c)
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
           
-          # CGO_LDFLAGS: Multiple -L flags for fallback, absolute paths required
-          # -L flags: BoringSSL libraries + Android system library paths
-          # -llog -landroid: Android system libraries (required by Xray-core)
+          # CGO_LDFLAGS: Hybrid static/dynamic linking
+          # -Wl,-Bstatic: Switch to static linking mode (only for BoringSSL)
+          # -lcrypto -lssl: BoringSSL libraries (static .a files)
+          # -Wl,-Bdynamic: Switch back to dynamic linking mode (for Android system libs)
+          # -llog -landroid: Android system libraries (only available as .so, not .a)
+          # -lc -lm -ldl: Standard C libraries (dynamic)
           # --sysroot: Tell linker where to find system libraries
+          # 
+          # Why hybrid? Android NDK provides liblog/libandroid only as .so files.
+          # Using -static would prevent linking against .so files, causing "unable to find library" errors.
+          # Solution: Statically link BoringSSL, dynamically link Android system libraries.
           export CGO_LDFLAGS="\
-            -L$BORINGSSL_CRYPTO_DIR \
-            -L$BORINGSSL_SSL_DIR \
+            -L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR \
+            -Wl,-Bstatic \
+            -lcrypto -lssl \
+            -Wl,-Bdynamic \
             -L$ANDROID_LIB_DIR \
             -L$NDK_SYSROOT/usr/lib \
             -L$NDK_SYSROOT/usr/lib64 \
-            -lcrypto -lssl -static \
-            -llog -landroid \
+            -llog -landroid -lc -lm -ldl \
             --sysroot=$NDK_SYSROOT"
 
           echo "🔧 Build configuration for ${{ matrix.abi }}:"
