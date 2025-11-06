@@ -1,0 +1,87 @@
+{
+  "version": "1.0.0",
+  "created": "2024-01-01T00:00:00Z",
+  "patterns": [
+    {
+      "error": "clang: error.*unsupported.*march",
+      "fix": "Add ANDROID_ABI and ANDROID_PLATFORM to CMake args to ensure correct architecture detection, remove conflicting -march flags",
+      "context": "cmake/ndk/toolchain",
+      "confidence": 95,
+      "applied_count": 1,
+      "success_count": 0
+    },
+    {
+      "error": "CMake Error",
+      "fix": "Check CMakeLists.txt configuration, verify NDK toolchain paths, ensure CMake version compatibility",
+      "context": "cmake",
+      "confidence": 85,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "Libraries not found",
+      "fix": "Verify build output directories, correct library paths in artifact upload steps, check ABI filtering",
+      "context": "build/artifacts",
+      "confidence": 90,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "ninja.*failed",
+      "fix": "Clean build directory, check dependencies, verify memory limits, review compiler flags",
+      "context": "build/ninja",
+      "confidence": 80,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "Kotlin.*JVM.*default",
+      "fix": "Enable jvmDefault=all in kotlinOptions, ensure Kotlin version compatibility with Compose compiler",
+      "context": "kotlin/compose",
+      "confidence": 92,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "Gradle.*dependency.*resolution",
+      "fix": "Update dependency versions, check repository configurations, verify version catalogs",
+      "context": "gradle/dependencies",
+      "confidence": 88,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "Android Gradle Plugin.*mismatch",
+      "fix": "Update AGP version to match Gradle version, check compatibility matrix",
+      "context": "gradle/agp",
+      "confidence": 90,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "KSP.*plugin.*mismatch",
+      "fix": "Pin KSP plugin version to match Kotlin version exactly",
+      "context": "ksp/kotlin",
+      "confidence": 95,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "Compose.*compiler.*mismatch",
+      "fix": "Update Compose compiler version to match Kotlin minor version",
+      "context": "compose/kotlin",
+      "confidence": 93,
+      "applied_count": 0,
+      "success_count": 0
+    },
+    {
+      "error": "OpenSSL.*not.*found",
+      "fix": "Replace OpenSSL references with BoringSSL, update CMakeLists.txt and build configurations",
+      "context": "openssl/boringssl",
+      "confidence": 98,
+      "applied_count": 0,
+      "success_count": 0
+    }
+  ]
+}
+
