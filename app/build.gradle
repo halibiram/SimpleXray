@@ -47,10 +47,6 @@ android {
         applicationId "com.simplexray.an"
         versionCode versionProps.APP_VERSION_CODE.toInteger()
         versionName versionProps.APP_VERSION_NAME
-        ndk {
-            // BoringSSL optimized for ARM64 with crypto extensions
-            abiFilters "arm64-v8a"
-        }
 
         // Runtime SSL mode configuration
         def sslMode = System.getenv("SXR_SSL_MODE") ?: "boringssl"
@@ -188,7 +184,7 @@ android {
         abi {
             enable true
             reset()
-            include "arm64-v8a"  // BoringSSL optimized for ARM64
+            include "arm64-v8a", "x86_64"  // BoringSSL optimized for both architectures
             universalApk false
         }
     }
