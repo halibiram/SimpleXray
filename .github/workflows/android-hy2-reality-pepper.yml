@@ -69,7 +69,7 @@ jobs:
             ${{ runner.os }}-gradle-
       
       - name: Run unit tests
-        run: ./gradlew test --tests "com.simplexray.an.chain.*" --no-daemon
+        run: ./gradlew test -PtestFilter="com.simplexray.an.chain.*" --no-daemon
       
       - name: Upload test results
         if: always()

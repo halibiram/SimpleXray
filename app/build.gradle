@@ -353,3 +353,15 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
+
+// Configure test task to support filtering
+afterEvaluate {
+    tasks.withType(Test).configureEach {
+        // Support test filtering via project property
+        if (project.hasProperty('testFilter')) {
+            filter {
+                includeTestsMatching project.property('testFilter')
+            }
+        }
+    }
+}
