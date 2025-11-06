@@ -588,19 +588,78 @@ jobs:
           
           # Set sysroot for Android NDK
           NDK_SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          ANDROID_API=24
+          
+          # Map ABI to NDK library path architecture
+          case "${{ matrix.abi }}" in
+            arm64-v8a)
+              NDK_ARCH="aarch64-linux-android"
+              ;;
+            armeabi-v7a)
+              NDK_ARCH="arm-linux-androideabi"
+              ;;
+            x86_64)
+              NDK_ARCH="x86_64-linux-android"
+              ;;
+            x86)
+              NDK_ARCH="i686-linux-android"
+              ;;
+            *)
+              echo "❌ Unknown ABI: ${{ matrix.abi }}"
+              exit 1
+              ;;
+          esac
+          
+          # Android system library path (NDK r28c requires explicit path)
+          ANDROID_LIB_DIR="$NDK_SYSROOT/usr/lib/$NDK_ARCH/$ANDROID_API"
+          
+          # Verify library directory exists
+          if [ ! -d "$ANDROID_LIB_DIR" ]; then
+            echo "⚠️  Android lib directory not found: $ANDROID_LIB_DIR"
+            echo "   Trying alternative locations..."
+            # Try alternative locations
+            ALT_DIRS=(
+              "$NDK_SYSROOT/usr/lib/$NDK_ARCH"
+              "$NDK_SYSROOT/usr/lib64"
+              "$NDK_SYSROOT/usr/lib"
+            )
+            for ALT_DIR in "${ALT_DIRS[@]}"; do
+              if [ -d "$ALT_DIR" ]; then
+                ANDROID_LIB_DIR="$ALT_DIR"
+                echo "✅ Using alternative: $ANDROID_LIB_DIR"
+                break
+              fi
+            done
+          fi
+          
+          # Set LIBRARY_PATH environment variable (most reliable method)
+          export LIBRARY_PATH="$ANDROID_LIB_DIR:$LIBRARY_PATH"
           
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
           
           # Android system libraries: liblog and libandroid
-          # NDK r28c uses new layout, so we specify sysroot and let linker find libraries
+          # NDK r28c requires explicit library search path (-L flag)
+          # -L: Library search path (where to find liblog.so, libandroid.so)
           # -llog: Android logging library (required by Xray-core's Android logging calls)
           # -landroid: Android native library (may be needed by some Go modules)
           # --sysroot: Tell linker where to find system libraries
-          export CGO_LDFLAGS="-L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR -lcrypto -lssl -static -llog -landroid --sysroot=$NDK_SYSROOT -Wl,--as-needed"
+          export CGO_LDFLAGS="-L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR -L$ANDROID_LIB_DIR -lcrypto -lssl -static -llog -landroid --sysroot=$NDK_SYSROOT -Wl,--as-needed"
           
           echo "📋 Android system libraries configuration:"
           echo "   NDK Sysroot: $NDK_SYSROOT"
+          echo "   Android API: $ANDROID_API"
+          echo "   NDK Arch: $NDK_ARCH"
+          echo "   Library Dir: $ANDROID_LIB_DIR"
+          echo "   LIBRARY_PATH: $LIBRARY_PATH"
           echo "   Linking: -llog -landroid"
+          
+          # Verify libraries exist
+          if [ -f "$ANDROID_LIB_DIR/liblog.so" ] || [ -f "$ANDROID_LIB_DIR/liblog.a" ]; then
+            echo "✅ liblog found in $ANDROID_LIB_DIR"
+          else
+            echo "⚠️  liblog not found in $ANDROID_LIB_DIR (may still work with LIBRARY_PATH)"
+            ls -la "$ANDROID_LIB_DIR" | grep -E "log|android" || echo "   Directory listing failed"
+          fi
           
           echo "🔗 BoringSSL linking configuration:"
           echo "   CGO_CFLAGS: $CGO_CFLAGS"
