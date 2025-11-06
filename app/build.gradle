@@ -4,8 +4,25 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
     id 'com.google.protobuf' version '0.9.4'
     id 'com.google.devtools.ksp'
-    id 'com.google.gms.google-services'
-    id 'com.google.firebase.crashlytics'
+    id 'com.google.gms.google-services' apply false
+    id 'com.google.firebase.crashlytics' apply false
+}
+
+// Conditionally apply Google Services plugins only if config file exists
+// Check multiple possible locations (standard locations for google-services.json)
+def googleServicesFile = file('src/debug/google-services.json')
+if (!googleServicesFile.exists()) {
+    googleServicesFile = file('src/google-services.json')
+}
+if (!googleServicesFile.exists()) {
+    googleServicesFile = file('google-services.json')
+}
+
+if (googleServicesFile.exists()) {
+    apply plugin: 'com.google.gms.google-services'
+    apply plugin: 'com.google.firebase.crashlytics'
+} else {
+    println "⚠️  google-services.json not found - Firebase features will be disabled"
 }
 
 protobuf {
@@ -362,6 +379,17 @@ afterEvaluate {
             filter {
                 includeTestsMatching project.property('testFilter')
             }
+        }
+    }
+    
+    // Make Google Services tasks optional if config file doesn't exist
+    def hasGoogleServices = file('src/debug/google-services.json').exists() ||
+                           file('src/google-services.json').exists() ||
+                           file('google-services.json').exists()
+    
+    if (!hasGoogleServices) {
+        tasks.matching { it.name.contains('GoogleServices') }.configureEach {
+            enabled = false
         }
     }
 }
