@@ -29,6 +29,8 @@ object XrayCoreLauncher {
 
     /**
      * Start Xray with auto-retry and log monitoring
+     * 
+     * @param tlsMode TLS implementation mode (BORINGSSL, CONSCRYPT, GO_BORINGCRYPTO, AUTO)
      */
     @Synchronized
     fun start(
@@ -36,7 +38,8 @@ object XrayCoreLauncher {
         configFile: File? = null,
         maxRetries: Int = 3,
         retryDelayMs: Long = 5000,
-        onLogLine: ((String) -> Unit)? = null
+        onLogLine: ((String) -> Unit)? = null,
+        tlsMode: com.simplexray.an.chain.tls.TlsImplementation = com.simplexray.an.chain.tls.TlsImplementation.AUTO
     ): Boolean {
         if (isRunning()) return true
         
@@ -48,9 +51,26 @@ object XrayCoreLauncher {
         }
         
         AssetsInstaller.ensureAssets(context)
+        
+        // Log TLS mode selection
+        val selectedMode = if (tlsMode == com.simplexray.an.chain.tls.TlsImplementation.AUTO) {
+            com.simplexray.an.chain.tls.TlsModeDetector.getRecommendedMode(context)
+        } else {
+            tlsMode
+        }
+        AppLogger.i("XrayCoreLauncher: Starting with TLS mode: $selectedMode")
+        
         val bin = copyExecutable(context) ?: run {
             AppLogger.e("xray binary not found in native libs")
             return false
+        }
+        
+        // Verify TLS mode compatibility
+        val tlsInfo = com.simplexray.an.chain.tls.TlsModeDetector.getTlsInfo(context, selectedMode)
+        if (!tlsInfo.available) {
+            AppLogger.w("XrayCoreLauncher: Selected TLS mode $selectedMode not available, using recommended")
+            val recommended = com.simplexray.an.chain.tls.TlsModeDetector.getRecommendedMode(context)
+            AppLogger.i("XrayCoreLauncher: Using recommended TLS mode: $recommended")
         }
         val cfg = configFile ?: File(context.filesDir, "xray.json")
         if (!cfg.exists()) {

@@ -91,12 +91,21 @@ class ChainSupervisor(private val context: Context) {
             // 4. Start Xray-core if configured
             if (config.xrayConfigPath != null) {
                 val configFile = File(context.filesDir, config.xrayConfigPath)
+                
+                // Convert ChainConfig.TlsMode to TlsImplementation
+                val tlsMode = when (config.tlsMode) {
+                    ChainConfig.TlsMode.BORINGSSL -> com.simplexray.an.chain.tls.TlsImplementation.BORINGSSL
+                    ChainConfig.TlsMode.CONSCRYPT -> com.simplexray.an.chain.tls.TlsImplementation.CONSCRYPT
+                    ChainConfig.TlsMode.AUTO -> com.simplexray.an.chain.tls.TlsImplementation.AUTO
+                }
+                
                 val result = runCatching {
                     XrayCoreLauncher.start(
                         context,
                         configFile,
                         maxRetries = 3,
-                        retryDelayMs = 5000
+                        retryDelayMs = 5000,
+                        tlsMode = tlsMode
                     )
                 }
                 results.add(if (result.isSuccess && result.getOrDefault(false)) {
