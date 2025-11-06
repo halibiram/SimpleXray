@@ -1,0 +1,96 @@
+name: AI Auto-Fix on Build Failure
+
+on:
+  workflow_run:
+    workflows: 
+      - "Build Xray-core with BoringSSL"
+      - "Build"
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Specific run ID to analyze"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  ai-fix:
+    name: AI Build Fixer
+    runs-on: ubuntu-latest
+    if: |
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup GitHub CLI
+        run: |
+          type -p curl >/dev/null || (apt update && apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+          && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+          && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+          && apt update \
+          && apt install gh -y
+
+      - name: Authenticate GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Determine Run ID
+        id: run_id
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.run_id }}" ]; then
+            echo "run_id=${{ github.event.inputs.run_id }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
+          else
+            # Get latest failed run
+            RUN_ID=$(gh run list --limit 1 --json databaseId,conclusion --jq '.[] | select(.conclusion == "failure") | .databaseId' | head -1)
+            if [ -n "$RUN_ID" ]; then
+              echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+            else
+              echo "run_id=" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "AI Build Fixer Bot"
+          git config --global user.email "ai-fixer-bot@users.noreply.github.com"
+
+      - name: Run AI Build Fixer
+        id: fixer
+        continue-on-error: true
+        run: |
+          if [ -n "${{ steps.run_id.outputs.run_id }}" ]; then
+            echo "[AI-MVC] Analyzing run: ${{ steps.run_id.outputs.run_id }}"
+            bash scripts/ai-build-fixer.sh "${{ steps.run_id.outputs.run_id }}"
+          else
+            echo "[AI-MVC] Monitoring latest workflows..."
+            timeout 300 bash scripts/ai-build-fixer.sh || true
+          fi
+
+      - name: Report Status
+        if: always()
+        run: |
+          if [ "${{ steps.fixer.outcome }}" == "success" ]; then
+            echo "✅ AI Fixer completed successfully"
+          else
+            echo "⚠️  AI Fixer completed with warnings or timeouts"
+          fi
+

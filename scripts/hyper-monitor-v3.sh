@@ -360,7 +360,17 @@ auto_fix_v3() {
     echo -e "${CYAN}Hata Tipi: ${ERROR_TYPE}${NC}\n"
     
     local FIXED=false
-    CONFIDENCE_SCORE=$(echo "$ANALYSIS_RESULT" | cut -d'|' -f4)
+    CONFIDENCE_SCORE=$(echo "$ANALYSIS_RESULT" | cut -d'|' -f4 | grep -oE '[0-9]+' | head -1 || echo "50")
+    
+    # Confidence score'u sayısal değere çevir (varsayılan 50)
+    if [ -z "$CONFIDENCE_SCORE" ]; then
+        CONFIDENCE_SCORE=50
+    else
+        # Sayısal kontrol (grep ile)
+        if ! echo "$CONFIDENCE_SCORE" | grep -qE '^[0-9]+$'; then
+            CONFIDENCE_SCORE=50
+        fi
+    fi
     
     # Confidence score'a göre düzeltme yap
     if [ "$CONFIDENCE_SCORE" -lt 80 ]; then
@@ -426,29 +436,34 @@ get_error_logs_v3() {
     
     echo -e "${YELLOW}📄 V3 Enhanced Log Alma Başlatılıyor...${NC}"
     
-    # Önce başarısız step'i bul
-    FAILED_STEP=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null | head -1)
+    # Önce başarısız step'i bul (hata olsa bile devam et)
+    set +e
+    FAILED_STEP=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null | head -1 || echo "")
+    set -e
     
     if [ -n "$FAILED_STEP" ]; then
         echo -e "${CYAN}Başarısız Step: ${FAILED_STEP}${NC}"
     fi
     
-    # Hyper log fetcher kullan
+    # Hyper log fetcher kullan (hata olsa bile devam et)
     LOG_OUTPUT=""
+    set +e
     if type hyper_fetch_logs &> /dev/null; then
         LOG_OUTPUT=$(hyper_fetch_logs "$RUN_ID" "$JOB_ID" 200 2>&1 || echo "")
     fi
+    set -e
     
-    # Fallback: API
+    # Fallback: API (hata olsa bile devam et)
     if [ -z "$LOG_OUTPUT" ] || [ "$LOG_OUTPUT" = "" ]; then
+        set +e
         REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null || echo "")
         if [ -n "$REPO" ]; then
             RAW_API_LOG=$(timeout 30 gh api "repos/$REPO/actions/jobs/$JOB_ID/logs" 2>/dev/null || echo "")
             if [ -n "$RAW_API_LOG" ]; then
-                FAILED_STEP_NAMES=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null)
+                FAILED_STEP_NAMES=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.databaseId == $JOB_ID) | .steps[] | select(.conclusion == \"failure\") | .name" 2>/dev/null || echo "")
                 if [ -n "$FAILED_STEP_NAMES" ]; then
                     TEMP_LOG_FILE="/tmp/job_log_v3_$$.txt"
-                    echo "$RAW_API_LOG" > "$TEMP_LOG_FILE"
+                    echo "$RAW_API_LOG" > "$TEMP_LOG_FILE" 2>/dev/null || true
                     
                     for STEP_NAME in $FAILED_STEP_NAMES; do
                         if [ -n "$STEP_NAME" ]; then
@@ -462,12 +477,13 @@ get_error_logs_v3() {
                             fi
                         fi
                     done
-                    rm -f "$TEMP_LOG_FILE"
+                    rm -f "$TEMP_LOG_FILE" 2>/dev/null || true
                 else
-                    LOG_OUTPUT=$(echo "$RAW_API_LOG" | grep -A 80 -E "(error|Error|ERROR|failed|Failed|FAILED|exit code)" | tail -150 || echo "$RAW_API_LOG" | tail -150)
+                    LOG_OUTPUT=$(echo "$RAW_API_LOG" | grep -A 80 -E "(error|Error|ERROR|failed|Failed|FAILED|exit code)" | tail -150 || echo "$RAW_API_LOG" | tail -150 || echo "")
                 fi
             fi
         fi
+        set -e
     fi
     
     if [ -n "$LOG_OUTPUT" ] && [ "$LOG_OUTPUT" != "" ]; then
@@ -479,17 +495,22 @@ get_error_logs_v3() {
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         echo "$LOG_OUTPUT" | tail -100
         
-        # V3 AI analizi
-        AI_RESULT=$(ai_analyze_logs_v3 "$LOG_OUTPUT" "$RUN_ID" "$JOB_ID")
-        ERROR_TYPE=$(echo "$AI_RESULT" | cut -d'|' -f1)
+        # V3 AI analizi (hata olsa bile devam et)
+        set +e
+        AI_RESULT=$(ai_analyze_logs_v3 "$LOG_OUTPUT" "$RUN_ID" "$JOB_ID" 2>/dev/null || echo "")
+        ERROR_TYPE=$(echo "$AI_RESULT" | cut -d'|' -f1 || echo "unknown")
+        set -e
         
-        # Auto-fix önerisi
-        if [ "$AUTO_FIX_ENABLED" = "true" ] && [ -n "$ERROR_TYPE" ] && [ "$ERROR_TYPE" != "General_Error" ]; then
+        # Auto-fix önerisi (hata olsa bile devam et)
+        if [ "$AUTO_FIX_ENABLED" = "true" ] && [ -n "$ERROR_TYPE" ] && [ "$ERROR_TYPE" != "General_Error" ] && [ "$ERROR_TYPE" != "unknown" ]; then
             echo -e "\n${MAGENTA}🔧 Otomatik Düzeltme Deneniyor...${NC}"
+            set +e
             if auto_fix_v3 "$ERROR_TYPE" "$RUN_ID" "$AI_RESULT"; then
                 echo -e "${GREEN}✅ Otomatik düzeltme uygulandı!${NC}"
+                set -e
                 return 0
             fi
+            set -e
         fi
         
         return 0
@@ -570,10 +591,12 @@ monitor_loop_v3() {
         
         echo -e "${BOLD}${CYAN}[$(date '+%H:%M:%S')]${NC} ${DIM}V3 Kontrol #${TOTAL_CHECKS}${NC}"
         
-        # Son run'u al
-        local LATEST_RUN=$(gh run list --limit 1 --json databaseId,status,conclusion,createdAt --jq '.[0] | "\(.databaseId)|\(.status)|\(.conclusion // "in_progress")|\(.createdAt)"' 2>/dev/null)
+        # Son run'u al (hata olsa bile devam et)
+        set +e
+        local LATEST_RUN=$(gh run list --limit 1 --json databaseId,status,conclusion,createdAt --jq '.[0] | "\(.databaseId)|\(.status)|\(.conclusion // "in_progress")|\(.createdAt)"' 2>/dev/null || echo "")
+        set -e
         
-        if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" = "null|null|null" ]; then
+        if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" = "null|null|null" ] || [ "$LATEST_RUN" = "" ]; then
             echo -e "${YELLOW}⚠️  Run bilgisi alınamadı, bekleniyor...${NC}\n"
             sleep $CHECK_INTERVAL
             continue
@@ -583,9 +606,11 @@ monitor_loop_v3() {
         local STATUS=$(echo "$LATEST_RUN" | cut -d'|' -f2)
         local CONCLUSION=$(echo "$LATEST_RUN" | cut -d'|' -f3)
         
-        # Predictive Prevention
+        # Predictive Prevention (hata olsa bile devam et)
         if [ "$STATUS" = "in_progress" ]; then
+            set +e
             prevent_failure "$RUN_ID" || echo -e "${YELLOW}  ⚠️  Prevention alert aktif${NC}"
+            set -e
         fi
         
         # Yeni run tespit edildi
@@ -624,8 +649,10 @@ monitor_loop_v3() {
                         echo "╚════════════════════════════════════════════════════════════════╝"
                         echo -e "${NC}"
                         
-                        # V3 ML-enhanced analiz
-                        ANALYSIS=$(analyze_failure_v3 $RUN_ID 2>/dev/null | grep -E '^[^|]+\|[^|]+\|[^|]+' | head -1)
+                        # V3 ML-enhanced analiz (hata olsa bile devam et)
+                        set +e  # Hata durumunda script durmasın
+                        ANALYSIS=$(analyze_failure_v3 $RUN_ID 2>/dev/null | grep -E '^[^|]+\|[^|]+\|[^|]+' | head -1 || echo "")
+                        set -e
                         
                         if [ -z "$ANALYSIS" ] || [ "$ANALYSIS" = "" ]; then
                             ERROR_TYPE="unknown"
@@ -633,12 +660,12 @@ monitor_loop_v3() {
                             JOB_ID=""
                             WORKFLOW_NAME="unknown"
                         else
-                            ANALYSIS=$(echo "$ANALYSIS" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[^|]+\|[^|]+\|[^|]+' | head -1)
-                            ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1 | tr -d '[:cntrl:]' | xargs)
-                            JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2 | tr -d '[:cntrl:]' | xargs)
-                            JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3 | tr -d '[:cntrl:]' | xargs)
-                            WORKFLOW_NAME=$(echo "$ANALYSIS" | cut -d'|' -f4 | tr -d '[:cntrl:]' | xargs)
-                            JOB_ID=$(echo "$JOB_ID" | grep -oE '[0-9]+' | head -1)
+                            ANALYSIS=$(echo "$ANALYSIS" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[^|]+\|[^|]+\|[^|]+' | head -1 || echo "")
+                            ERROR_TYPE=$(echo "$ANALYSIS" | cut -d'|' -f1 | tr -d '[:cntrl:]' | xargs 2>/dev/null || echo "unknown")
+                            JOB_COUNT=$(echo "$ANALYSIS" | cut -d'|' -f2 | tr -d '[:cntrl:]' | xargs 2>/dev/null || echo "0")
+                            JOB_ID=$(echo "$ANALYSIS" | cut -d'|' -f3 | tr -d '[:cntrl:]' | xargs 2>/dev/null || echo "")
+                            WORKFLOW_NAME=$(echo "$ANALYSIS" | cut -d'|' -f4 | tr -d '[:cntrl:]' | xargs 2>/dev/null || echo "unknown")
+                            JOB_ID=$(echo "$JOB_ID" | grep -oE '[0-9]+' | head -1 || echo "")
                         fi
                         
                         echo -e "${RED}Hata Tipi:${NC} ${ERROR_TYPE}"
@@ -646,54 +673,70 @@ monitor_loop_v3() {
                         echo -e "${RED}Başarısız Job Sayısı:${NC} ${JOB_COUNT}"
                         echo -e "${RED}Ardışık Başarısızlık:${NC} ${CONSECUTIVE_FAILURES}\n"
                         
-                        # V3 log alma ve AI analiz
+                        # V3 log alma ve AI analiz (hata olsa bile devam et)
+                        set +e
                         if [ -n "$JOB_ID" ] && [ "$JOB_ID" != "null" ] && [ -n "$(echo "$JOB_ID" | grep -E '^[0-9]+$')" ]; then
-                            get_error_logs_v3 $RUN_ID $JOB_ID
+                            get_error_logs_v3 $RUN_ID $JOB_ID || echo -e "${YELLOW}⚠️  Log alma başarısız, devam ediliyor...${NC}"
                         else
-                            FAILED_JOBS_DIRECT=$(gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .databaseId' 2>/dev/null)
+                            FAILED_JOBS_DIRECT=$(gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .databaseId' 2>/dev/null || echo "")
                             if [ -n "$FAILED_JOBS_DIRECT" ]; then
                                 FIRST_FAILED_JOB=$(echo "$FAILED_JOBS_DIRECT" | head -1)
                                 echo -e "${CYAN}✅ Başarısız Job ID bulundu: $FIRST_FAILED_JOB${NC}\n"
-                                get_error_logs_v3 $RUN_ID $FIRST_FAILED_JOB
+                                get_error_logs_v3 $RUN_ID $FIRST_FAILED_JOB || echo -e "${YELLOW}⚠️  Log alma başarısız, devam ediliyor...${NC}"
+                            else
+                                echo -e "${YELLOW}⚠️  Başarısız Job bulunamadı${NC}"
                             fi
                         fi
+                        set -e
                         
-                        # Auto-fix ve commit
+                        # Auto-fix ve commit (hata olsa bile devam et)
+                        set +e
                         if [ $CONSECUTIVE_FAILURES -le $MAX_RETRIES ]; then
                             if git diff --quiet .github/workflows/ 2>/dev/null; then
                                 echo -e "${YELLOW}⚠️  Workflow dosyasında değişiklik yok${NC}"
                             else
                                 echo -e "${GREEN}📝 Değişiklikler commit ediliyor...${NC}"
-                                git add .github/workflows/ 2>/dev/null
+                                git add .github/workflows/ 2>/dev/null || true
                                 git commit -m "fix(hyper-v3): auto-fix for $ERROR_TYPE
 
 - Applied automatic fix for $ERROR_TYPE
 - Run ID: $RUN_ID
 - Workflow: $WORKFLOW_NAME
 - Confidence: High
-- Auto-generated by hyper-monitor-v3" 2>/dev/null && git push 2>/dev/null && \
-                                    echo -e "${GREEN}✅ Düzeltme push edildi!${NC}" || \
-                                    echo -e "${YELLOW}⚠️  Commit/Push başarısız${NC}"
-                                FIXES_APPLIED=$((FIXES_APPLIED + 1))
+- Auto-generated by hyper-monitor-v3" 2>/dev/null || true
+                                
+                                if git push 2>/dev/null; then
+                                    echo -e "${GREEN}✅ Düzeltme push edildi!${NC}"
+                                    FIXES_APPLIED=$((FIXES_APPLIED + 1))
+                                else
+                                    echo -e "${YELLOW}⚠️  Commit/Push başarısız, devam ediliyor...${NC}"
+                                fi
                             fi
                         else
                             echo -e "${RED}❌ Maksimum deneme sayısına ulaşıldı${NC}"
                         fi
+                        set -e
                         ;;
                 esac
                 ;;
             "in_progress")
                 echo -e "${BLUE}🔄 Workflow devam ediyor...${NC}"
+                set +e
                 gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.status == "in_progress") | .name' 2>/dev/null | head -3 | while read job; do
                     echo -e "  ${DIM}→ $job${NC}"
                 done
+                set -e
                 ;;
             "queued")
                 echo -e "${YELLOW}⏳ Workflow kuyrukta bekliyor...${NC}"
                 ;;
         esac
         
+        # İstatistikleri göster (hata olsa bile devam et)
+        set +e
         show_stats_v3
+        set -e
+        
         echo -e "${DIM}Sonraki kontrol ${CHECK_INTERVAL}s sonra...${NC}\n"
         sleep $CHECK_INTERVAL
     done

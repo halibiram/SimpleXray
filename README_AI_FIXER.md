@@ -1,182 +1,236 @@
-# AI Fixer Bot - Quick Start Guide
+# AI Build Fixer - Autonomous Agent System
 
-This repository includes automated AI-powered code review and fix suggestions for PRs.
+## 🎯 Overview
 
-## Setup
+The AI Build Fixer is a hyper-intelligent autonomous agent that prevents GitHub Action build failures by:
+- Monitoring build logs in real-time
+- Understanding compiler/runtime errors
+- Applying fixes directly to the repository
+- Committing/pushing patches automatically
+- Re-triggering builds
+- Learning from each fix
 
-### 1. Add GitHub Secrets
+## 🚀 Quick Start
 
-Go to your repository settings → Secrets and variables → Actions, and add:
-
-- **`OPENAI_API_KEY`** — Your OpenAI API key (organization key recommended)
-- **`GITHUB_TOKEN`** — Usually provided automatically by GitHub Actions, but you can set a custom PAT if needed
-
-### 2. Workflow Permissions
-
-The workflows require:
-- `contents: read` — To read repository files
-- `pull-requests: write` — To post comments on PRs
-
-These are set in the workflow files. If you enable auto-commit (disabled by default), you'll also need `contents: write`.
-
-## How It Works
-
-### Inline Fixer (`inline-fixer.yml`)
-
-- Runs on PR events: `opened`, `reopened`, `synchronize`, `ready_for_review`
-- Posts inline review comments directly on changed lines
-- Uses GPT-5 to analyze JNI leaks, format specifiers, null checks, etc.
-
-### AI Fixer Bot (`fixer.yml`)
-
-- Runs on PR events: `opened`, `synchronize`, `reopened`
-- Creates `ai_report.json` with analysis results
-- Generates `auto.patch` if fixes are available
-- Posts summary comment to PR
-- **Uploads patch as artifact** (preview mode — no auto-commit by default)
-
-## Usage
-
-1. **Commit the workflows and tools:**
-   ```bash
-   git add .github/workflows/*.yml tools/ docs/ README_AI_FIXER.md .github/pull_request_template.md
-   git commit -m "feat: Add AI fixer workflows & tools"
-   git push
-   ```
-
-2. **Open a PR** — Workflows will automatically run
-
-3. **Review the results:**
-   - Check inline comments on code changes
-   - Read the PR summary comment
-   - Download `ai-auto-patch` artifact if available
-   - Review and apply the patch manually if desired
-
-## Patch Preview Mode
-
-By default, the bot runs in **patch preview mode**:
-- ✅ Analysis and patch generation enabled
-- ✅ Patch uploaded as workflow artifact
-- ❌ Auto-commit disabled (for safety)
-
-### Applying Patches Manually
-
-If a patch is generated:
+### Manual Activation
 
 ```bash
-# Download the artifact from workflow run
-# Or check the PR comment for instructions
+# Monitor latest workflows automatically
+./scripts/activate-ai-fixer.sh
 
-# Apply the patch
-git apply auto.patch
-
-# Review the changes
-git diff
-
-# Commit if satisfied
-git add .
-git commit -m "Apply AI fixes"
+# Analyze specific run
+./scripts/activate-ai-fixer.sh <RUN_ID>
 ```
 
-## Enabling Auto-Commit (Optional)
+### Automatic Activation
 
-⚠️ **Warning:** Auto-commit can make changes without human review. Use with caution.
+The agent automatically activates when:
+- A GitHub Action workflow fails (via `ai-auto-fix.yml` workflow)
+- A push occurs on main branch
+- A release is created
+- Manual dispatch is triggered
 
-To enable auto-commit:
+## 📁 System Components
 
-1. Edit `.github/workflows/fixer.yml`
-2. Change permissions:
-   ```yaml
-   permissions:
-     contents: write  # Changed from 'read'
-     pull-requests: write
-   ```
-3. Uncomment the "Auto commit patch" step
-4. Set `if: false` to `if: steps.create_patch.outcome == 'success' && hashFiles('auto.patch') != ''`
+### Core Files
 
-## Customization
+- **`agents/self_build_fixer.mdc`**: Agent definition and rules
+- **`scripts/ai-build-fixer.sh`**: Main AI fixer script
+- **`scripts/activate-ai-fixer.sh`**: Activation wrapper
+- **`.cursor/ai_learning/patterns.json`**: Error pattern database
+- **`.cursor/ai_learning/knowledge.md`**: Knowledge base
+- **`.github/workflows/ai-auto-fix.yml`**: Auto-activation workflow
 
-### Model Selection
+### Learning Database
 
-By default, the scripts use `gpt-5`. To change:
+Located in `.cursor/ai_learning/`:
+- **`patterns.json`**: 10+ pre-loaded error patterns with fixes
+- **`knowledge.md`**: Comprehensive error classification guide
+- **`README.md`**: Learning system documentation
 
-Edit `tools/*.py` files and replace:
-```python
-model="gpt-5"
+## 🔧 Error Categories Supported
+
+1. **CMake/NDK Toolchain**: march flag issues, toolchain configuration
+2. **Kotlin/Compose**: JVM default, version compatibility
+3. **Gradle Dependencies**: Resolution conflicts, version mismatches
+4. **KSP Plugin**: Version alignment with Kotlin
+5. **Build Artifacts**: Library not found, path issues
+6. **BoringSSL**: Build failures, library linking
+7. **And more...**
+
+## 📊 How It Works
+
+### 1. Detection
 ```
-with your preferred model (e.g., `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo`).
-
-### Prompt Tuning
-
-Edit the `prompt` variables in:
-- `tools/ai_inline_review.py` — For inline comment style
-- `tools/ai_analyze.py` — For analysis focus areas
-- `tools/ai_patch.py` — For patch generation rules
-
-### Focus Areas
-
-The AI is configured to focus on:
-- JNI memory leaks
-- Format specifier mismatches
-- Null pointer checks
-- Concurrency issues
-- Performance hotspots
-- Security vulnerabilities
-
-Adjust these in the prompt strings as needed.
-
-## Troubleshooting
-
-### "Missing env variables"
-- Check that `OPENAI_API_KEY` is set in repository secrets
-- Verify `GITHUB_TOKEN` is available (usually automatic)
-
-### "No diff found"
-- PR may be empty or base branch is incorrect
-- Check that `fetch-depth: 0` is set in checkout step
-
-### "Patch does not apply cleanly"
-- The patch may be outdated if PR changed after analysis
-- Review the patch manually and apply selected hunks
-
-### API Rate Limits
-- OpenAI has rate limits; large PRs may hit limits
-- Consider using organization API keys with higher limits
-
-## Security Notes
-
-1. **Token Security**: Never commit API keys or tokens to the repository
-2. **Review AI Output**: Always review AI-generated patches before applying
-3. **Model Access**: Ensure your OpenAI account has access to the model you're using
-4. **Cost Management**: Monitor API usage; large PRs can consume significant tokens
-
-## Files Structure
-
-```
-.github/
-  workflows/
-    inline-fixer.yml    # Inline comment workflow
-    fixer.yml           # Full analysis + patch workflow
-tools/
-  ai_inline_review.py   # Inline comment generator
-  ai_analyze.py         # Static analysis runner
-  ai_patch.py           # Patch generator
-  ai_pr_commenter.py    # PR summary commenter
-  __init__.py           # Package marker
-docs/
-  review-checklist.md   # Manual review checklist
-.github/
-  pull_request_template.md  # PR template
+[AI-MVC] Monitoring workflow...
+[AI-MVC] Build failure detected!
 ```
 
-## Support
+### 2. Analysis
+```
+[AI-MVC] Analyzing failure...
+[AI-MVC] Pattern matched: clang: error.*unsupported.*march
+[AI-MVC] Confidence: 95%
+```
 
-For issues or questions:
-1. Check workflow logs in GitHub Actions
-2. Review `ai_report.json` for analysis details
-3. Check the PR comment for summary information
+### 3. Fix Application
+```
+[AI-MVC] Root Cause: CMake march flag issue
+[AI-MVC] Attempt: #1
+[AI-MVC] Applying patch...
+```
+
+### 4. Commit & Push
+```
+[AI-MVC] Committing changes...
+[AI-MVC] Pushing changes...
+✅ Changes pushed, rebuild triggered
+```
+
+### 5. Learning
+After success, patterns are updated with:
+- Success rate
+- Confidence adjustment
+- New generalizations
+
+## 🛠️ Fix Strategies
+
+### Escalation Levels
+
+1. **Level 1**: Minimal targeted fix (single file, single change)
+2. **Level 2**: Multi-file coordination (version updates)
+3. **Level 3**: Configuration restructuring (gradle.properties)
+4. **Level 4**: Fallback mechanisms (BoringSSL replacement)
+
+### Safety Rules
+
+✅ Always test minimal changes first  
+✅ Never delete critical modules  
+✅ Never disable security hardening  
+✅ Never downgrade blindly  
+✅ Always verify compatibility matrix  
+
+## 📈 Monitoring
+
+### Terminal Output
+
+The agent provides real-time progress logging:
+
+```
+[AI-MVC] Thinking...
+[AI-MVC] Analyzing logs...
+[AI-MVC] Found error pattern...
+[AI-MVC] Patch generated.
+[AI-MVC] Committing changes...
+[AI-MVC] Triggering rebuild...
+[AI-MVC] Observing pipeline...
+```
+
+### Build Stages Detected
+
+- Environment setup
+- Dependency resolution
+- Kotlin compilation
+- KSP processing
+- CMake toolchain detection
+- NDK packaging
+- Artifact signing
+
+## 🔄 Loop Behavior
+
+The agent **NEVER stops** if the build is failing. It continues until:
+- ✅ A successful build is achieved
+- ❌ Maximum attempts reached (default: 10)
+
+## 🎓 Self-Improvement
+
+After each successful fix:
+
+1. **Pattern Update**: Success rate tracked in `patterns.json`
+2. **Knowledge Base**: New patterns documented in `knowledge.md`
+3. **Agent Evolution**: Logic updated in `agents/self_build_fixer.mdc`
+4. **PR Creation**: Self-improvement PRs created for major learnings
+
+## 🔍 Troubleshooting
+
+### Script won't run
+
+```bash
+# Check permissions
+chmod +x scripts/ai-build-fixer.sh
+chmod +x scripts/activate-ai-fixer.sh
+
+# Check dependencies
+gh --version  # GitHub CLI
+jq --version  # JSON processor (recommended)
+```
+
+### No patterns matched
+
+- Check `patterns.json` for relevant patterns
+- Add new patterns based on error logs
+- Review `knowledge.md` for fix strategies
+
+### Commit/Push fails
+
+- Ensure GitHub CLI is authenticated: `gh auth login`
+- Check repository permissions
+- Verify git is configured correctly
+
+## 📝 Example Output
+
+```
+╔════════════════════════════════════════════════════════════════╗
+║         🤖 AI BUILD FIXER - Autonomous Agent 🤖             ║
+║         Version 1.0.0 - Learning Enabled                      ║
+╚════════════════════════════════════════════════════════════════╝
+
+[AI-MVC] Monitoring workflow...
+Run ID: 19119910885
+Status: completed
+Conclusion: failure
+
+❌ BUILD FAILURE DETECTED!
+
+[AI-MVC] Analyzing failure...
+❌ Failed Job: Build Xray-core with BoringSSL / Build BoringSSL (arm64-v8a)
+❌ Failed Step: Build BoringSSL
+📋 Job ID: 54637888941
+
+[AI-MVC] Fetching error logs...
+✅ Pattern matched!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[AI-MVC] Root Cause: Build BoringSSL
+[AI-MVC] Attempt: #1
+[AI-MVC] Confidence: 90%
+[AI-MVC] Context: build/artifacts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[AI-MVC] Applying patch...
+→ Applying artifact fix...
+
+[AI-MVC] Committing changes...
+✅ Changes committed
+[AI-MVC] Pushing changes...
+✅ Changes pushed, rebuild triggered
+```
+
+## 🎯 Long-Term Goals
+
+- **Predictive**: Predict build failures before CI runs
+- **Proactive**: Patch proactively before failures occur
+- **Auto-Upgrade**: Responsibly upgrade dependency trees
+- **Zero-Downtime**: Reduce time to green builds to near-zero
+
+## 📚 Additional Resources
+
+- **Agent Definition**: `agents/self_build_fixer.mdc`
+- **Learning Database**: `.cursor/ai_learning/`
+- **Monitoring Scripts**: `scripts/hyper-monitor.sh`, `scripts/hyper-auto-fix.sh`
 
 ---
 
-**Note:** This is a preview mode setup. Auto-commit is disabled by default for safety. Review all AI-generated changes before merging.
-
+**Status**: ✅ Active and Ready  
+**Version**: 1.0.0  
+**Last Updated**: 2024-01-01
