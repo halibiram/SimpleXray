@@ -676,34 +676,29 @@ monitor_and_fix_v3() {
         fi
         
         # Get latest run
-        if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "Build Xray-core with BoringSSL" ]; then
-            # Get latest run from workflow
-            if command -v jq &> /dev/null; then
-                LATEST_RUN=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion --jq '.[0] | "\(.databaseId)|\(.status)|\(.conclusion // "in_progress")"' 2>/dev/null || echo "")
-            else
-                # Fallback without jq
-                LATEST_RUN=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1"|"$2"|"$3}' || echo "")
+        if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "Build Xray-core with BoringSSL" ] || ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+            # Get latest run from workflow - extract numeric ID directly
+            RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $NF}' | grep -oE '^[0-9]+$' || echo "")
+            
+            if [ -z "$RUN_ID" ] || ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+                # Try alternative extraction
+                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}' || echo "")
             fi
             
-            if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" = "" ]; then
-                echo -e "${YELLOW}⚠️  No runs found${NC}"
+            if [ -z "$RUN_ID" ] || ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+                echo -e "${YELLOW}⚠️  No valid run ID found${NC}"
                 sleep 30
                 continue
             fi
             
-            RUN_ID=$(echo "$LATEST_RUN" | cut -d'|' -f1)
-            STATUS=$(echo "$LATEST_RUN" | cut -d'|' -f2)
-            CONCLUSION=$(echo "$LATEST_RUN" | cut -d'|' -f3)
-            
-            # Clean RUN_ID (remove workflow name if accidentally included)
-            if echo "$RUN_ID" | grep -qE "Build|Xray|completed|success|failure|in_progress"; then
-                # Extract numeric RUN_ID from gh output
-                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1}' | grep -oE '^[0-9]+$' || echo "")
-            fi
-            
-            # Validate RUN_ID is numeric
-            if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
-                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1}' | grep -oE '^[0-9]+$' || echo "")
+            # Get status and conclusion
+            if command -v jq &> /dev/null; then
+                STATUS=$(gh run view "$RUN_ID" --json status --jq '.status' 2>/dev/null || echo "unknown")
+                CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion // "in_progress"' 2>/dev/null || echo "in_progress")
+            else
+                RUN_INFO=$(gh run view "$RUN_ID" 2>/dev/null || echo "")
+                STATUS=$(echo "$RUN_INFO" | grep -i "status:" | awk '{print $2}' | head -1 || echo "unknown")
+                CONCLUSION=$(echo "$RUN_INFO" | grep -i "conclusion:" | awk '{print $2}' | head -1 || echo "in_progress")
             fi
         else
             if command -v jq &> /dev/null; then
