@@ -82,6 +82,23 @@ android {
         def boringsslAvailable = file("../external/boringssl/lib/arm64-v8a/libcrypto.a").exists()
         buildConfigField "boolean", "BORINGSSL_AVAILABLE_AT_BUILD", "${boringsslAvailable}"
         buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "false"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared",
+                        "-DOPENSSL_SMALL=1",
+                        "-DOPENSSL_NO_DEPRECATED=1",
+                        "-DOPENSSL_NO_ASM=0",
+                        "-DBUILD_SHARED_LIBS=OFF"
+                cppFlags "-std=c++17", "-DBORINGSSL_IMPLEMENTATION"
+            }
+            ndkBuild {
+                arguments "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=.",
+                        "APP_LDFLAGS+=-Wl,--build-id=none",
+                        "USE_BORINGSSL=1",
+                        "DISABLE_OPENSSL=1"
+            }
+        }
     }
 
     signingConfigs {
@@ -137,23 +154,9 @@ android {
         cmake {
             path "src/main/jni/perf-net/CMakeLists.txt"
             version "3.22.0"
-            arguments = [
-                "-DANDROID_STL=c++_shared",
-                "-DOPENSSL_SMALL=1",
-                "-DOPENSSL_NO_DEPRECATED=1",
-                "-DOPENSSL_NO_ASM=0",
-                "-DBUILD_SHARED_LIBS=OFF"
-            ]
-            cppFlags = ["-std=c++17", "-DBORINGSSL_IMPLEMENTATION"]
         }
         ndkBuild {
             path "src/main/jni/Android.mk"
-            arguments = [
-                "APP_CFLAGS+=-DPKGNAME=com/simplexray/an/service -ffile-prefix-map=${rootDir}=.",
-                "APP_LDFLAGS+=-Wl,--build-id=none",
-                "USE_BORINGSSL=1",
-                "DISABLE_OPENSSL=1"
-            ]
         }
     }
 
