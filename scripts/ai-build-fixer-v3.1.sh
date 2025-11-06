@@ -2,7 +2,9 @@
 # AI-Powered Autonomous Build Fixer v3.1
 # Enhanced: Stop monitoring on failure, apply fix immediately, then resume
 
-set -euo pipefail
+set -uo pipefail
+# Note: set -e removed to prevent script from exiting on errors
+# Errors will be handled gracefully to allow continuous operation
 
 # Colors
 RED='\033[0;31m'
@@ -543,6 +545,12 @@ main() {
         else
             echo -e "${YELLOW}⏳ No failures detected, waiting...${NC}"
             sleep 35
+        fi
+        
+        # Error recovery - catch any errors and continue
+        if [ $? -ne 0 ]; then
+            echo -e "${YELLOW}[AI-MVC v3.1] ⚠️  Error detected, continuing...${NC}" | tee -a /tmp/ai-fixer-v3.1.log
+            sleep 10
         fi
     done
 }
