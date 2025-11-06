@@ -486,17 +486,30 @@ jobs:
           echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_ENV
           echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_OUTPUT
 
-      - name: Apply Patches
+      - name: Apply Patches (Optional)
         run: |
           cd Xray-core
+          echo "ℹ️  Patches are optional - BoringSSL is linked via CGO flags"
+          echo "ℹ️  If patches fail, build continues with vanilla Xray-core + BoringSSL linking"
+          
           if [ -d "../xray-patches" ]; then
             PATCH_COUNT=0
             SUCCESS_COUNT=0
+            SKIP_COUNT=0
+            
             for patch in ../xray-patches/*.patch; do
               if [ -f "$patch" ]; then
                 PATCH_COUNT=$((PATCH_COUNT + 1))
                 PATCH_NAME=$(basename "$patch")
-                echo "📝 Applying patch: $PATCH_NAME"
+                
+                # Check if patch is a placeholder/comment-only file
+                if ! grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
+                  echo "ℹ️  Skipping $PATCH_NAME (placeholder/documentation only)"
+                  SKIP_COUNT=$((SKIP_COUNT + 1))
+                  continue
+                fi
+                
+                echo "📝 Attempting to apply patch: $PATCH_NAME"
                 
                 # Try to apply patch with more verbose error output
                 if git apply --check "$patch" 2>&1; then
@@ -508,9 +521,12 @@ jobs:
                   fi
                 else
                   echo "⚠️  Patch check failed for: $PATCH_NAME (patch may not match current codebase)"
-                  # Show what files the patch expects
-                  echo "   Patch expects to modify:"
-                  grep -E "^diff --git|^---|^\+\+\+" "$patch" | head -5 || true
+                  echo "   This is OK - BoringSSL linking happens via CGO flags"
+                  # Show what files the patch expects (if any)
+                  if grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
+                    echo "   Patch expects to modify:"
+                    grep -E "^diff --git|^---|^\+\+\+" "$patch" | head -5 || true
+                  fi
                 fi
               fi
             done
@@ -518,14 +534,18 @@ jobs:
             if [ $PATCH_COUNT -eq 0 ]; then
               echo "ℹ️  No patches found in xray-patches directory"
             else
-              echo "📊 Patch summary: $SUCCESS_COUNT/$PATCH_COUNT patches applied successfully"
+              echo "📊 Patch summary: $SUCCESS_COUNT applied, $SKIP_COUNT skipped, $((PATCH_COUNT - SUCCESS_COUNT - SKIP_COUNT)) failed"
               if [ $SUCCESS_COUNT -eq 0 ]; then
-                echo "ℹ️  No patches were applied - building vanilla Xray-core"
+                echo "ℹ️  No patches were applied - this is OK"
+                echo "ℹ️  BoringSSL will be linked via CGO flags in the build step"
               fi
             fi
           else
-            echo "⚠️  No patches directory found, building vanilla Xray-core"
+            echo "ℹ️  No patches directory found - this is OK"
+            echo "ℹ️  BoringSSL will be linked via CGO flags in the build step"
           fi
+          
+          echo "✅ Patch step complete - proceeding to build with BoringSSL linking"
 
       - name: Build Xray-core with BoringSSL
         run: |
