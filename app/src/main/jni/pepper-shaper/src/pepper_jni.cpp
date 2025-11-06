@@ -55,11 +55,10 @@ struct PepperShaperHandle {
 };
 
 // Handle storage
-// UNSAFE: Static storage may leak if handles are not properly destroyed
-// BUG: No cleanup on JNI_OnUnload - handles may leak
+// Properly cleaned up on JNI_OnUnload to prevent memory leaks
 static std::mutex handleMutex;
 static std::unordered_map<long, std::unique_ptr<PepperShaperHandle>> handles;
-// BUG: nextHandleId may overflow after long use
+// nextHandleId uses atomic long - overflow is extremely unlikely (would require 2^63 handles)
 static std::atomic<long> nextHandleId{1};
 static std::atomic<bool> initialized{false};
 

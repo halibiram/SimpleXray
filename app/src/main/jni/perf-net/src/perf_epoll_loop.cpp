@@ -29,8 +29,12 @@ struct EpollContext {
     std::vector<int> registered_fds;
 };
 
+// CONCURRENCY: Global epoll context accessed from multiple threads
+// MEM-LEAK: Global context never cleaned up if JNI_OnUnload not called
+// UNSAFE: Global state may cause issues if multiple epoll instances created
 static EpollContext* g_epoll_ctx = nullptr;
 extern JavaVM* g_jvm; // Defined in perf_jni.cpp
+// CONCURRENCY: Mutex protects global state but may cause contention
 static pthread_mutex_t g_epoll_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 extern "C" {
@@ -48,12 +52,15 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeInitEpoll(JNIEnv *en
         return reinterpret_cast<jlong>(g_epoll_ctx);
     }
     
+    // MEM-LEAK: EpollContext allocated with new - must be deleted in destroy
+    // UNSAFE: epoll_create1 may fail - check errno for specific error
     EpollContext* ctx = new EpollContext();
     ctx->epfd = epoll_create1(EPOLL_CLOEXEC);
     ctx->running.store(false);
     
     if (ctx->epfd < 0) {
         LOGE("Failed to create epoll: %d", errno);
+        // MEM-LEAK: ctx deleted here but may leak if exception thrown
         delete ctx;
         pthread_mutex_unlock(&g_epoll_mutex);
         return 0;
@@ -160,13 +167,41 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeEpollWait(JNIEnv *en
     // Ensure thread is attached to JVM (critical for background threads)
     JNIEnv* thread_env = env;
     int attached = 0;
-    if (g_jvm && g_jvm->GetEnv(reinterpret_cast<void**>(&thread_env), JNI_VERSION_1_6) != JNI_OK) {
-        if (g_jvm->AttachCurrentThread(&thread_env, nullptr) != JNI_OK) {
+    
+    // Safe null check and JVM state validation
+    if (g_jvm == nullptr) {
+        LOGE("JVM is null, cannot attach thread");
+        return -1;
+    }
+    
+    // Check if already attached
+    jint result = g_jvm->GetEnv(reinterpret_cast<void**>(&thread_env), JNI_VERSION_1_6);
+    if (result == JNI_EDETACHED) {
+        // Thread not attached, attach it
+        JavaVMAttachArgs attachArgs;
+        attachArgs.version = JNI_VERSION_1_6;
+        attachArgs.name = const_cast<char*>("PerfEpoll");
+        attachArgs.group = nullptr;
+        
+        if (g_jvm->AttachCurrentThread(&thread_env, &attachArgs) != JNI_OK) {
             LOGE("Failed to attach thread to JVM");
             return -1;
         }
         attached = 1;
+    } else if (result != JNI_OK) {
+        LOGE("JVM GetEnv failed: %d", result);
+        return -1;
     }
+    
+    // Validate thread_env is not null after attachment
+    if (thread_env == nullptr) {
+        LOGE("Thread environment is null after attachment");
+        if (attached && g_jvm) {
+            g_jvm->DetachCurrentThread();
+        }
+        return -1;
+    }
+    
     env = thread_env;
     
     EpollContext* ctx = reinterpret_cast<EpollContext*>(epoll_handle);
@@ -174,7 +209,10 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeEpollWait(JNIEnv *en
     struct epoll_event events[MAX_EVENTS];
     // Use provided timeout, default to EPOLL_TIMEOUT_MS_DEFAULT if timeout_ms is -2 (for backward compatibility)
     // Note: Consider using epoll_pwait2() for better timeout precision on newer kernels
+    // PERF: Fixed MAX_EVENTS may be too small for high-throughput scenarios
+    // TIMEOUT-MISS: epoll_wait timeout in milliseconds - may be imprecise on some kernels
     int timeout = (timeout_ms == -2) ? EPOLL_TIMEOUT_MS_DEFAULT : timeout_ms;
+    // CONCURRENCY: epoll_wait may be interrupted by signal - EINTR handling required
     int nfds = epoll_wait(ctx->epfd, events, MAX_EVENTS, timeout);
     
     if (nfds < 0) {
@@ -193,17 +231,24 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeEpollWait(JNIEnv *en
             nfds = size; // Limit to available space
         }
         
+        // Get array elements - must release on all paths
         jlong* arr = env->GetLongArrayElements(out_events, nullptr);
         if (!arr) {
-            LOGE("Failed to get array elements");
+            LOGE("Failed to get array elements (OOM)");
+            // Cleanup: detach thread if we attached it
+            if (attached && g_jvm) {
+                g_jvm->DetachCurrentThread();
+            }
             return -1;
         }
         
+        // Copy events to array
         for (int i = 0; i < nfds; i++) {
             // Pack fd and events into jlong
             arr[i] = ((jlong)events[i].data.fd << 32) | events[i].events;
         }
         
+        // Release array elements (0 = copy back and free)
         env->ReleaseLongArrayElements(out_events, arr, 0);
     }
     
@@ -232,16 +277,28 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeDestroyEpoll(JNIEnv 
     // Note: We don't close fds here as they are managed by the caller
     // The caller is responsible for closing file descriptors
     for (int fd : ctx->registered_fds) {
-        epoll_ctl(ctx->epfd, EPOLL_CTL_DEL, fd, nullptr);
+        int result = epoll_ctl(ctx->epfd, EPOLL_CTL_DEL, fd, nullptr);
+        if (result < 0 && errno != ENOENT) {
+            // ENOENT is expected if fd was already removed, log other errors
+            LOGE("Failed to remove fd %d from epoll: %s", fd, strerror(errno));
+        }
     }
     
-    close(ctx->epfd);
+    // Close epoll file descriptor
+    if (ctx->epfd >= 0) {
+        int result = close(ctx->epfd);
+        if (result < 0) {
+            LOGE("Failed to close epoll fd: %s", strerror(errno));
+        }
+    }
     ctx->registered_fds.clear();
     
+    // Atomically clear global context (protected by mutex)
     if (g_epoll_ctx == ctx) {
         g_epoll_ctx = nullptr;
     }
     
+    // Delete context (epfd already closed above)
     delete ctx;
     
     pthread_mutex_unlock(&g_epoll_mutex);

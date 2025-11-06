@@ -228,7 +228,11 @@ object ConfigUtils {
             extractPortsRecursive(jsonObject, ports)
         } catch (e: JSONException) {
             // BUG: Exception swallowed - returns empty set, caller may not know about error
-            Log.e(TAG, "Error parsing JSON for port extraction", e)
+            // Propagate error information via logging
+            Log.e(TAG, "Error parsing JSON for port extraction: ${e.message}", e)
+            // Return empty set but log the error for debugging
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error during port extraction: ${e.javaClass.simpleName}: ${e.message}", e)
         }
         Log.d(TAG, "Extracted ports: $ports")
         return ports

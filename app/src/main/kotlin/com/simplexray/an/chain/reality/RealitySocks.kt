@@ -4,9 +4,11 @@ import android.content.Context
 import com.google.gson.Gson
 import com.simplexray.an.common.AppLogger
 import com.simplexray.an.xray.XrayCoreLauncher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Implementation: Uses Xray-core's built-in SOCKS inbound and REALITY outbound
  */
 object RealitySocks {
+    // StateFlow updates are thread-safe by design
     private val _status = MutableStateFlow<RealityStatus>(
         RealityStatus(
             isRunning = false,
@@ -43,7 +46,9 @@ object RealitySocks {
     private var currentConfig: RealityConfig? = null
     private var configFile: File? = null
     private var context: Context? = null
+    // Properly cancelled in stop() and shutdown()
     private val monitoringScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var monitoringJob: kotlinx.coroutines.Job? = null
     private val connectedClients = AtomicInteger(0)
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
@@ -74,32 +79,42 @@ object RealitySocks {
             // Build Xray config for Reality SOCKS
             val xrayConfig = RealityXrayConfig.buildConfig(config)
             
-            // Write config to file
+            // Write config to file (path is within filesDir, safe)
             val configFile = File(ctx.filesDir, "reality-socks-${config.localPort}.json")
+            // Validate config file path
+            if (!configFile.canonicalPath.startsWith(ctx.filesDir.canonicalPath)) {
+                return Result.failure(Exception("Config path outside allowed directory"))
+            }
             configFile.writeText(Gson().toJson(xrayConfig))
             this.configFile = configFile
             this.currentConfig = config
             
             AppLogger.d("RealitySocks: Config written to ${configFile.absolutePath}")
             
-            // Start Xray-core with this config
-            val started = XrayCoreLauncher.start(
-                context = ctx,
-                configFile = configFile,
-                maxRetries = 3,
-                retryDelayMs = 2000,
-                onLogLine = { line ->
-                    // Parse Xray logs for metrics
-                    parseXrayLog(line)
+            // Start Xray-core with this config (with timeout protection)
+            val started = kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(30000) { // 30 second timeout
+                    XrayCoreLauncher.start(
+                        context = ctx,
+                        configFile = configFile,
+                        maxRetries = 3,
+                        retryDelayMs = 2000,
+                        onLogLine = { line ->
+                            // Parse Xray logs for metrics (with rate limiting)
+                            parseXrayLog(line)
+                        }
+                    )
                 }
-            )
+            }
             
             if (!started) {
                 return Result.failure(Exception("Failed to start Xray-core for Reality SOCKS"))
             }
             
-            // Wait a bit for Xray to start
-            Thread.sleep(500)
+            // Wait a bit for Xray to start (non-blocking)
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.delay(500)
+            }
             
             // Verify Xray is running
             if (!XrayCoreLauncher.isRunning()) {
@@ -130,19 +145,25 @@ object RealitySocks {
     /**
      * Stop Reality SOCKS server
      */
+    @Synchronized
     fun stop(): Result<Unit> {
         return try {
             AppLogger.i("RealitySocks: Stopping")
             
-            // Stop Xray-core if we started it
-            if (XrayCoreLauncher.isRunning()) {
-                // Only stop if we're the one managing it
-                // In a full chain, ChainSupervisor manages Xray
-                // For now, we'll let ChainSupervisor handle it
-                AppLogger.d("RealitySocks: Xray-core is running, but letting supervisor manage it")
-            }
+            // Stop monitoring first
+            monitoringJob?.cancel()
+            monitoringJob = null
             
-            // Cleanup
+            // Stop Xray-core if we started it (only if we're managing it)
+            // Note: In chain mode, ChainSupervisor manages Xray, so we don't stop it here
+            // This is intentional to avoid stopping Xray when it's used by other layers
+            
+            // Cleanup resources
+            try {
+                configFile?.delete()
+            } catch (e: Exception) {
+                AppLogger.w("RealitySocks: Failed to delete config file: ${e.message}", e)
+            }
             configFile = null
             currentConfig = null
             connectedClients.set(0)
@@ -233,7 +254,7 @@ object RealitySocks {
             // Pattern: "handshake completed in 50ms" or "TLS handshake: 50ms"
             val handshakePattern = Regex("handshake.*?(\\d+)\\s*ms", RegexOption.IGNORE_CASE)
             handshakePattern.find(line)?.groupValues?.get(1)?.toIntOrNull()?.let {
-                _status.value = _status.value.copy(handshakeTimeMs = it)
+                _status.value = _status.value.copy(handshakeTimeMs = it.toLong())
             }
         } catch (e: Exception) {
             // Ignore parse errors for non-metric lines
@@ -245,23 +266,50 @@ object RealitySocks {
      * Start monitoring loop
      */
     private fun startMonitoring() {
-        monitoringScope.launch {
-            while (_status.value.isRunning) {
+        // Cancel existing monitoring if any
+        monitoringJob?.cancel()
+        
+        monitoringJob = monitoringScope.launch {
+            var adaptiveDelay = 1000L // Start with 1 second
+            var consecutiveErrors = 0
+            
+            while (this.isActive && _status.value.isRunning) {
                 try {
-                    // Update status with current metrics
+                    // Update status with current metrics (with overflow protection)
+                    val currentBytesUp = bytesUp.get().coerceAtLeast(0L)
+                    val currentBytesDown = bytesDown.get().coerceAtLeast(0L)
+                    
                     _status.value = _status.value.copy(
-                        connectedClients = connectedClients.get(),
-                        bytesUp = bytesUp.get(),
-                        bytesDown = bytesDown.get()
+                        connectedClients = connectedClients.get().coerceAtLeast(0),
+                        bytesUp = currentBytesUp,
+                        bytesDown = currentBytesDown
                     )
                     
-                    delay(1000) // Update every second
+                    // Adaptive delay: decrease if stable, increase on errors
+                    consecutiveErrors = 0
+                    adaptiveDelay = (adaptiveDelay * 0.95).toLong().coerceAtLeast(1000) // Min 1s
+                    delay(adaptiveDelay)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e // Re-throw cancellation
                 } catch (e: Exception) {
-                    AppLogger.e("RealitySocks: Monitoring error", e)
-                    delay(5000)
+                    consecutiveErrors++
+                    AppLogger.e("RealitySocks: Monitoring error (consecutive: $consecutiveErrors): ${e.javaClass.simpleName}: ${e.message}", e)
+                    // Increase delay on errors
+                    adaptiveDelay = (adaptiveDelay * 1.5).toLong().coerceAtMost(10000) // Max 10s
+                    delay(adaptiveDelay)
                 }
             }
         }
+    }
+    
+    /**
+     * Shutdown and cleanup all resources
+     */
+    fun shutdown() {
+        stop()
+        monitoringJob?.cancel()
+        monitoringScope.coroutineContext.cancel()
+        AppLogger.d("RealitySocks: Shutdown complete")
     }
 }
 

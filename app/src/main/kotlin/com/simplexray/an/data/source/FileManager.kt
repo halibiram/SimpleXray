@@ -44,6 +44,9 @@ import kotlin.math.pow
  * TODO: Add file backup mechanism before overwriting
  * TODO: Consider adding file encryption for sensitive configs
  */
+// SEC: File operations may expose sensitive config data
+// ARCH-DEBT: FileManager tightly coupled to Application and Preferences
+// TEST-GAP: File operations not tested
 class FileManager(private val application: Application, private val prefs: Preferences) {
     // TODO: Add file content caching to reduce I/O operations
     @Throws(IOException::class)
@@ -126,29 +129,50 @@ class FileManager(private val application: Application, private val prefs: Prefe
         }
     }
 
-    // TODO: Add content size validation to prevent memory issues
-    // TODO: Add config format validation before importing
     suspend fun importConfigFromContent(content: String): String? {
         return withContext(Dispatchers.IO) {
             if (content.isEmpty()) {
                 Log.w(TAG, "Content to import is empty.")
                 return@withContext null
             }
-            // TODO: Add content sanitization to prevent injection attacks
+            
+            // SEC: Validate content size to prevent OOM (max 10MB)
+            val MAX_CONFIG_SIZE = 10 * 1024 * 1024 // 10MB
+            if (content.length > MAX_CONFIG_SIZE) {
+                Log.e(TAG, "Config content too large: ${content.length} bytes (max: $MAX_CONFIG_SIZE)")
+                return@withContext null
+            }
+            
+            // SEC: Validate content format before importing
             val (name, configContent) = ConfigFormatConverter.convert(application, content).getOrElse { e ->
-                Log.e(TAG, "Failed to parse config", e)
+                Log.e(TAG, "Failed to parse config: ${e.javaClass.simpleName}: ${e.message}", e)
+                return@withContext null
+            }
+            
+            // SEC: Validate filename to prevent path traversal
+            if (!FilenameValidator.isValid(name)) {
+                Log.e(TAG, "Invalid filename from config conversion: $name")
                 return@withContext null
             }
 
             val formattedContent = try {
                 ConfigUtils.formatConfigContent(configContent)
             } catch (e: JSONException) {
-                Log.e(TAG, "Invalid JSON format in provided content.", e)
+                Log.e(TAG, "Invalid JSON format in provided content: ${e.message}", e)
                 return@withContext null
             }
 
+            // SEC: Filename already validated above, construct safely
             val filename = "$name.json"
-            val newFile = File(application.filesDir, filename)
+            // SEC: Ensure filename doesn't contain path separators
+            val safeFilename = filename.replace(File.separatorChar, '_').replace('/', '_').replace('\\', '_')
+            val newFile = File(application.filesDir, safeFilename)
+            
+            // SEC: Validate final path is within allowed directory
+            if (!newFile.canonicalPath.startsWith(application.filesDir.canonicalPath)) {
+                Log.e(TAG, "Path traversal attempt detected: ${newFile.canonicalPath}")
+                return@withContext null
+            }
 
             try {
                 FileOutputStream(newFile).use { fileOutputStream ->
@@ -178,11 +202,14 @@ class FileManager(private val application: Application, private val prefs: Prefe
         }
     }
 
+    // SEC: Backup data may contain sensitive config
+    // PRIVACY-BLEED: Backup data may contain user credentials
     suspend fun compressBackupData(): ByteArray? {
         return withContext(Dispatchers.IO) {
             try {
                 val gson = Gson()
                 val preferencesMap: MutableMap<String, Any> = mutableMapOf()
+                // PRIVACY-BLEED: Preferences may contain sensitive data
                 preferencesMap[Preferences.SOCKS_ADDR] = prefs.socksAddress
                 preferencesMap[Preferences.SOCKS_PORT] = prefs.socksPort
                 preferencesMap[Preferences.DNS_IPV4] = prefs.dnsIpv4
@@ -204,14 +231,17 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 preferencesMap[Preferences.BYPASS_SELECTED_APPS] = prefs.bypassSelectedApps
                 val configFilesMap: MutableMap<String, String> = mutableMapOf()
                 val filesDir = application.filesDir
+                // IO-BLOCK: listFiles() may block on slow storage
                 val files = filesDir.listFiles()
                 if (files != null) {
                     for (file in files) {
                         if (file.isFile && file.name.endsWith(".json")) {
                             try {
+                                // SEC: Config file content may contain sensitive data
                                 val content = readFileContent(file)
                                 configFilesMap[file.name] = content
                             } catch (e: IOException) {
+                                // FALLBACK-BLIND: File read error not logged with details
                                 Log.e(TAG, "Error reading config file: ${file.name}", e)
                             }
                         }
@@ -222,6 +252,7 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 backupData["configFiles"] = configFilesMap
                 val jsonString = gson.toJson(backupData)
                 val input = jsonString.toByteArray(StandardCharsets.UTF_8)
+                // MEMORY-POOL-MISS: Large byte array allocation without pool
                 val deflater = Deflater()
                 deflater.setInput(input)
                 deflater.finish()
@@ -235,6 +266,7 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 deflater.end()
                 outputStream.toByteArray()
             } catch (e: Exception) {
+                // FALLBACK-BLIND: Backup compression error not logged with details
                 Log.e(TAG, "Error during backup compression", e)
                 null
             }

@@ -1,5 +1,6 @@
 package com.simplexray.an.data.repository
 
+import com.simplexray.an.common.AppLogger
 import com.simplexray.an.data.db.SpeedStats
 import com.simplexray.an.data.db.TotalBytes
 import com.simplexray.an.data.db.TrafficDao

@@ -55,6 +55,9 @@ struct ConnectionPool {
     bool initialized;
 };
 
+// CONCURRENCY: Global pools accessed from multiple threads - mutex protection required
+// MEM-LEAK: Global pools never cleaned up - may leak sockets on app termination
+// UNSAFE: Global state may cause issues if JNI_OnUnload not called properly
 static ConnectionPool g_pools[3]; // H2, Vision, Reserve
 static int g_connection_pool_size = DEFAULT_POOL_SIZE; // User-configured pool size
 
@@ -179,15 +182,18 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeGetPooledSocket(
                 
                 // Set socket options for performance
                 int opt = 1;
+                // BUG: setsockopt failures logged but not handled - socket may have wrong options
                 if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
                     LOGE("Failed to set SO_REUSEADDR: %d", errno);
                 }
                 // TODO: Add SO_REUSEPORT support for better connection distribution
+                // PERF: TCP_NODELAY may not be optimal for all use cases - consider configurable
                 if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
                     LOGE("Failed to set TCP_NODELAY: %d", errno);
                 }
                 // Socket creation failure is handled by returning -1
                 // The slot remains uninitialized (fd=-1) and will be retried on next allocation
+                // BUG: Socket created but not configured properly - may fail later
                 
                 // Enable TCP Fast Open if supported
                 #ifdef TCP_FASTOPEN
@@ -265,7 +271,15 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocket(
     // Get host string - must release on all error paths
     const char* host_str = env->GetStringUTFChars(host, nullptr);
     if (!host_str) {
-        LOGE("Failed to get host string");
+        LOGE("Failed to get host string (OOM)");
+        return -1;
+    }
+    
+    // Validate host string length to prevent buffer overflows
+    size_t host_len = strlen(host_str);
+    if (host_len == 0 || host_len > 255) { // Max hostname length per RFC
+        LOGE("Invalid host string length: %zu", host_len);
+        env->ReleaseStringUTFChars(host, host_str);
         return -1;
     }
     
@@ -289,6 +303,8 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocket(
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     
+    // SEC: inet_pton only supports IPv4 - IPv6 not supported
+    // NETWORK-ASSUME: Assuming IPv4 address - may fail for IPv6 hosts
     int inet_result = inet_pton(AF_INET, host_str, &addr.sin_addr);
     if (inet_result <= 0) {
         LOGE("Invalid IP address: %s", host_str);
@@ -296,10 +312,11 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocket(
         return -1;
     }
     
+    // TIMEOUT-MISS: connect() on non-blocking socket has no timeout - may hang if network unreachable
+    // CONCURRENCY: connect() may race with socket closure in another thread
     int result = connect(slot->fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
     
     // Safe string copy with guaranteed null termination
-    size_t host_len = strlen(host_str);
     size_t copy_len = (host_len < sizeof(slot->remote_addr) - 1) ? host_len : sizeof(slot->remote_addr) - 1;
     memcpy(slot->remote_addr, host_str, copy_len);
     slot->remote_addr[copy_len] = '\0';
@@ -355,9 +372,18 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocketB
         return -1;
     }
     
+    // Get host string - must release on all error paths
     const char* host_str = env->GetStringUTFChars(host, nullptr);
     if (!host_str) {
-        // No need to release if GetStringUTFChars failed
+        LOGE("Failed to get host string (OOM)");
+        return -1;
+    }
+    
+    // Validate host string length
+    size_t host_len = strlen(host_str);
+    if (host_len == 0 || host_len > 255) {
+        LOGE("Invalid host string length: %zu", host_len);
+        env->ReleaseStringUTFChars(host, host_str);
         return -1;
     }
     
@@ -381,7 +407,6 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocketB
     int result = connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
     
     // Safe string copy with guaranteed null termination
-    size_t host_len = strlen(host_str);
     size_t copy_len = (host_len < sizeof(slot->remote_addr) - 1) ? host_len : sizeof(slot->remote_addr) - 1;
     memcpy(slot->remote_addr, host_str, copy_len);
     slot->remote_addr[copy_len] = '\0';

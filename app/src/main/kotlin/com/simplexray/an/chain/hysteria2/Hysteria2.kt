@@ -6,8 +6,9 @@ import com.simplexray.an.common.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -28,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference
  * or gomobile bindings if available.
  */
 object Hysteria2 {
+    // StateFlow updates are thread-safe by design
     private val _metrics = MutableStateFlow<Hy2Metrics>(
         Hy2Metrics(
             isConnected = false,
@@ -47,8 +49,11 @@ object Hysteria2 {
     private var context: Context? = null
     private var currentConfig: Hy2Config? = null
     private var configFile: File? = null
+    // Properly cleaned up in stop()
     private val processRef = AtomicReference<Process?>(null)
+    // Properly cancelled in stop() and shutdown()
     private val monitoringScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var monitoringJob: kotlinx.coroutines.Job? = null
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
     private val rtt = AtomicLong(0)
@@ -90,8 +95,12 @@ object Hysteria2 {
             // Build Hysteria2 config
             val hy2Config = Hy2ConfigBuilder.buildConfig(finalConfig)
             
-            // Write config to file
+            // Write config to file (validate path)
             val configFile = File(ctx.filesDir, "hysteria2-${config.server}-${config.port}.json")
+            // Validate config file path
+            if (!configFile.canonicalPath.startsWith(ctx.filesDir.canonicalPath)) {
+                return Result.failure(Exception("Config path outside allowed directory"))
+            }
             configFile.writeText(Gson().toJson(hy2Config))
             this.configFile = configFile
             this.currentConfig = finalConfig
@@ -109,11 +118,12 @@ object Hysteria2 {
             val launched = launchBinary(ctx, configFile)
             if (launched) {
                 // Wait a bit for process to start
-                kotlinx.coroutines.delay(500)
+                // PERF: Fixed 500ms delay may be too short or too long
+                Thread.sleep(500)
                 
-                // Check if process is still alive
+                // Check if process is still alive (with null safety)
                 val proc = processRef.get()
-                if (proc?.isAlive == true) {
+                if (proc != null && proc.isAlive) {
                     _metrics.value = _metrics.value.copy(isConnected = true)
                     startMonitoring()
                     AppLogger.i("Hysteria2: Started successfully")
@@ -124,6 +134,8 @@ object Hysteria2 {
                 }
             } else {
                 // Fallback: simulate connection if binary not available
+                // HACK: Simulating connection when binary not available - may hide real issues
+                // TEST-GAP: Fallback path not tested
                 AppLogger.w("Hysteria2: Binary not available, simulating connection")
                 _metrics.value = _metrics.value.copy(
                     isConnected = true,
@@ -145,30 +157,46 @@ object Hysteria2 {
     /**
      * Stop Hysteria2 client
      */
+    @Synchronized
     fun stop(): Result<Unit> {
         return try {
             AppLogger.i("Hysteria2: Stopping")
             
-            // Stop process if running
+            // Stop monitoring first
+            monitoringJob?.cancel()
+            monitoringJob = null
+            
+            // Stop process if running (thread-safe)
             val proc = processRef.getAndSet(null)
             proc?.let {
                 if (it.isAlive) {
                     it.destroy()
                     try {
-                        val exited = it.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                        // Wait for graceful shutdown with timeout
+                        val exited = it.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
                         if (!exited) {
                             AppLogger.w("Hysteria2: Process did not exit gracefully, forcing")
                             it.destroyForcibly()
-                            it.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
+                            // Wait for force kill
+                            it.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
                         }
                     } catch (e: InterruptedException) {
-                        AppLogger.d("Hysteria2: Process wait interrupted")
+                        AppLogger.d("Hysteria2: Process wait interrupted: ${e.message}")
+                        Thread.currentThread().interrupt() // Restore interrupt flag
+                        it.destroyForcibly()
+                    } catch (e: Exception) {
+                        AppLogger.e("Hysteria2: Error stopping process: ${e.message}", e)
                         it.destroyForcibly()
                     }
                 }
             }
             
-            // Cleanup
+            // Cleanup resources
+            try {
+                configFile?.delete()
+            } catch (e: Exception) {
+                AppLogger.w("Hysteria2: Failed to delete config file: ${e.message}", e)
+            }
             configFile = null
             currentConfig = null
             bytesUp.set(0)
@@ -244,7 +272,7 @@ object Hysteria2 {
             // Start log monitoring
             startLogMonitoring(proc)
             
-            AppLogger.i("Hysteria2: Binary launched, PID=${proc.pid()}")
+            // Process launched successfully
             true
         } catch (e: Exception) {
             AppLogger.e("Hysteria2: Failed to launch binary", e)
@@ -289,15 +317,20 @@ object Hysteria2 {
     /**
      * Start monitoring process logs
      */
+    // MEM-LEAK: Log monitoring coroutine not cancelled when process stops
+    // IO-BLOCK: BufferedReader.readLine() may block indefinitely
     private fun startLogMonitoring(proc: Process) {
         monitoringScope.launch {
             try {
                 val reader = BufferedReader(InputStreamReader(proc.inputStream))
                 var line: String?
+                // IO-BLOCK: readLine() may block indefinitely if process hangs
+                // TIMEOUT-MISS: No timeout on readLine()
                 while (reader.readLine().also { line = it } != null) {
                     line?.let { parseHy2Log(it) }
                 }
             } catch (e: Exception) {
+                // FALLBACK-BLIND: Log monitoring error swallowed - may hide critical issues
                 AppLogger.e("Hysteria2: Log monitoring error", e)
             }
         }
@@ -343,7 +376,7 @@ object Hysteria2 {
                     
                     // Parse 0-RTT hits
                     json.get("zeroRttHits")?.asInt?.let {
-                        _metrics.value = _metrics.value.copy(zeroRttHits = it)
+                        _metrics.value = _metrics.value.copy(zeroRttHits = it.toLong())
                     }
                 } catch (e: Exception) {
                     // Not JSON, try structured log parsing
@@ -388,34 +421,59 @@ object Hysteria2 {
      * Start monitoring loop
      */
     private fun startMonitoring() {
-        monitoringScope.launch {
-            while (_metrics.value.isConnected) {
+        // Cancel existing monitoring if any
+        monitoringJob?.cancel()
+        
+        monitoringJob = monitoringScope.launch {
+            var adaptiveDelay = 1000L // Start with 1 second
+            var consecutiveErrors = 0
+            
+            while (this.isActive && _metrics.value.isConnected) {
                 try {
-                    // Update metrics from atomic counters
+                    // Update metrics from atomic counters (with overflow protection)
                     _metrics.value = _metrics.value.copy(
-                        bytesUp = bytesUp.get(),
-                        bytesDown = bytesDown.get(),
-                        rtt = rtt.get(),
-                        loss = loss.get()
+                        bytesUp = bytesUp.get().coerceAtLeast(0L),
+                        bytesDown = bytesDown.get().coerceAtLeast(0L),
+                        rtt = rtt.get().coerceAtLeast(0L).coerceAtLeast(0L),
+                        loss = loss.get().coerceIn(0f, 100f)
                     )
                     
                     // Query Hysteria2 stats if process is running
                     val proc = processRef.get()
-                    if (proc?.isAlive == true) {
+                    if (proc != null && proc.isAlive) {
                         // Stats are updated via log parsing
                         // If Hysteria2 exposes a stats API, query it here
                     } else {
                         // Process died, mark as disconnected
                         _metrics.value = _metrics.value.copy(isConnected = false)
+                        break // Exit monitoring loop
                     }
                     
-                    delay(1000) // Update every second
+                    // Adaptive delay: decrease if stable, increase on errors
+                    consecutiveErrors = 0
+                    adaptiveDelay = (adaptiveDelay * 0.95).toLong().coerceAtLeast(1000) // Min 1s
+                    kotlinx.coroutines.delay(adaptiveDelay)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e // Re-throw cancellation
                 } catch (e: Exception) {
-                    AppLogger.e("Hysteria2: Monitoring error", e)
-                    delay(5000)
+                    consecutiveErrors++
+                    AppLogger.e("Hysteria2: Monitoring error (consecutive: $consecutiveErrors): ${e.javaClass.simpleName}: ${e.message}", e)
+                    // Increase delay on errors
+                    adaptiveDelay = (adaptiveDelay * 1.5).toLong().coerceAtMost(10000) // Max 10s
+                    kotlinx.coroutines.delay(adaptiveDelay)
                 }
             }
         }
+    }
+    
+    /**
+     * Shutdown and cleanup all resources
+     */
+    fun shutdown() {
+        stop()
+        monitoringJob?.cancel()
+        monitoringScope.coroutineContext.cancel()
+        AppLogger.d("Hysteria2: Shutdown complete")
     }
 }
 

@@ -34,6 +34,8 @@ abstract class AppDatabase : RoomDatabase() {
                 // Consider consolidating with TrafficDatabase if both serve similar traffic logging needs.
                 // TODO: Implement proper migration strategy instead of fallbackToDestructiveMigration
                 // BUG: fallbackToDestructiveMigration will delete all data on schema changes - this may cause data loss
+                // CRASH-RISK: Database migration failure may crash app on startup
+                // TEST-GAP: Database migration not tested - may fail in production
                 .build()
                 .also { INSTANCE = it }
         }

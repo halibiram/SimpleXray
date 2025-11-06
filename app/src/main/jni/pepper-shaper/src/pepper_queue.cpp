@@ -6,6 +6,7 @@
 #include "pepper_queue.h"
 #include <cstring>
 #include <cstdlib>
+#include <new>
 #include <malloc.h>
 #include <limits.h>
 #include <android/log.h>

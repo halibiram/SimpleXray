@@ -26,3 +26,4 @@ This directory contains patches to modify Xray-core for BoringSSL integration.
 
 Patches are automatically applied during the GitHub Actions build process. If patches fail to apply, the build will continue with vanilla Xray-core.
 
+

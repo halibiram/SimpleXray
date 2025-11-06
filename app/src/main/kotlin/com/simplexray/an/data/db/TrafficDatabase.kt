@@ -34,6 +34,9 @@ abstract class TrafficDatabase : RoomDatabase() {
                 // Note: When schema changes are needed, add proper Room migrations (Migration objects)
                 // to preserve user history instead of using fallbackToDestructiveMigration.
                 // Example: addMigrations(Migration(1, 2) { ... }, Migration(2, 3) { ... })
+                // BUG: fallbackToDestructiveMigration will delete all traffic history on schema changes
+                // CRASH-RISK: Database migration failure may crash app
+                // TEST-GAP: Migration not tested - may fail in production
                 .build()
                 INSTANCE = instance
                 instance

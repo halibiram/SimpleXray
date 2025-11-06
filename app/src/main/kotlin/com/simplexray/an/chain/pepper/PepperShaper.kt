@@ -12,7 +12,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * Provides burst-friendly streaming with loss-aware backoff.
  * Implemented as Kotlin + JNI pair for TCP and UDP flows.
  */
+// ARCH-DEBT: Object singleton pattern - may cause issues with multiple instances
+// UNSAFE: Native library loaded in init - may crash if library not found
 object PepperShaper {
+    // STATE-HAZARD: MutableStateFlow updated from native code
     private val _stats = MutableStateFlow<PepperStats>(
         PepperStats(
             bytesShaped = 0,
@@ -27,7 +30,17 @@ object PepperShaper {
     private var isInitialized = false
     
     init {
-        System.loadLibrary("pepper-shaper")
+        // Safe library loading with error handling
+        try {
+            System.loadLibrary("pepper-shaper")
+        } catch (e: UnsatisfiedLinkError) {
+            AppLogger.e("Failed to load pepper-shaper native library: ${e.message}", e)
+            // Mark as failed to prevent further operations
+            isInitialized = false
+        } catch (e: Exception) {
+            AppLogger.e("Unexpected error loading pepper-shaper library: ${e.message}", e)
+            isInitialized = false
+        }
     }
     
     /**
@@ -53,17 +66,32 @@ object PepperShaper {
         mode: SocketMode,
         params: PepperParams
     ): Long? {
+        // Validate file descriptors before native call
+        if (fdPair.first < 0 || fdPair.second < 0) {
+            AppLogger.e("PepperShaper: Invalid file descriptors: ${fdPair.first}/${fdPair.second}")
+            return null
+        }
+        
+        if (!isInitialized) {
+            AppLogger.e("PepperShaper: Not initialized, cannot attach")
+            return null
+        }
+        
         return try {
             AppLogger.d("PepperShaper: Attaching to fds ${fdPair.first}/${fdPair.second}, mode=$mode")
             val handle = nativeAttach(fdPair.first, fdPair.second, mode.ordinal, params)
             if (handle > 0) {
+                AppLogger.d("PepperShaper: Attached successfully, handle=$handle")
                 handle
             } else {
-                AppLogger.e("PepperShaper: Failed to attach, handle=$handle")
+                AppLogger.e("PepperShaper: Failed to attach, native returned handle=$handle (invalid or error)")
                 null
             }
+        } catch (e: UnsatisfiedLinkError) {
+            AppLogger.e("PepperShaper: Native library not loaded: ${e.message}", e)
+            null
         } catch (e: Exception) {
-            AppLogger.e("PepperShaper: Exception attaching", e)
+            AppLogger.e("PepperShaper: Exception attaching to fds ${fdPair.first}/${fdPair.second}: ${e.javaClass.simpleName}: ${e.message}", e)
             null
         }
     }
@@ -72,10 +100,30 @@ object PepperShaper {
      * Detach shaper from handle
      */
     fun detach(handle: Long): Boolean {
+        // Validate handle before native call
+        if (handle <= 0) {
+            AppLogger.e("PepperShaper: Invalid handle for detach: $handle")
+            return false
+        }
+        
+        if (!isInitialized) {
+            AppLogger.w("PepperShaper: Not initialized, cannot detach")
+            return false
+        }
+        
         return try {
-            nativeDetach(handle)
+            val result = nativeDetach(handle)
+            if (result) {
+                AppLogger.d("PepperShaper: Detached handle=$handle successfully")
+            } else {
+                AppLogger.w("PepperShaper: Detach returned false for handle=$handle")
+            }
+            result
+        } catch (e: UnsatisfiedLinkError) {
+            AppLogger.e("PepperShaper: Native library not loaded: ${e.message}", e)
+            false
         } catch (e: Exception) {
-            AppLogger.e("PepperShaper: Exception detaching", e)
+            AppLogger.e("PepperShaper: Exception detaching handle=$handle: ${e.javaClass.simpleName}: ${e.message}", e)
             false
         }
     }
@@ -84,10 +132,30 @@ object PepperShaper {
      * Update parameters for an attached shaper
      */
     fun updateParams(handle: Long, params: PepperParams): Boolean {
+        // Validate handle before native call
+        if (handle <= 0) {
+            AppLogger.e("PepperShaper: Invalid handle for updateParams: $handle")
+            return false
+        }
+        
+        if (!isInitialized) {
+            AppLogger.w("PepperShaper: Not initialized, cannot update params")
+            return false
+        }
+        
         return try {
-            nativeUpdateParams(handle, params)
+            val result = nativeUpdateParams(handle, params)
+            if (result) {
+                AppLogger.d("PepperShaper: Updated params for handle=$handle successfully")
+            } else {
+                AppLogger.w("PepperShaper: Update params returned false for handle=$handle")
+            }
+            result
+        } catch (e: UnsatisfiedLinkError) {
+            AppLogger.e("PepperShaper: Native library not loaded: ${e.message}", e)
+            false
         } catch (e: Exception) {
-            AppLogger.e("PepperShaper: Exception updating params", e)
+            AppLogger.e("PepperShaper: Exception updating params for handle=$handle: ${e.javaClass.simpleName}: ${e.message}", e)
             false
         }
     }

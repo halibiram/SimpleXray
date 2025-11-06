@@ -5,8 +5,10 @@ import com.simplexray.an.common.AppLogger
 import com.simplexray.an.chain.hysteria2.Hysteria2
 import com.simplexray.an.chain.pepper.PepperShaper
 import com.simplexray.an.chain.reality.RealitySocks
+import kotlinx.coroutines.cancel
 import com.simplexray.an.xray.XrayCoreLauncher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
@@ -286,24 +288,24 @@ class ChainSupervisor(private val context: Context) {
             
             // Stop Xray-core
             val xrayResult = runCatching { XrayCoreLauncher.stop() }
-            stopResults.add(xrayResult)
+            stopResults.add(xrayResult.map { })
             updateLayerStatus("xray", false, xrayResult.exceptionOrNull()?.message)
             
             // Stop PepperShaper (validate handle before detach)
             if (pepperHandle != null && pepperHandle!! > 0) {
                 val pepperResult = runCatching { PepperShaper.detach(pepperHandle!!) }
-                stopResults.add(pepperResult)
+                stopResults.add(pepperResult.map { })
                 updateLayerStatus("pepper", false, pepperResult.exceptionOrNull()?.message)
             }
             pepperHandle = null
             
             // Stop Hysteria2
-            val hy2Result = runCatching { Hysteria2.stop() }
+            val hy2Result = Hysteria2.stop()
             stopResults.add(hy2Result)
             updateLayerStatus("hysteria2", false, hy2Result.exceptionOrNull()?.message)
             
             // Stop RealitySocks
-            val realityResult = runCatching { RealitySocks.stop() }
+            val realityResult = RealitySocks.stop()
             stopResults.add(realityResult)
             updateLayerStatus("reality", false, realityResult.exceptionOrNull()?.message)
             
@@ -385,7 +387,7 @@ class ChainSupervisor(private val context: Context) {
             var adaptiveDelay = 1000L // Start with 1 second
             var consecutiveErrors = 0
             
-            while (isActive && (_status.value.state == ChainState.RUNNING || 
+            while (this.isActive && (_status.value.state == ChainState.RUNNING || 
                    _status.value.state == ChainState.DEGRADED)) {
                 try {
                     val uptime = if (startTime.get() > 0) {

@@ -1532,9 +1532,11 @@ class MainViewModel(application: Application) :
         
         // Close core stats client with proper error handling
         try {
+            kotlinx.coroutines.runBlocking {
             coreStatsClientMutex.withLock {
                 coreStatsClient?.close()
                 coreStatsClient = null
+            }
             }
         } catch (e: Exception) {
             AppLogger.w("Error closing core stats client", e)

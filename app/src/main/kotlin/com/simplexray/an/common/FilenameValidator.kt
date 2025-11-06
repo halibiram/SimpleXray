@@ -15,6 +15,9 @@ object FilenameValidator {
             else -> null
         }
     }
+    fun isValid(filename: String): Boolean {
+        return isValidFilenameChars(filename.trim())
+    }
 
     private fun isValidFilenameChars(filename: String): Boolean {
         return !Pattern.compile(INVALID_CHARS_PATTERN).matcher(filename).find()

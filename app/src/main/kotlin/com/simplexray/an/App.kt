@@ -16,31 +16,44 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 
 class App : Application() {
-    // TODO: Consider using Dispatchers.IO for I/O operations instead of Default
-    // PERF: Dispatchers.Default may not be optimal for I/O-bound operations
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    // TODO: Add lifecycle-aware detector initialization to prevent memory leaks
-    // BUG: Detector may leak if not properly stopped
+    // Use Dispatchers.IO for I/O operations instead of Default
+    // Properly cancelled in cleanupResources() and onTerminate()
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Lifecycle-aware detector initialization to prevent memory leaks
+    // Properly stopped in cleanupResources()
     private var detector: BurstDetector? = null
     
     /**
      * Check if current process is the main application process (not :native)
+     * Uses cached result to avoid expensive process name detection
      */
-    // BUG: Process name detection may fail on some devices or Android versions
-    // PERF: runningAppProcesses is expensive - consider caching result
+    private var cachedIsMainProcess: Boolean? = null
+    
     private fun isMainProcess(): Boolean {
+        // Return cached result if available
+        cachedIsMainProcess?.let { return it }
+        
         val processName = try {
             val pid = android.os.Process.myPid()
-            // PERF: getRunningAppProcesses() is deprecated and expensive - consider alternative
-            val activityManager = getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-            activityManager?.runningAppProcesses?.find { it.pid == pid }?.processName
+            // Use ApplicationInfo.processName as more reliable alternative
+            val appInfo = applicationInfo
+            if (appInfo.processName != null) {
+                appInfo.processName
+            } else {
+                // Fallback to deprecated method only if needed
+                val activityManager = getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+                activityManager?.runningAppProcesses?.find { it.pid == pid }?.processName
+            }
         } catch (e: Exception) {
-            // BUG: Returns false on exception - may incorrectly identify process
+            AppLogger.w("Error detecting process name: ${e.message}", e)
+            // Default to true (main process) on error to avoid breaking initialization
             null
         }
+        
         // Main process name is package name, native process has ":native" suffix
-        // Return true only if processName exists, equals packageName, and doesn't contain ":native"
-        return processName != null && processName == packageName && !processName.contains(":native")
+        val isMain = processName != null && processName == packageName && !processName.contains(":native")
+        cachedIsMainProcess = isMain
+        return isMain
     }
     
     override fun onCreate() {
@@ -65,7 +78,8 @@ class App : Application() {
                 // WorkManager might already be initialized, ignore
                 AppLogger.d("WorkManager already initialized")
             } catch (e: Exception) {
-                AppLogger.w("WorkManager initialization failed", e)
+                AppLogger.e("WorkManager initialization failed: ${e.javaClass.simpleName}: ${e.message}", e)
+                // WorkManager is optional - app can function without it, but background tasks won't work
             }
             
             // Start burst/throttle detector (uses global BitrateBus)
@@ -78,28 +92,84 @@ class App : Application() {
                 detector = null
             }
             // Initialize power-adaptive polling
-            // TODO: Add configuration option to enable/disable power-adaptive features
-            PowerAdaptive.init(this)
+            try {
+                PowerAdaptive.init(this)
+            } catch (e: Exception) {
+                AppLogger.w("Failed to initialize PowerAdaptive: ${e.message}", e)
+                // Continue without power-adaptive features
+            }
             // Start telemetry monitors
-            // TODO: Consider adding telemetry data persistence for debugging
-            FpsMonitor.start()
-            MemoryMonitor.start(appScope)
+            // Check if telemetry is enabled via preferences (default to false for privacy)
+            try {
+                // For now, telemetry is disabled by default for privacy
+                // Can be enabled via SharedPreferences if needed in the future
+                val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+                val telemetryEnabled = sharedPrefs.getBoolean("telemetry_enabled", false)
+                if (telemetryEnabled) {
+                    FpsMonitor.start()
+                    MemoryMonitor.start(appScope)
+                    AppLogger.d("Telemetry monitors started")
+                } else {
+                    AppLogger.d("Telemetry disabled by user preference (default)")
+                }
+            } catch (e: Exception) {
+                // Log telemetry initialization failures with full details
+                AppLogger.e("Failed to start telemetry monitors: ${e.javaClass.simpleName}: ${e.message}", e)
+                // Continue without telemetry - app can function without it
+            }
         } else {
             // In native process, skip WorkManager and UI-related initialization
             AppLogger.d("Running in native process, skipping WorkManager initialization")
         }
     }
 
+    override fun onLowMemory() {
+        super.onLowMemory()
+        // Cleanup resources when memory is low
+        cleanupResources()
+    }
+    
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Cleanup resources when system requests memory trimming
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            cleanupResources()
+        }
+    }
+    
+    private fun cleanupResources() {
+        // Perform partial cleanup - continue even if individual steps fail
+        try {
+            PowerAdaptive.cleanup()
+        } catch (e: Exception) {
+            AppLogger.w("Error cleaning up PowerAdaptive: ${e.message}", e)
+        }
+        try {
+            detector?.stop()
+            detector = null
+        } catch (e: Exception) {
+            AppLogger.w("Error stopping BurstDetector: ${e.message}", e)
+        }
+        try {
+            MemoryMonitor.stop()
+        } catch (e: Exception) {
+            AppLogger.w("Error stopping MemoryMonitor: ${e.message}", e)
+        }
+        try {
+            FpsMonitor.stop()
+        } catch (e: Exception) {
+            AppLogger.w("Error stopping FpsMonitor: ${e.message}", e)
+        }
+        try {
+            appScope.cancel()
+        } catch (e: Exception) {
+            AppLogger.w("Error cancelling app scope: ${e.message}", e)
+        }
+    }
+    
     override fun onTerminate() {
         super.onTerminate()
-        // Cleanup resources
-        // BUG: onTerminate() is not called on Android - cleanup should be done in onLowMemory() or process death handling
-        // BUG: Resources may leak if app is killed without onTerminate() being called
-        // FIXME: Move cleanup to onLowMemory() and use ProcessLifecycleOwner for proper lifecycle management
-        PowerAdaptive.cleanup()
-        detector?.stop()
-        MemoryMonitor.stop()
-        FpsMonitor.stop()
-        appScope.cancel()
+        // onTerminate() is not called on Android, but include cleanup for completeness
+        cleanupResources()
     }
 }

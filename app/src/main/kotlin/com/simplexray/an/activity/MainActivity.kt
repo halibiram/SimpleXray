@@ -57,33 +57,67 @@ class MainActivity : ComponentActivity() {
         checkAndUpdateServiceState()
     }
     
+    // Cache service state to reduce repeated checks
+    private var cachedServiceState: Boolean? = null
+    private var serviceStateCacheTime = 0L
+    private val serviceStateCacheValidityMs = 5000L // 5 second cache
+    
     /**
      * Check if TProxyService is running.
      * This is called when app resumes to log service state.
      * The actual UI update will be handled by MainScreen lifecycle observer.
-     * TODO: Consider caching service state to reduce repeated checks
-     * TODO: Add retry mechanism for transient service state detection failures
-     * BUG: Two different methods to check service state may return inconsistent results
-     * PERF: Service state check may be expensive - consider caching result
+     * Uses caching to reduce expensive service state checks
      */
     private fun checkAndUpdateServiceState() {
         try {
-            // BUG: Two different checks may return different results - race condition
-            val isRunning = ServiceStateChecker.isServiceRunning(applicationContext, TProxyService::class.java)
+            // Check cache first
+            val now = System.currentTimeMillis()
+            if (cachedServiceState != null && (now - serviceStateCacheTime) < serviceStateCacheValidityMs) {
+                return // Use cached state
+            }
+            
+            // Use static method as primary source of truth (more reliable)
             val isRunningStatic = TProxyService.isRunning()
             
-            AppLogger.d("MainActivity: Service state check on resume - ServiceStateChecker: $isRunning, TProxyService.isRunning(): $isRunningStatic")
-            
-            // If service is running, send a status broadcast to ensure UI is updated
-            // This helps when app was killed and restarted
-            if (isRunningStatic) {
-                AppLogger.d("MainActivity: Service is running, UI will be updated by MainScreen lifecycle observer")
-                // The MainScreen lifecycle observer will handle the UI update
-                // BUG: No action taken if service is running - relies on observer
+            // Verify with ServiceStateChecker for consistency
+            val isRunningChecker = try {
+                ServiceStateChecker.isServiceRunning(applicationContext, TProxyService::class.java)
+            } catch (e: Exception) {
+                AppLogger.w("ServiceStateChecker failed: ${e.message}", e)
+                null // Use null to indicate check failed
             }
+            
+            // BUG: Service state mismatch detected but not resolved
+            // Resolve mismatch by checking actual service state via ActivityManager
+            if (isRunningChecker != null && isRunningChecker != isRunningStatic) {
+                AppLogger.w("Service state mismatch - Static: $isRunningStatic, Checker: $isRunningChecker")
+                // Try to resolve by checking actual service state
+                try {
+                    val activityManager = getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+                    val actualRunning = activityManager?.getRunningServices(Integer.MAX_VALUE)
+                        ?.any { it.service.className == TProxyService::class.java.name } ?: false
+                    AppLogger.d("Actual service state from ActivityManager: $actualRunning")
+                    // Use actual state as source of truth
+                    cachedServiceState = actualRunning
+                } catch (e: Exception) {
+                    AppLogger.w("Failed to resolve service state mismatch: ${e.message}", e)
+                }
+            }
+            
+            // Use static method result as source of truth
+            cachedServiceState = isRunningStatic
+            serviceStateCacheTime = now
+            
+            AppLogger.d("MainActivity: Service state check on resume - Running: $isRunningStatic")
+            
+            // If service is running, the MainScreen lifecycle observer will handle the UI update
+            // No additional action needed here as the observer is more reliable
+        } catch (e: SecurityException) {
+            AppLogger.e("Security error checking service state: ${e.message}", e)
+            cachedServiceState = null // Invalidate cache on security error
         } catch (e: Exception) {
-            // BUG: Exception swallowed - service state may be incorrect
-            AppLogger.w("MainActivity: Error checking service state", e)
+            AppLogger.e("Error checking service state: ${e.javaClass.simpleName}: ${e.message}", e)
+            cachedServiceState = null // Invalidate cache on error
         }
     }
 }

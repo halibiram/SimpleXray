@@ -50,6 +50,7 @@ fun MainScreen(
 
     val launchers = rememberMainScreenLaunchers(mainViewModel)
 
+    // ViewModel lifecycle managed by Compose
     val logViewModel: LogViewModel = viewModel(
         factory = LogViewModelFactory(mainViewModel.application)
     )
@@ -61,10 +62,15 @@ fun MainScreen(
         applicationContext = mainViewModel.application
     )
 
+    // Share launcher - result handled by launcher itself
     val shareLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
-    ) {}
+    ) {
+        // Result handled by the launched activity
+        AppLogger.d("MainScreen: Share activity result: ${it.resultCode}")
+    }
 
+    // Receivers properly unregistered in onDispose
     DisposableEffect(mainViewModel) {
         mainViewModel.registerTProxyServiceReceivers()
         onDispose {
@@ -75,24 +81,28 @@ fun MainScreen(
     // Check service state when screen becomes visible to ensure UI reflects actual state
     // TODO: Add debouncing for service state checks to prevent excessive checks
     // TODO: Consider using a shared Flow for service state instead of polling
+    // PERF: Service state check on every resume may be expensive
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 // When screen resumes, check if service is actually running
-                // and update UI state if needed
-                // TODO: Add error handling for service state check failures
+                // and update UI state if needed (non-blocking)
                 scope.launch(Dispatchers.IO) {
-                    val isActuallyRunning = ServiceStateChecker.isServiceRunning(
-                        mainViewModel.application,
-                        TProxyService::class.java
-                    ) || TProxyService.isRunning()
-                    
-                    val currentState = mainViewModel.isServiceEnabled.value
-                    if (isActuallyRunning != currentState) {
-                        AppLogger.d("MainScreen: Service state mismatch detected. Actual: $isActuallyRunning, UI: $currentState. Updating...")
-                        // Update the state to match actual service state
-                        mainViewModel.setServiceEnabled(isActuallyRunning)
+                    try {
+                        val isActuallyRunning = ServiceStateChecker.isServiceRunning(
+                            mainViewModel.application,
+                            TProxyService::class.java
+                        ) || TProxyService.isRunning()
+                        
+                        val currentState = mainViewModel.isServiceEnabled.value
+                        if (isActuallyRunning != currentState) {
+                            AppLogger.d("MainScreen: Service state mismatch detected. Actual: $isActuallyRunning, UI: $currentState. Updating...")
+                            // Update the state to match actual service state (StateFlow is thread-safe)
+                            mainViewModel.setServiceEnabled(isActuallyRunning)
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.w("MainScreen: Error checking service state: ${e.message}", e)
                     }
                 }
             }
@@ -105,11 +115,14 @@ fun MainScreen(
 
     var lastNavigationTime = 0L
 
+    // LaunchedEffect automatically cancels when key changes or composable leaves composition
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
+            // Asset extraction (non-blocking via Dispatchers.IO)
             mainViewModel.extractAssetsIfNeeded()
         }
 
+        // Flow collection automatically cancelled when LaunchedEffect is cancelled
         mainViewModel.uiEvent.collectLatest { event ->
             when (event) {
                 is MainViewUiEvent.ShowSnackbar -> {
@@ -124,7 +137,13 @@ fun MainScreen(
                 }
 
                 is MainViewUiEvent.StartService -> {
-                    mainViewModel.application.startService(event.intent)
+                    // Use startForegroundService for API 26+ to avoid IllegalStateException
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        mainViewModel.application.startForegroundService(event.intent)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        mainViewModel.application.startService(event.intent)
+                    }
                 }
 
                 is MainViewUiEvent.RefreshConfigList -> {
@@ -133,6 +152,7 @@ fun MainScreen(
 
                 is MainViewUiEvent.Navigate -> {
                     val currentTime = System.currentTimeMillis()
+                    // PERF: Navigation debouncing may cause UI lag
                     if (currentTime - lastNavigationTime >= NAVIGATION_DEBOUNCE_DELAY) {
                         lastNavigationTime = currentTime
                         appNavController.navigate(event.route)

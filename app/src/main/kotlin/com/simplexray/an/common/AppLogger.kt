@@ -74,7 +74,20 @@ object AppLogger {
                     }
                 }
             } catch (e: Exception) {
-                // Fail silently to avoid crashes from crash reporting
+                // Log to system log if Crashlytics fails (fallback mechanism)
+                // Use system log as fallback to ensure errors are not completely lost
+                try {
+                    Log.e(LOG_TAG, "Crashlytics error reporting failed: ${e.message}", e)
+                    // Also log the original error message that we tried to report
+                    Log.e(LOG_TAG, "Original error: $message", throwable)
+                } catch (logException: Exception) {
+                    // Last resort: write to stderr if even system log fails
+                    System.err.println("FATAL: Both Crashlytics and system log failed. Original error: $message")
+                    if (throwable != null) {
+                        throwable.printStackTrace()
+                    }
+                    logException.printStackTrace()
+                }
             }
         }
     }
@@ -99,7 +112,19 @@ object AppLogger {
                     firebaseCrashlytics.recordException(throwable)
                 }
             } catch (e: Exception) {
-                // Fail silently to avoid crashes from crash reporting
+                // Log to system log if Crashlytics fails (fallback mechanism)
+                try {
+                    Log.e(LOG_TAG, "Crashlytics warning reporting failed: ${e.message}", e)
+                    // Also log the original warning message
+                    Log.w(LOG_TAG, "Original warning: $message", throwable)
+                } catch (logException: Exception) {
+                    // Last resort: write to stderr if even system log fails
+                    System.err.println("FATAL: Both Crashlytics and system log failed. Original warning: $message")
+                    if (throwable != null) {
+                        throwable.printStackTrace()
+                    }
+                    logException.printStackTrace()
+                }
             }
         }
     }
@@ -133,9 +158,14 @@ object AppLogger {
      */
     fun setCustomKey(key: String, value: String) {
         try {
-            crashlytics?.setCustomKey(key, value)
+            // Sanitize value to prevent privacy leaks
+            val sanitizedValue = sanitize(value)
+            crashlytics?.setCustomKey(key, sanitizedValue)
         } catch (e: Exception) {
-            // Fail silently
+            // Log configuration errors in debug builds
+            if (BuildConfig.DEBUG) {
+                Log.w(LOG_TAG, "Failed to set Crashlytics custom key '$key': ${e.message}", e)
+            }
         }
     }
     
@@ -197,12 +227,9 @@ object AppLogger {
      * @return Sanitized message with sensitive data redacted
      */
     fun sanitize(message: String): String {
-        if (!BuildConfig.DEBUG) {
-            // In production, always sanitize
-            return sanitizeInternal(message)
-        }
-        // In debug builds, return as-is for easier debugging
-        return message
+        // Always sanitize, even in debug builds, to prevent accidental leaks
+        // Debug builds can use dSafe() method if they need to see sanitized data
+        return sanitizeInternal(message)
     }
     
     /**
@@ -212,13 +239,14 @@ object AppLogger {
     private fun sanitizeInternal(message: String): String {
         var sanitized = message
         
+        // Comprehensive sanitization patterns for sensitive data
         // Redact password patterns: password=xxx, pwd=xxx, pass=xxx
         sanitized = Regex("(?i)(password|pwd|pass)[=:](\\S+)").replace(sanitized) {
             "${it.groupValues[1]}=***REDACTED***"
         }
         
-        // Redact token patterns: token=xxx, api_key=xxx, apikey=xxx
-        sanitized = Regex("(?i)(token|api[_-]?key|apikey|secret|auth[_-]?token)[=:](\\S+)").replace(sanitized) {
+        // Redact token patterns: token=xxx, api_key=xxx, apikey=xxx, secret=xxx
+        sanitized = Regex("(?i)(token|api[_-]?key|apikey|secret|auth[_-]?token|access[_-]?token|refresh[_-]?token)[=:](\\S+)").replace(sanitized) {
             "${it.groupValues[1]}=***REDACTED***"
         }
         
@@ -228,11 +256,36 @@ object AppLogger {
         }
         
         // Redact private keys (PEM format)
-        sanitized = Regex("-----BEGIN\\s+(?:PRIVATE|RSA PRIVATE)\\s+KEY-----.*?-----END\\s+(?:PRIVATE|RSA PRIVATE)\\s+KEY-----", RegexOption.DOT_MATCHES_ALL).replace(sanitized) {
+        sanitized = Regex("-----BEGIN\\s+(?:PRIVATE|RSA PRIVATE|EC PRIVATE|DSA PRIVATE)\\s+KEY-----.*?-----END\\s+(?:PRIVATE|RSA PRIVATE|EC PRIVATE|DSA PRIVATE)\\s+KEY-----", RegexOption.DOT_MATCHES_ALL).replace(sanitized) {
             "***REDACTED_PRIVATE_KEY***"
         }
         
-        // Redact email addresses (optional, can be enabled if needed)
+        // Redact certificate patterns
+        sanitized = Regex("-----BEGIN\\s+CERTIFICATE-----.*?-----END\\s+CERTIFICATE-----", RegexOption.DOT_MATCHES_ALL).replace(sanitized) {
+            "***REDACTED_CERTIFICATE***"
+        }
+        
+        // Redact IP addresses in sensitive contexts (optional - may be too aggressive)
+        // sanitized = Regex("\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b").replace(sanitized) {
+        //     "***REDACTED_IP***"
+        // }
+        
+        // Redact long hex strings that might be keys (32+ chars)
+        sanitized = Regex("\\b[a-f0-9]{32,}\\b").replace(sanitized) {
+            "***REDACTED_HEX***"
+        }
+        
+        // Redact credit card patterns (13-19 digits with optional separators)
+        sanitized = Regex("\\b(?:\\d[ -]?){13,19}\\b").replace(sanitized) {
+            "***REDACTED_CARD***"
+        }
+        
+        // Redact SSN patterns (XXX-XX-XXXX)
+        sanitized = Regex("\\b\\d{3}-\\d{2}-\\d{4}\\b").replace(sanitized) {
+            "***REDACTED_SSN***"
+        }
+        
+        // Redact email addresses in sensitive contexts (optional - may be too aggressive)
         // sanitized = Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b").replace(sanitized) {
         //     "***REDACTED_EMAIL***"
         // }
