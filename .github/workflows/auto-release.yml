@@ -118,7 +118,7 @@ jobs:
         with:
           path: xray-libs
           pattern: xray-*
-          merge-multiple: true
+          merge-multiple: false
 
       - name: Replace Xray Binaries
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
@@ -133,9 +133,9 @@ jobs:
 
           # Copy new BoringSSL-enabled binaries
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            if [ -f "xray-libs/$abi/libxray.so" ]; then
+            if [ -f "xray-libs/xray-$abi/libxray.so" ]; then
               mkdir -p app/src/main/jniLibs/$abi
-              cp xray-libs/$abi/libxray.so app/src/main/jniLibs/$abi/libxray.so
+              cp xray-libs/xray-$abi/libxray.so app/src/main/jniLibs/$abi/libxray.so
               echo "✅ Copied BoringSSL-enabled Xray for $abi"
             else
               echo "⚠️  BoringSSL-enabled Xray not found for $abi, will use vanilla build"
