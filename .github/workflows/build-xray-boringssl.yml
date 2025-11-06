@@ -537,28 +537,6 @@ jobs:
             -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
             -v \
             ./main
-          else
-            echo "Patches detected, attempting CGO build with BoringSSL..."
-            # Use -buildmode=default instead of c-shared to avoid automatic Android library linking
-            # c-shared mode automatically adds -llog which causes linker errors
-            go build \
-              -o libxray.so \
-              -trimpath \
-              -buildvcs=false \
-              -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
-              -v \
-              ./main || {
-                echo "⚠️  CGO build failed, falling back to vanilla build"
-                export CGO_ENABLED=0
-                go build \
-                  -o libxray.so \
-                  -trimpath \
-                  -buildvcs=false \
-                  -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
-                  -v \
-                  ./main
-              }
-          fi
 
           # Strip binary
           $STRIP --strip-all libxray.so
