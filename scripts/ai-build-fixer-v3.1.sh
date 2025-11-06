@@ -86,11 +86,13 @@ stop_monitoring() {
 # Check for failures - returns failed run info
 check_failures() {
     local FAILED_RUNS=()
+    local FOUND_FAILURE=false
     
     for WORKFLOW_NAME in "${WORKFLOWS[@]}"; do
         RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}' || echo "")
         
         if [ -z "$RUN_ID" ] || ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+            echo -e "${DIM}[DEBUG] No valid RUN_ID for $WORKFLOW_NAME${NC}" >&2
             continue
         fi
         
@@ -103,8 +105,12 @@ check_failures() {
             CONCLUSION=$(echo "$RUN_INFO" | grep -i "conclusion:" | awk '{print $2}' | head -1 || echo "in_progress")
         fi
         
+        echo -e "${DIM}[DEBUG] $WORKFLOW_NAME: Run $RUN_ID, Status=$STATUS, Conclusion=$CONCLUSION${NC}" >&2
+        
         if [ "$CONCLUSION" = "failure" ]; then
             FAILED_RUNS+=("$RUN_ID|$WORKFLOW_NAME")
+            FOUND_FAILURE=true
+            echo -e "${RED}[DEBUG] ⚠️  FAILURE FOUND: $WORKFLOW_NAME (Run $RUN_ID)${NC}" >&2
         fi
     done
     
@@ -497,9 +503,18 @@ main() {
         
         # Check for failures
         FAILED_RUNS=$(check_failures)
+        CHECK_RESULT=$?
         
+        # Debug output
         if [ -n "$FAILED_RUNS" ]; then
+            echo -e "${YELLOW}[DEBUG] Failure detected: ${FAILED_RUNS}${NC}" | tee -a /tmp/ai-fixer-v3.1.log
+        else
+            echo -e "${DIM}[DEBUG] No failures (check_result=$CHECK_RESULT)${NC}" | tee -a /tmp/ai-fixer-v3.1.log
+        fi
+        
+        if [ -n "$FAILED_RUNS" ] && [ ${#FAILED_RUNS} -gt 0 ]; then
             # STOP MONITORING IMMEDIATELY
+            echo -e "${RED}[AI-MVC v3.1] ⚠️  FAILURE TESPİT EDİLDİ - FIX MODUNA GEÇİLİYOR!${NC}" | tee -a /tmp/ai-fixer-v3.1.log
             stop_monitoring
             
             FIRST_FAILED=$(echo "$FAILED_RUNS" | head -1)
