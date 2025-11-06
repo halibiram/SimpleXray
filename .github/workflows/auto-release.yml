@@ -289,6 +289,32 @@ jobs:
           - 📡 QUIC/HTTP3 support
           - 🎯 Xray-core built with BoringSSL (3-40x faster crypto performance)
 
+          **Latest Improvements (v${VERSION}):**
+
+          🔐 **Security Enhancements:**
+          - Added process identity verification before termination (prevents PID reuse attacks)
+          - Enhanced input validation across JNI boundaries and file operations
+          - Improved command injection prevention with array-based exec
+          - Added file descriptor and PID range validation
+
+          🛡️ **Stability Fixes:**
+          - Fixed memory leaks in coroutine management and broadcast receivers
+          - Fixed race conditions in state updates with proper synchronization
+          - Added registration tracking to prevent double-registration issues
+          - Enhanced process lifecycle management with identity verification
+
+          ⚡ **Performance Optimizations:**
+          - Added debouncing (500ms) to reduce excessive file system access
+          - Optimized database queries with proper dispatcher usage
+          - Improved async operations in traffic repository
+          - Enhanced I/O handling with flowOn optimizations
+
+          🔧 **Code Quality:**
+          - Replaced magic numbers with named constants
+          - Added Mutex-based synchronization for thread-safe state updates
+          - Enhanced error handling in receiver registration/unregistration
+          - Improved JNI boundary validation
+
           **Changes:**
           See commit history for detailed changes.
 
@@ -328,7 +354,7 @@ jobs:
             BORINGSSL_STATUS="\\n🚀 *Xray-core:* BoringSSL Enabled\\n⚡ *Performance:* 3-40x faster crypto"
           fi
 
-          TEXT="🎉 *New SimpleXray Release*\\n\\n📦 *Version:* $TAG\\n🔨 *Build:* ${{ steps.version.outputs.version_code }}$BORINGSSL_STATUS\\n🔗 [Download Now]($RELEASE_URL)\\n\\n✨ Auto-update available in app!"
+          TEXT="🎉 *New SimpleXray Release*\\n\\n📦 *Version:* $TAG\\n🔨 *Build:* ${{ steps.version.outputs.version_code }}$BORINGSSL_STATUS\\n\\n🔐 *Security:* Process verification, input validation\\n🛡️ *Stability:* Memory leak fixes, race condition fixes\\n⚡ *Performance:* I/O debouncing, async optimizations\\n\\n🔗 [Download Now]($RELEASE_URL)\\n\\n✨ Auto-update available in app!"
 
           curl -s -X POST \
             -H "Content-Type: application/json" \

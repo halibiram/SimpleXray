@@ -116,6 +116,23 @@ jobs:
           body: |
             ### Changes
             - **Xray-core**: Updated to version **${{ steps.get_tag.outputs.latest_tag }}**
+
+            ### Latest Improvements
+
+            🔐 **Security Enhancements:**
+            - Process identity verification before termination (prevents PID reuse attacks)
+            - Enhanced input validation across JNI boundaries
+            - Command injection prevention improvements
+
+            🛡️ **Stability Fixes:**
+            - Memory leak fixes in coroutine and receiver management
+            - Race condition fixes with proper synchronization
+            - Enhanced process lifecycle management
+
+            ⚡ **Performance Optimizations:**
+            - I/O debouncing to reduce file system access
+            - Optimized database queries with proper dispatchers
+            - Async operation improvements
           draft: false
           prerelease: false
           token: ${{ secrets.PAT }}
