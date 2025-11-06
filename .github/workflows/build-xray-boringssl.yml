@@ -524,11 +524,20 @@ jobs:
           fi
 
           # Build Xray-core
-          # Note: Without actual CGO bridge code in Xray-core, we build vanilla Xray
-          # BoringSSL integration is handled by perf-net native module (already integrated)
-          # Disable CGO to avoid Android system library linking issues (-llog, etc.)
-          echo "Building vanilla Xray-core for ${{ matrix.abi }} (CGO disabled)..."
-          export CGO_ENABLED=0
+          # Note: Android cross-compilation requires CGO_ENABLED=1 (Go limitation)
+          # But we can use linker flags to ignore missing system libraries like -llog
+          echo "Building vanilla Xray-core for ${{ matrix.abi }}..."
+          export GOOS=android
+          export CGO_ENABLED=1
+          export GOARCH=${{ matrix.goarch }}
+          
+          TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          export CC=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang
+          export CXX=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang++
+          
+          # Use linker flags to ignore missing -llog (not needed for vanilla Xray)
+          # -Wl,--allow-shlib-undefined allows undefined shared library symbols
+          export CGO_LDFLAGS="-Wl,--allow-shlib-undefined"
           
           go build \
             -o libxray.so \
