@@ -133,6 +133,7 @@ jobs:
             ".."
             "-DCMAKE_SYSTEM_NAME=Android"
             "-DCMAKE_SYSTEM_VERSION=24"
+            "-DANDROID_ABI=${{ matrix.cmake_arch }}"
             "-DCMAKE_ANDROID_ARCH_ABI=${{ matrix.cmake_arch }}"
             "-DCMAKE_ANDROID_NDK=$NDK_HOME"
             "-DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake"
@@ -145,12 +146,17 @@ jobs:
           )
 
           # Add ABI-specific compiler flags
-          # Note: NDK toolchain automatically sets correct architecture based on CMAKE_ANDROID_ARCH_ABI
+          # Note: NDK toolchain automatically sets correct architecture based on ANDROID_ABI
           # Custom -march flags are not needed and can cause conflicts with Clang
+          # The problematic -march=armv8-a+simd+crypto flag comes from somewhere else and conflicts
           if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
             echo "📱 Configuring for ARM64 (crypto extensions enabled by default in NDK)"
             # NDK r28c with arm64-v8a automatically enables crypto extensions
             # No need for explicit -march flags as they conflict with Clang's target detection
+            # Ensure we're using the correct ABI to avoid toolchain confusion
+            CMAKE_ARGS+=(
+              "-DANDROID_PLATFORM=android-24"
+            )
           fi
 
           echo "Running CMake configuration with ${#CMAKE_ARGS[@]} arguments..."
