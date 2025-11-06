@@ -19,12 +19,18 @@ object ServiceStateChecker {
 
     /**
      * Check if a service is running using modern APIs.
-     * 
-     * @param context Application context
+     *
+     * @param context Application context (must be valid, non-destroyed context)
      * @param serviceClass The service class to check
      * @return true if service appears to be running, false otherwise
      */
-    fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+    fun isServiceRunning(context: Context?, serviceClass: Class<*>): Boolean {
+        // Validate context before proceeding
+        if (context == null) {
+            AppLogger.w("isServiceRunning: Null context provided")
+            return false
+        }
+
         return try {
             when {
                 // Modern approach for Android 8.0+ (API 26+)
@@ -36,8 +42,14 @@ object ServiceStateChecker {
                     checkServiceRunningLegacy(context, serviceClass)
                 }
             }
+        } catch (e: SecurityException) {
+            AppLogger.w("Security error checking service state for ${serviceClass.simpleName}", e)
+            false
+        } catch (e: IllegalStateException) {
+            AppLogger.w("IllegalState checking service state for ${serviceClass.simpleName}", e)
+            false
         } catch (e: Exception) {
-            AppLogger.w("Error checking service state for ${serviceClass.simpleName}", e)
+            AppLogger.w("Error checking service state for ${serviceClass.simpleName}: ${e.javaClass.simpleName}", e)
             false
         }
     }
@@ -79,17 +91,23 @@ object ServiceStateChecker {
             if (isRunningStatic) {
                 return true
             }
-            
+
             // Additional check: VpnService.prepare() returns null if VPN permission is granted
             // and VPN might be active. But this alone doesn't guarantee service is running.
-            val vpnPrepare = android.net.VpnService.prepare(context)
-            
-            // If prepare() returns null, permission is granted but service might not be running
-            // We should rely on TProxyService.isRunning() for accurate state
-            // Return false here and let TProxyService.isRunning() be the source of truth
+            // This call can throw exceptions if context is invalid, so wrap it
+            try {
+                android.net.VpnService.prepare(context)
+            } catch (e: Exception) {
+                AppLogger.w("VpnService.prepare() failed, context may be invalid", e)
+            }
+
+            // We rely on TProxyService.isRunning() as the source of truth
+            false
+        } catch (e: SecurityException) {
+            AppLogger.w("Security error checking VPN service state", e)
             false
         } catch (e: Exception) {
-            AppLogger.w("Error checking VPN service state", e)
+            AppLogger.w("Error checking VPN service state: ${e.javaClass.simpleName}", e)
             false
         }
     }
