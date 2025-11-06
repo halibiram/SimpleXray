@@ -86,6 +86,12 @@ jobs:
         if: steps.check_tag.outputs.exists == 'false'
         uses: android-actions/setup-android@v3
 
+      - name: Install CMake
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "cmake;3.22.1"
+          echo "✅ CMake 3.22.1 installed"
+
       - name: Set up Go
         if: steps.check_tag.outputs.exists == 'false'
         uses: actions/setup-go@v5
