@@ -528,8 +528,30 @@ jobs:
 
           # CGO flags for BoringSSL
           # Add NDK sysroot library path for Android system libraries (e.g., -llog)
-          NDK_SYSROOT_LIB="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.toolchain }}/24"
-          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          # NDK r28c sysroot structure: sysroot/usr/lib/<arch>/<api_level>/
+          NDK_SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          NDK_SYSROOT_LIB="$NDK_SYSROOT/usr/lib/${{ matrix.toolchain }}/24"
+          
+          # Verify sysroot library path exists, fallback to alternative locations
+          if [ ! -d "$NDK_SYSROOT_LIB" ]; then
+            echo "⚠️  Expected sysroot lib path not found: $NDK_SYSROOT_LIB"
+            echo "Searching for alternative log library location..."
+            # Try alternative paths
+            ALT_PATHS=(
+              "$NDK_SYSROOT/usr/lib/${{ matrix.toolchain }}/"
+              "$NDK_SYSROOT/usr/lib/"
+              "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/"
+            )
+            for ALT_PATH in "${ALT_PATHS[@]}"; do
+              if [ -d "$ALT_PATH" ] && find "$ALT_PATH" -name "liblog.so" -o -name "liblog.a" 2>/dev/null | head -1 | grep -q .; then
+                NDK_SYSROOT_LIB="$ALT_PATH"
+                echo "✅ Found log library at: $NDK_SYSROOT_LIB"
+                break
+              fi
+            done
+          fi
+          
+          export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
           export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -L$NDK_SYSROOT_LIB -lcrypto -lssl -llog -static"
 
           # Build Xray-core
