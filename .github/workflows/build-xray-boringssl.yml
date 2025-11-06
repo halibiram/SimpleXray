@@ -553,16 +553,10 @@ jobs:
           
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
           
-          # Try to find liblog, if not found, build without it (may not be needed for vanilla Xray)
-          LOG_LIB_PATH=$(find "$NDK_SYSROOT" -name "liblog.so" -o -name "liblog.a" 2>/dev/null | head -1)
-          if [ -n "$LOG_LIB_PATH" ]; then
-            LOG_LIB_DIR=$(dirname "$LOG_LIB_PATH")
-            echo "✅ Found liblog at: $LOG_LIB_PATH"
-            export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -L$LOG_LIB_DIR -L$NDK_SYSROOT_LIB -lcrypto -lssl -llog -static"
-          else
-            echo "⚠️  liblog not found, building without Android log library (may not be required)"
-            export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -L$NDK_SYSROOT_LIB -lcrypto -lssl -static"
-          fi
+          # liblog is not required for vanilla Xray-core build
+          # Remove -llog completely as it's causing linker errors and isn't needed
+          echo "ℹ️  Building without Android log library (-llog) - not required for Xray-core"
+          export CGO_LDFLAGS="-L$(dirname $BORINGSSL_CRYPTO) -L$(dirname $BORINGSSL_SSL) -L$NDK_SYSROOT_LIB -lcrypto -lssl -static"
 
           # Build Xray-core
           # Note: Without actual CGO bridge code in Xray-core, we build vanilla Xray
