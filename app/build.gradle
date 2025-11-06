@@ -4,25 +4,28 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
     id 'com.google.protobuf' version '0.9.4'
     id 'com.google.devtools.ksp'
-    id 'com.google.gms.google-services' apply false
-    id 'com.google.firebase.crashlytics' apply false
+    id 'com.google.gms.google-services'
+    id 'com.google.firebase.crashlytics'
 }
 
-// Conditionally apply Google Services plugins only if config file exists
-// Check multiple possible locations (standard locations for google-services.json)
-def googleServicesFile = file('src/debug/google-services.json')
+// Create dummy google-services.json if it doesn't exist (for CI builds)
+def googleServicesFile = file('google-services.json')
 if (!googleServicesFile.exists()) {
-    googleServicesFile = file('src/google-services.json')
-}
-if (!googleServicesFile.exists()) {
-    googleServicesFile = file('google-services.json')
-}
-
-if (googleServicesFile.exists()) {
-    apply plugin: 'com.google.gms.google-services'
-    apply plugin: 'com.google.firebase.crashlytics'
-} else {
-    println "⚠️  google-services.json not found - Firebase features will be disabled"
+    def debugFile = file('src/debug/google-services.json')
+    def mainFile = file('src/google-services.json')
+    
+    if (!debugFile.exists() && !mainFile.exists()) {
+        println "⚠️  google-services.json not found - creating dummy file for build"
+        googleServicesFile.parentFile.mkdirs()
+        googleServicesFile.text = '''{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "dummy-project",
+    "storage_bucket": "dummy-project.appspot.com"
+  },
+  "client": []
+}'''
+    }
 }
 
 protobuf {
@@ -388,8 +391,12 @@ afterEvaluate {
                            file('google-services.json').exists()
     
     if (!hasGoogleServices) {
-        tasks.matching { it.name.contains('GoogleServices') }.configureEach {
+        println "⚠️  google-services.json not found - disabling Google Services tasks"
+        tasks.matching { it.name.contains('GoogleServices') || it.name.contains('Crashlytics') }.configureEach { task ->
             enabled = false
+            doFirst {
+                println "Skipping ${task.name} - google-services.json not found"
+            }
         }
     }
 }
