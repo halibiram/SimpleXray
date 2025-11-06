@@ -98,6 +98,15 @@ android {
         def boringsslAvailable = file("../external/boringssl/lib/arm64-v8a/libcrypto.a").exists()
         buildConfigField "boolean", "BORINGSSL_AVAILABLE_AT_BUILD", "${boringsslAvailable}"
         buildConfigField "boolean", "OPENSSL_AVAILABLE_AT_BUILD", "false"
+
+        // NDK build configuration - Pass correct package and class names to JNI
+        externalNativeBuild {
+            ndkBuild {
+                // CRITICAL: Pass correct package and class names to JNI for FindClass
+                arguments "PKGNAME=com/simplexray/an/service", "CLSNAME=TProxyService"
+                cFlags "-DPKGNAME=com/simplexray/an/service", "-DCLSNAME=TProxyService"
+            }
+        }
     }
 
     signingConfigs {

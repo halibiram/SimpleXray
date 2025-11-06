@@ -1,7 +1,11 @@
-# Keep existing rules
--keep class com.simplexray.an.service.TProxyService {
-    @kotlin.jvm.JvmStatic *;
+# Keep existing rules - TProxyService (CRITICAL: Required for JNI)
+-keep class com.simplexray.an.service.TProxyService { *; }
+-keep class com.simplexray.an.service.TProxyService$* { *; }
+-keepclassmembers class com.simplexray.an.service.TProxyService {
+    *;
 }
+-keepnames class com.simplexray.an.service.TProxyService
+-keepnames class com.simplexray.an.service.TProxyService$*
 
 # Performance Module Rules
 -keep class com.simplexray.an.performance.PerformanceManager { *; }
@@ -19,10 +23,10 @@
 -keep class com.simplexray.an.performance.PerformanceBenchmark$BenchmarkResult { *; }
 -keep class com.simplexray.an.performance.PerformanceBenchmark$ComprehensiveBenchmark { *; }
 -keepclassmembers class com.simplexray.an.performance.PerformanceManager {
-    private native <methods>;
+    native <methods>;
 }
--keepnames class com.simplexray.an.performance.PerformanceManager {
-    native *;
+-keepclasseswithmembers class com.simplexray.an.performance.PerformanceManager {
+    native <methods>;
 }
 
 # Kotlin
@@ -146,9 +150,22 @@
 -keep class com.simplexray.an.prefs.** { *; }
 -keepclassmembers class com.simplexray.an.prefs.** { *; }
 
+# Keep Android components (CRITICAL: Android framework needs these)
+-keep public class * extends android.app.Activity
+-keep public class * extends android.app.Service
+-keep public class * extends android.content.BroadcastReceiver
+-keep public class * extends android.content.ContentProvider
+
+# Keep activity classes
+-keep class com.simplexray.an.activity.** { *; }
+-keep class com.simplexray.an.activity.**$* { *; }
+-keepnames class com.simplexray.an.activity.**
+
 # Keep service classes
 -keep class com.simplexray.an.service.** { *; }
+-keep class com.simplexray.an.service.**$* { *; }
 -keepclassmembers class com.simplexray.an.service.** { *; }
+-keepnames class com.simplexray.an.service.**
 
 # Keep native methods
 -keepclasseswithmembernames,includedescriptorclasses class * {
@@ -251,8 +268,8 @@
 -keepclassmembers class com.simplexray.an.data.db.TotalBytes { *; }
 -keepclassmembers class com.simplexray.an.data.db.SpeedStats { *; }
 
-# R8 optimizations
+# R8 optimizations (disabled aggressive modes to prevent JNI method name mangling)
 -allowaccessmodification
--mergeinterfacesaggressively
--overloadaggressively
--repackageclasses ''
+# -mergeinterfacesaggressively  # DISABLED: Can break JNI method resolution
+# -overloadaggressively  # DISABLED: Can break JNI method resolution
+# -repackageclasses ''  # DISABLED: Can break JNI method resolution
