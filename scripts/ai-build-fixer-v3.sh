@@ -696,8 +696,14 @@ monitor_and_fix_v3() {
             CONCLUSION=$(echo "$LATEST_RUN" | cut -d'|' -f3)
             
             # Clean RUN_ID (remove workflow name if accidentally included)
-            if echo "$RUN_ID" | grep -q "Build\|Xray"; then
-                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1}' || echo "")
+            if echo "$RUN_ID" | grep -qE "Build|Xray|completed|success|failure|in_progress"; then
+                # Extract numeric RUN_ID from gh output
+                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1}' | grep -oE '^[0-9]+$' || echo "")
+            fi
+            
+            # Validate RUN_ID is numeric
+            if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1}' | grep -oE '^[0-9]+$' || echo "")
             fi
         else
             if command -v jq &> /dev/null; then
