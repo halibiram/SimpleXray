@@ -498,12 +498,6 @@ jobs:
                 PATCH_NAME=$(basename "$patch")
                 echo "📝 Applying patch: $PATCH_NAME"
                 
-                # Check if patch is a template (contains placeholder comments)
-                if grep -q "This is a template patch\|placeholder\|Expected changes" "$patch" 2>/dev/null; then
-                  echo "⚠️  Skipping template patch: $PATCH_NAME (not implemented yet)"
-                  continue
-                fi
-                
                 # Try to apply patch with more verbose error output
                 if git apply --check "$patch" 2>&1; then
                   if git apply "$patch" 2>&1; then
