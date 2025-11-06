@@ -111,3 +111,4 @@ echo -e "\n${RED}❌ Maksimum iterasyon sayısına ulaşıldı (${MAX_ITERATIONS
 echo -e "${YELLOW}Manuel kontrol gerekebilir!${NC}"
 exit 1
 
+

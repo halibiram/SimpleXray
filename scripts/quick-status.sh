@@ -24,3 +24,4 @@ case "$CONCLUSION" in
     *) echo -e "${BLUE}🔄 $STATUS${NC} - Run: $RUN_ID" ;;
 esac
 
+

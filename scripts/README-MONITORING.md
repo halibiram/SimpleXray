@@ -120,3 +120,4 @@ Başarı Oranı: 0%
 - Maksimum 3 başarısız denemeden sonra durur
 - Tüm değişiklikler otomatik commit edilir
 - İstatistikler gerçek zamanlı güncellenir
+

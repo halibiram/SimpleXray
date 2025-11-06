@@ -24,12 +24,45 @@ object XrayConfigPatcher {
         mergeTransport: Boolean = true
     ): File {
         val file = File(context.filesDir, filename)
+        // SEC: Validate file path to prevent directory traversal
+        // SEC: Validate filename doesn't contain path traversal sequences
+        if (filename.contains("..") || filename.contains("/") || filename.contains("\\")) {
+            throw SecurityException("Invalid filename: contains path traversal characters")
+        }
+        // SEC: Validate filename length
+        if (filename.length > 255) {
+            throw IllegalArgumentException("Filename too long: ${filename.length} characters")
+        }
         val root = if (file.exists()) {
             try {
+                // SEC: Add file size limit check before reading (10MB max)
+                val fileSize = file.length()
+                if (fileSize > 10 * 1024 * 1024) {
+                    throw IllegalArgumentException("Config file too large: $fileSize bytes (max 10MB)")
+                }
+                if (fileSize == 0L) {
+                    Log.w(TAG, "Config file is empty, creating new")
+                    JsonObject()
+                }
                 val text = file.readText()
-                gson.fromJson(text, JsonObject::class.java) ?: JsonObject()
+                // PERF: Reading entire file into memory - consider streaming for large files
+                val parsed = gson.fromJson(text, JsonObject::class.java)
+                if (parsed == null) {
+                    Log.w(TAG, "Failed to parse config JSON, creating new")
+                    JsonObject()
+                } else {
+                    parsed
+                }
+            } catch (e: SecurityException) {
+                // Re-throw security exceptions
+                throw e
+            } catch (e: IllegalArgumentException) {
+                // Re-throw validation exceptions
+                throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse existing config, creating new", e)
+                // Log error with full context - config parsing failures are critical
+                Log.e(TAG, "Failed to parse existing config, creating new: ${e.javaClass.simpleName}: ${e.message}", e)
+                // Return empty config - caller should handle this appropriately
                 JsonObject()
             }
         } else {
@@ -69,8 +102,50 @@ object XrayConfigPatcher {
             XrayConfigBuilder.writeConfig(context, cfg, filename)
             return file
         }
-        val text = try { file.readText() } catch (_: Throwable) { "" }
-        val root = try { gson.fromJson(text, JsonObject::class.java) } catch (_: Throwable) { JsonObject() }
+        // SEC: Validate filename doesn't contain path traversal sequences
+        if (filename.contains("..") || filename.contains("/") || filename.contains("\\")) {
+            throw SecurityException("Invalid filename: contains path traversal characters")
+        }
+        // SEC: Validate filename length
+        if (filename.length > 255) {
+            throw IllegalArgumentException("Filename too long: ${filename.length} characters")
+        }
+        // SEC: Add file size validation before reading
+        val text = try {
+            if (file.exists()) {
+                val fileSize = file.length()
+                if (fileSize > 10 * 1024 * 1024) {
+                    throw IllegalArgumentException("Config file too large: $fileSize bytes (max 10MB)")
+                }
+                if (fileSize == 0L) {
+                    ""
+                } else {
+                    file.readText()
+                }
+            } else {
+                ""
+            }
+        } catch (e: SecurityException) {
+            throw e // Re-throw security exceptions
+        } catch (e: IllegalArgumentException) {
+            throw e // Re-throw validation exceptions
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read config file: ${e.javaClass.simpleName}: ${e.message}", e)
+            ""
+        }
+        // Parse config with proper error handling
+        val root = try {
+            if (text.isBlank()) {
+                JsonObject()
+            } else {
+                gson.fromJson(text, JsonObject::class.java) ?: JsonObject()
+            }
+        } catch (e: Exception) {
+            // Log error with full context - config parsing failures are critical
+            Log.e(TAG, "Failed to parse config JSON: ${e.javaClass.simpleName}: ${e.message}", e)
+            // Return empty config - caller should handle this appropriately
+            JsonObject()
+        }
 
         // api
         val api = (root.get("api") as? JsonObject) ?: JsonObject().also { root.add("api", it) }
@@ -365,7 +440,9 @@ object XrayConfigPatcher {
             
             Log.d(TAG, "Performance config applied successfully")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to apply performance config, continuing without it", e)
+            // Log error with full context - performance optimizations are optional but failures should be visible
+            Log.e(TAG, "Failed to apply performance config, continuing without it: ${e.javaClass.simpleName}: ${e.message}", e)
+            // Note: Performance config is optional, so we continue without it rather than failing the entire config patch
         }
     }
 
@@ -431,7 +508,9 @@ object XrayConfigPatcher {
 
             Log.d(TAG, "Gaming config applied successfully for ${gameProfile.displayName}")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to apply gaming config, continuing without it", e)
+            // Log error with full context - gaming optimizations are optional but failures should be visible
+            Log.e(TAG, "Failed to apply gaming config, continuing without it: ${e.javaClass.simpleName}: ${e.message}", e)
+            // Note: Gaming config is optional, so we continue without it rather than failing the entire config patch
         }
     }
 }

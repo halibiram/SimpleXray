@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- SEC: QUERY_ALL_PACKAGES is a sensitive permission - ensure it's necessary -->
+    <!-- PRIVACY-BLEED: QUERY_ALL_PACKAGES allows access to all installed apps - privacy risk -->
+    <!-- UPGRADE-RISK: Google Play may reject apps with QUERY_ALL_PACKAGES without justification -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
@@ -42,6 +45,11 @@
                 android:resource="@xml/filepaths" />
         </provider>
 
+        <!-- SEC: Service exported=true - ensure proper permission checks -->
+        <!-- BUG: stopWithTask=false may cause service to persist after app is killed -->
+        <!-- TODO: Consider stopWithTask=true for better lifecycle management -->
+        <!-- MEM-LEAK: stopWithTask=false may cause service to outlive app - resource leak -->
+        <!-- LIFECYCLE-DRIFT: Service in separate process may not receive lifecycle events -->
         <service
             android:name="com.simplexray.an.service.TProxyService"
             android:exported="true"
@@ -57,6 +65,8 @@
                 android:value="VPN service" />
         </service>
 
+        <!-- SEC: Service exported=true - ensure proper permission checks -->
+        <!-- TODO: Verify QuickTileService handles unauthorized access attempts -->
         <service
             android:name="com.simplexray.an.service.QuickTileService"
             android:exported="true"

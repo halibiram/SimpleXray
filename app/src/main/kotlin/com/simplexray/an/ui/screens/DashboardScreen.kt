@@ -19,9 +19,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,31 +43,41 @@ import com.simplexray.an.common.ROUTE_STREAMING
 import com.simplexray.an.common.ROUTE_ADVANCED_ROUTING
 import com.simplexray.an.common.ROUTE_TOPOLOGY
 import com.simplexray.an.common.ROUTE_TRAFFIC_MONITOR
+import com.simplexray.an.common.ROUTE_CHAIN
 import com.simplexray.an.common.formatBytes
 import com.simplexray.an.common.formatNumber
 import com.simplexray.an.common.formatUptime
 import com.simplexray.an.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 
-// TODO: Add pull-to-refresh functionality for stats
-// TODO: Implement stats caching to reduce API calls
-// TODO: Add error handling for failed stats updates
 @Composable
 fun DashboardScreen(
     mainViewModel: MainViewModel,
     appNavController: NavHostController
 ) {
     val coreStats by mainViewModel.coreStatsState.collectAsState()
+    val statsError by mainViewModel.statsErrorState.collectAsState()
+    val isRefreshing by mainViewModel.isStatsRefreshing.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var isVisible by remember { mutableStateOf(false) }
 
-    // TODO: Make update interval configurable
-    // TODO: Stop updates when screen is not visible
+    // Stop updates when screen is not visible
     LaunchedEffect(Unit) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
+            isVisible = true
+            // Start periodic updates with configurable interval
+            val updateInterval = mainViewModel.getStatsUpdateInterval()
+            while (isVisible) {
                 mainViewModel.updateCoreStats()
-                delay(1000)
+                delay(updateInterval)
             }
+        }
+    }
+    
+    // Stop updates when screen becomes invisible
+    DisposableEffect(Unit) {
+        onDispose {
+            isVisible = false
         }
     }
 
@@ -73,6 +87,26 @@ fun DashboardScreen(
             .padding(start = 16.dp, end = 16.dp),
         contentPadding = PaddingValues(bottom = 16.dp, top = 16.dp)
     ) {
+        // Show error message if stats update failed
+        statsError?.let { error ->
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = "Failed to update stats: $error",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
 
         item {
             Card(
@@ -198,6 +232,14 @@ fun DashboardScreen(
                         title = "Traffic Monitor",
                         description = "Real-time speed & bandwidth monitoring",
                         onClick = { appNavController.navigate(ROUTE_TRAFFIC_MONITOR) }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    FeatureRow(
+                        title = "Tunneling Chain",
+                        description = "Reality SOCKS + Hysteria2 + PepperShaper",
+                        onClick = { appNavController.navigate(ROUTE_CHAIN) }
                     )
                 }
             }

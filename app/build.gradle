@@ -85,6 +85,9 @@ android {
             enableV1Signing true
             enableV2Signing true
             enableV3Signing true
+            // SEC: V4 signing disabled - may affect Android 11+ compatibility
+        // TODO: Enable V4 signing for Android 11+ devices
+        // UPGRADE-RISK: V4 signing required for Android 11+ - may cause installation issues
             enableV4Signing false
         }
     }
@@ -113,6 +116,7 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
+    // SEC: Signing config loaded from file - ensure store.properties is not committed
     def propsFile = rootProject.file('store.properties')
     def configName = 'release'
 
@@ -120,11 +124,34 @@ android {
         def props = new Properties()
         props.load(new FileInputStream(propsFile))
         if (props != null && props.containsKey('storeFile')) {
-            signingConfigs.named(configName).configure {
-                storeFile = rootProject.file(props['storeFile'])
-                storePassword = props['storePassword']
-                keyAlias = props['keyAlias']
-                keyPassword = props['keyPassword']
+            signingConfigs.named(configName).configure { signingConfig ->
+                // Validate storeFile path to prevent loading wrong file
+                def storeFilePath = props['storeFile']
+                if (storeFilePath == null || storeFilePath.isEmpty()) {
+                    throw new GradleException("storeFile path is empty in store.properties")
+                }
+                def storeFile = rootProject.file(storeFilePath)
+                if (!storeFile.exists()) {
+                    throw new GradleException("Store file not found: ${storeFile.absolutePath}")
+                }
+                if (!storeFile.isFile()) {
+                    throw new GradleException("Store file path is not a file: ${storeFile.absolutePath}")
+                }
+                signingConfig.storeFile = storeFile
+                
+                // SEC: Passwords stored in plain text - prefer environment variables
+                // TODO: Consider using Gradle encrypted properties or keychain
+                // Use environment variables if available, fallback to properties file
+                signingConfig.storePassword = System.getenv('KEYSTORE_PASSWORD') ?: props['storePassword']
+                signingConfig.keyAlias = props['keyAlias']
+                signingConfig.keyPassword = System.getenv('KEY_PASSWORD') ?: props['keyPassword']
+                
+                if (signingConfig.storePassword == null || signingConfig.storePassword.isEmpty()) {
+                    throw new GradleException("Store password is required but not provided")
+                }
+                if (signingConfig.keyPassword == null || signingConfig.keyPassword.isEmpty()) {
+                    throw new GradleException("Key password is required but not provided")
+                }
             }
         }
     }
@@ -140,6 +167,10 @@ android {
         // This allows builds to complete while still reporting issues
         checkReleaseBuilds = true
         // Continue the build even when errors are found (warnings only)
+        // BUG: Lint errors don't block build - may ship code with issues
+        // TODO: Consider enabling abortOnError=true for release builds
+        // Note: abortOnError=false allows builds to complete but issues should be reviewed
+        // TEST-GAP: Lint errors not caught in CI - may ship broken code
         abortOnError = false
         // Treat warnings as errors only in strict mode (not enabled by default)
         warningsAsErrors = false

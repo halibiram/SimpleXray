@@ -28,6 +28,7 @@ import com.simplexray.an.common.ROUTE_ADVANCED_PERFORMANCE_SETTINGS
 import com.simplexray.an.common.ROUTE_CUSTOM_PROFILES
 import com.simplexray.an.common.ROUTE_CUSTOM_PROFILE_EDIT
 import com.simplexray.an.common.ROUTE_TRAFFIC_MONITOR
+import com.simplexray.an.common.ROUTE_CHAIN
 import com.simplexray.an.ui.screens.AppListScreen
 import com.simplexray.an.ui.screens.TrafficMonitorScreen
 import com.simplexray.an.ui.screens.ConfigEditScreen
@@ -39,6 +40,7 @@ import com.simplexray.an.ui.gaming.GamingScreen
 import com.simplexray.an.ui.streaming.StreamingScreen
 import com.simplexray.an.ui.routing.AdvancedRoutingScreen
 import com.simplexray.an.ui.TopologyScreen
+import com.simplexray.an.ui.chain.ChainScreen
 import com.simplexray.an.viewmodel.MainViewModel
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
@@ -182,6 +184,16 @@ fun AppNavHost(
             popExitTransition = { popExitTransition() }
         ) {
             TrafficMonitorScreen()
+        }
+
+        composable(
+            route = ROUTE_CHAIN,
+            enterTransition = { enterTransition() },
+            exitTransition = { exitTransition() },
+            popEnterTransition = { EnterTransition.None },
+            popExitTransition = { popExitTransition() }
+        ) {
+            ChainScreen()
         }
 
         composable(

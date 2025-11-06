@@ -17,6 +17,9 @@
 #include <cstdlib>
 
 // BoringSSL includes (OpenSSL-compatible API)
+// Note: OpenSSL/BoringSSL is disabled in build configuration
+// These includes are conditionally compiled
+#ifdef USE_BORINGSSL
 #include <openssl/evp.h>
 #include <openssl/aes.h>
 #include <openssl/chacha.h>
@@ -24,6 +27,7 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <openssl/ssl.h>
+#endif
 
 #if defined(__aarch64__) || defined(__arm__)
 #include <arm_neon.h>
@@ -74,10 +78,14 @@ static bool detect_crypto_extensions() {
     
     // BoringSSL automatically uses hardware acceleration if available
     // We can check by testing EVP cipher availability
+#ifdef USE_BORINGSSL
     const EVP_CIPHER* aes_gcm = EVP_aes_128_gcm();
     if (aes_gcm) {
         g_has_aes_hw = true;
     }
+#else
+    g_has_aes_hw = false;
+#endif
     
     g_hw_detected = true;
     LOGD("Crypto extensions: %s, AES hardware: %s", 
@@ -107,6 +115,10 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     JNIEnv *env, jclass clazz, jobject input, jint input_offset, jint input_len,
     jobject output, jint output_offset, jobject key) {
     
+#ifndef USE_BORINGSSL
+    LOGE("Crypto functions disabled: OpenSSL/BoringSSL not available");
+    return -1;
+#else
     void* input_ptr = env->GetDirectBufferAddress(input);
     void* output_ptr = env->GetDirectBufferAddress(output);
     void* key_ptr = env->GetDirectBufferAddress(key);
@@ -205,6 +217,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeAES128Encrypt(
     
     // Total output: 12 bytes nonce + ciphertext + 16 bytes tag
     return 12 + total_outlen + taglen;
+#endif // USE_BORINGSSL
 }
 
 /**
@@ -215,6 +228,10 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     JNIEnv *env, jclass clazz, jobject input, jint input_offset, jint input_len,
     jobject output, jint output_offset, jobject key, jobject nonce) {
     
+#ifndef USE_BORINGSSL
+    LOGE("Crypto functions disabled: OpenSSL/BoringSSL not available");
+    return -1;
+#else
     void* input_ptr = env->GetDirectBufferAddress(input);
     void* output_ptr = env->GetDirectBufferAddress(output);
     void* key_ptr = env->GetDirectBufferAddress(key);
@@ -296,6 +313,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
     EVP_CIPHER_CTX_free(ctx);
     
     return total_outlen + 16;
+#endif // USE_BORINGSSL
 }
 
 /**
@@ -303,8 +321,12 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeChaCha20NEON(
  */
 JNIEXPORT jlong JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeGetAES128GCM(JNIEnv *env, jclass clazz) {
+#ifndef USE_BORINGSSL
+    return 0;
+#else
     const EVP_CIPHER* cipher = EVP_aes_128_gcm();
     return reinterpret_cast<jlong>(cipher);
+#endif
 }
 
 /**
@@ -312,8 +334,12 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeGetAES128GCM(JNIEnv 
  */
 JNIEXPORT jlong JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeGetChaCha20Poly1305(JNIEnv *env, jclass clazz) {
+#ifndef USE_BORINGSSL
+    return 0;
+#else
     const EVP_CIPHER* cipher = EVP_chacha20_poly1305();
     return reinterpret_cast<jlong>(cipher);
+#endif
 }
 
 /**
@@ -321,8 +347,12 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeGetChaCha20Poly1305(
  */
 JNIEXPORT jlong JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeGetSHA256(JNIEnv *env, jclass clazz) {
+#ifndef USE_BORINGSSL
+    return 0;
+#else
     const EVP_MD* md = EVP_sha256();
     return reinterpret_cast<jlong>(md);
+#endif
 }
 
 /**
@@ -330,9 +360,13 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeGetSHA256(JNIEnv *en
  */
 JNIEXPORT jlong JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeGetSHA3_256(JNIEnv *env, jclass clazz) {
+#ifndef USE_BORINGSSL
+    return 0;
+#else
     // BoringSSL supports SHA-3
     const EVP_MD* md = EVP_sha3_256();
     return reinterpret_cast<jlong>(md);
+#endif
 }
 
 /**
@@ -372,6 +406,10 @@ JNIEXPORT jint JNICALL
 Java_com_simplexray_an_performance_PerformanceManager_nativeRandomBytes(
     JNIEnv *env, jclass clazz, jbyteArray output) {
     
+#ifndef USE_BORINGSSL
+    LOGE("Crypto functions disabled: OpenSSL/BoringSSL not available");
+    return -1;
+#else
     if (!output) {
         LOGE("Invalid output array");
         return -1;
@@ -398,6 +436,7 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeRandomBytes(
     
     env->ReleaseByteArrayElements(output, bytes, 0);
     return len;
+#endif
 }
 
 } // extern "C"

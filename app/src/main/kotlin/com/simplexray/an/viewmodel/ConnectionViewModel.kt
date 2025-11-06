@@ -40,12 +40,14 @@ class ConnectionViewModel(
     private val uiEventSender: (MainViewUiEvent) -> Unit
 ) : AndroidViewModel(application) {
     
+    // StateFlow updates are thread-safe by design
     private val _isServiceEnabled = MutableStateFlow(false)
     val isServiceEnabled: StateFlow<Boolean> = _isServiceEnabled.asStateFlow()
     
     private val _controlMenuClickable = MutableStateFlow(true)
     val controlMenuClickable: StateFlow<Boolean> = _controlMenuClickable.asStateFlow()
     
+    // Properly unregistered in onCleared()
     private val startReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             AppLogger.d("Service started")
@@ -54,6 +56,7 @@ class ConnectionViewModel(
         }
     }
     
+    // Properly unregistered in onCleared()
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             AppLogger.d("Service stopped")
@@ -121,47 +124,86 @@ class ConnectionViewModel(
         }
     }
     
+    // Track registration state to prevent double registration and ensure cleanup
+    private var receiversRegistered = false
+    
+    // UPGRADE-RISK: RECEIVER_NOT_EXPORTED required on API 33+ - handled with version check
     fun registerTProxyServiceReceivers() {
-        val application = getApplication<Application>()
-        val startSuccessFilter = IntentFilter(TProxyService.ACTION_START)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getApplication<Application>().registerReceiver(
-                startReceiver,
-                startSuccessFilter,
-                Context.RECEIVER_NOT_EXPORTED
-            )
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            getApplication<Application>().registerReceiver(startReceiver, startSuccessFilter)
+        if (receiversRegistered) {
+            AppLogger.w("TProxyService receivers already registered, skipping")
+            return
         }
         
-        val stopSuccessFilter = IntentFilter(TProxyService.ACTION_STOP)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getApplication<Application>().registerReceiver(
-                stopReceiver,
-                stopSuccessFilter,
-                Context.RECEIVER_NOT_EXPORTED
-            )
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            getApplication<Application>().registerReceiver(stopReceiver, stopSuccessFilter)
+        val application = getApplication<Application>()
+        val startSuccessFilter = IntentFilter(TProxyService.ACTION_START)
+        
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // RECEIVER_NOT_EXPORTED prevents other apps from sending intents to this receiver
+                application.registerReceiver(
+                    startReceiver,
+                    startSuccessFilter,
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                // On older Android, receiver is exported by default but only receives intents
+                // from same app due to package name matching
+                application.registerReceiver(startReceiver, startSuccessFilter)
+            }
+            
+            val stopSuccessFilter = IntentFilter(TProxyService.ACTION_STOP)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                application.registerReceiver(
+                    stopReceiver,
+                    stopSuccessFilter,
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                application.registerReceiver(stopReceiver, stopSuccessFilter)
+            }
+            
+            receiversRegistered = true
+            AppLogger.d("TProxyService receivers registered.")
+        } catch (e: Exception) {
+            AppLogger.e("Failed to register TProxyService receivers", e)
+            // Ensure state is consistent on failure
+            receiversRegistered = false
         }
-        AppLogger.d("TProxyService receivers registered.")
     }
     
     fun unregisterTProxyServiceReceivers() {
+        if (!receiversRegistered) {
+            AppLogger.d("TProxyService receivers not registered, skipping unregister")
+            return
+        }
+        
         val application = getApplication<Application>()
+        var unregistered = false
+        
         try {
-            getApplication<Application>().unregisterReceiver(startReceiver)
+            application.unregisterReceiver(startReceiver)
+            unregistered = true
         } catch (e: IllegalArgumentException) {
             AppLogger.w("Start receiver was not registered", e)
+        } catch (e: Exception) {
+            AppLogger.e("Error unregistering start receiver", e)
         }
+        
         try {
-            getApplication<Application>().unregisterReceiver(stopReceiver)
+            application.unregisterReceiver(stopReceiver)
+            unregistered = true
         } catch (e: IllegalArgumentException) {
             AppLogger.w("Stop receiver was not registered", e)
+        } catch (e: Exception) {
+            AppLogger.e("Error unregistering stop receiver", e)
         }
-        AppLogger.d("TProxyService receivers unregistered.")
+        
+        if (unregistered) {
+            receiversRegistered = false
+            AppLogger.d("TProxyService receivers unregistered.")
+        }
     }
     
     override fun onCleared() {

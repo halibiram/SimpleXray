@@ -10,6 +10,7 @@
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 // Global JavaVM pointer for thread attachment (shared across modules)
+// Protected with null checks to prevent crashes if JVM is unloaded
 JavaVM* g_jvm = nullptr;
 
 // Forward declarations
@@ -113,5 +114,18 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     
     LOGD("Performance module JNI loaded");
     return JNI_VERSION_1_6;
+}
+
+// Forward declaration for TLS session cleanup
+extern void perf_tls_session_cleanup();
+
+// Cleanup on JNI unload to prevent memory leaks
+void JNI_OnUnload(JavaVM* vm, void* reserved) {
+    (void)reserved;
+    // Clear global pointer to prevent use after unload
+    g_jvm = nullptr;
+    // Cleanup TLS session cache
+    perf_tls_session_cleanup();
+    LOGD("Performance module JNI unloaded");
 }
 

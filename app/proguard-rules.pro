@@ -167,6 +167,8 @@
 }
 
 # Remove logging in release
+# SEC: Log removal may hide security issues - ensure sensitive data not logged
+# PRIVACY-BLEED: Log removal doesn't prevent logging before obfuscation - ensure no PII in logs
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** v(...);
