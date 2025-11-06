@@ -27,6 +27,14 @@
       "success_count": 1
     },
     {
+      "error": "Could not find method path\\(\\)",
+      "fix": "Update CMake/NDK path syntax from path() to path = file() for Gradle 8.8+ compatibility",
+      "context": "gradle/cmake",
+      "confidence": 98,
+      "applied_count": 1,
+      "success_count": 0
+    },
+    {
       "error": "CMake Error",
       "fix": "Check CMakeLists.txt configuration, verify NDK toolchain paths, ensure CMake version compatibility",
       "context": "cmake",
