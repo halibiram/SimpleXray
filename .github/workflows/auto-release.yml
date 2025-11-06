@@ -74,12 +74,12 @@ jobs:
             echo "✅ Tag v${{ steps.version.outputs.version_name }} does not exist, proceeding with build"
           fi
 
-      - name: Set up Java 17
+      - name: Set up Java 21
         if: steps.check_tag.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "17"
+          java-version: "21"
           cache: "gradle"
 
       - name: Set up Android SDK
