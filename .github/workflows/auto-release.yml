@@ -266,6 +266,8 @@ jobs:
           # Check if resource directories exist
           if [ ! -d "app/src/main/res" ]; then
             echo "❌ Resource directory missing!"
+            echo "📁 Current directory structure:"
+            ls -la app/src/main/ || true
             exit 1
           fi
           
@@ -275,17 +277,31 @@ jobs:
             # Check if kernel string exists
             if grep -q "kernel" app/src/main/res/values/strings.xml; then
               echo "✅ kernel string found in strings.xml"
+              # Show kernel string value
+              grep "kernel" app/src/main/res/values/strings.xml | head -1
             else
               echo "⚠️  kernel string not found in strings.xml"
+              echo "📄 strings.xml content (first 20 lines):"
+              head -20 app/src/main/res/values/strings.xml || true
             fi
           else
             echo "❌ strings.xml not found!"
+            echo "📁 Available files in app/src/main/res/values/:"
+            ls -la app/src/main/res/values/ || echo "Directory does not exist"
             exit 1
           fi
           
           # List all resource directories
           echo "📁 Resource directories:"
-          ls -la app/src/main/res/
+          ls -la app/src/main/res/ || true
+          
+          # Verify all language resource files
+          echo "🌍 Checking language resource files:"
+          for lang_file in app/src/main/res/values*/strings.xml; do
+            if [ -f "$lang_file" ]; then
+              echo "  ✅ $(basename $(dirname $lang_file))/strings.xml"
+            fi
+          done
 
       - name: Build Release APK
         if: steps.check_tag.outputs.exists == 'false'
