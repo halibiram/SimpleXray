@@ -81,7 +81,7 @@ object ChainHealthChecker {
                             passed = false,
                             critical = true,
                             message = "Cannot connect to SOCKS5 server: ${e.message}",
-                            details = mapOf("error" to e.message ?: "Unknown")
+                            details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
                         )
                     }
                 } else {
@@ -100,7 +100,7 @@ object ChainHealthChecker {
                 passed = false,
                 critical = true,
                 message = "Error checking SOCKS5 server: ${e.message}",
-                details = mapOf("error" to e.message ?: "Unknown")
+                details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
             )
         }
     }
@@ -148,7 +148,7 @@ object ChainHealthChecker {
                 passed = false,
                 critical = false,
                 message = "Error checking QUIC: ${e.message}",
-                details = mapOf("error" to e.message ?: "Unknown")
+                details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
             )
         }
     }
@@ -213,7 +213,7 @@ object ChainHealthChecker {
                 passed = false,
                 critical = false,
                 message = "Error checking egress IP: ${e.message}",
-                details = mapOf("error" to e.message ?: "Unknown")
+                details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
             )
         }
     }
@@ -241,7 +241,7 @@ object ChainHealthChecker {
                 passed = false,
                 critical = true,
                 message = "Error checking Xray process: ${e.message}",
-                details = mapOf("error" to e.message ?: "Unknown")
+                details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
             )
         }
     }

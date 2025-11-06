@@ -18,18 +18,29 @@ import com.simplexray.an.viewmodel.MainViewModelFactory
 import com.simplexray.an.worker.TrafficWorkScheduler
 
 class MainActivity : ComponentActivity() {
-    // TODO: Add saved instance state handling for configuration restore
+    // Track if workers have been scheduled to prevent duplicate scheduling
+    private var workersScheduled = false
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Clear Xray Settings server information (from removed XraySettingsScreen)
-        // TODO: Consider removing this if XraySettingsScreen is permanently removed
-        Preferences(applicationContext).clearXrayServerInfo()
-        // Schedule periodic pruning of time-series data
-        // TODO: Add error handling for worker scheduling failures
-        TrafficPruneWorker.schedule(applicationContext)
-        // Initialize traffic monitoring background worker (respects user opt-in preference)
-        // TODO: Add user preference check before scheduling to avoid unnecessary work
-        TrafficWorkScheduler.schedule(this)
+        
+        // Only clear Xray Settings server info on first creation, not on configuration changes
+        if (savedInstanceState == null) {
+            Preferences(applicationContext).clearXrayServerInfo()
+        }
+        
+        // Schedule workers only once per process lifecycle
+        // Workers use ExistingPeriodicWorkPolicy.KEEP, so duplicate calls are safe,
+        // but we avoid unnecessary calls for better performance
+        if (!workersScheduled) {
+            try {
+                TrafficPruneWorker.schedule(applicationContext)
+                TrafficWorkScheduler.schedule(this)
+                workersScheduled = true
+            } catch (e: Exception) {
+                AppLogger.e("Error scheduling workers", e)
+            }
+        }
         setContent {
             MaterialTheme {
                 Surface {
@@ -52,9 +63,12 @@ class MainActivity : ComponentActivity() {
      * The actual UI update will be handled by MainScreen lifecycle observer.
      * TODO: Consider caching service state to reduce repeated checks
      * TODO: Add retry mechanism for transient service state detection failures
+     * BUG: Two different methods to check service state may return inconsistent results
+     * PERF: Service state check may be expensive - consider caching result
      */
     private fun checkAndUpdateServiceState() {
         try {
+            // BUG: Two different checks may return different results - race condition
             val isRunning = ServiceStateChecker.isServiceRunning(applicationContext, TProxyService::class.java)
             val isRunningStatic = TProxyService.isRunning()
             
@@ -65,8 +79,10 @@ class MainActivity : ComponentActivity() {
             if (isRunningStatic) {
                 AppLogger.d("MainActivity: Service is running, UI will be updated by MainScreen lifecycle observer")
                 // The MainScreen lifecycle observer will handle the UI update
+                // BUG: No action taken if service is running - relies on observer
             }
         } catch (e: Exception) {
+            // BUG: Exception swallowed - service state may be incorrect
             AppLogger.w("MainActivity: Error checking service state", e)
         }
     }

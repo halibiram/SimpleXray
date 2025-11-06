@@ -557,6 +557,7 @@ class Preferences(context: Context) {
         const val TRAFFIC_RETENTION_DAYS: String = "TrafficRetentionDays"
         const val BACKGROUND_TRAFFIC_LOGGING_ENABLED: String = "BackgroundTrafficLoggingEnabled"
         const val LATENCY_PROBE_ENDPOINT: String = "LatencyProbeEndpoint"
+        const val VPN_SERVICE_WAS_RUNNING: String = "VpnServiceWasRunning"
         private const val TAG = "Preferences"
     }
     
@@ -583,5 +584,15 @@ class Preferences(context: Context) {
         get() = getPrefData(LATENCY_PROBE_ENDPOINT).first ?: "https://www.google.com/generate_204"
         set(value) {
             setValueInProvider(LATENCY_PROBE_ENDPOINT, value)
+        }
+
+    /**
+     * Track if VPN service was running before process death.
+     * Used for state recovery when service is restarted by system.
+     */
+    var vpnServiceWasRunning: Boolean
+        get() = getBooleanPref(VPN_SERVICE_WAS_RUNNING, false)
+        set(value) {
+            setValueInProvider(VPN_SERVICE_WAS_RUNNING, value)
         }
 }

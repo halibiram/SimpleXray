@@ -55,17 +55,28 @@ struct PepperShaperHandle {
 };
 
 // Handle storage
+// UNSAFE: Static storage may leak if handles are not properly destroyed
+// BUG: No cleanup on JNI_OnUnload - handles may leak
 static std::mutex handleMutex;
 static std::unordered_map<long, std::unique_ptr<PepperShaperHandle>> handles;
+// BUG: nextHandleId may overflow after long use
 static std::atomic<long> nextHandleId{1};
 static std::atomic<bool> initialized{false};
 
 // Helper to extract params from Java object
 static void extractParams(JNIEnv* env, jobject params, PepperPacingParams* out) {
-    if (!params || !out) return;
+    if (!params || !out) {
+        LOGE("extractParams: null params or out pointer");
+        return;
+    }
     
+    // Check for exceptions and null return
     jclass paramsClass = env->GetObjectClass(params);
-    if (!paramsClass) return;
+    if (!paramsClass || env->ExceptionCheck()) {
+        LOGE("extractParams: failed to get object class");
+        env->ExceptionClear();
+        return;
+    }
     
     // Get mode
     jfieldID modeField = env->GetFieldID(paramsClass, "mode", "Lcom/simplexray/an/chain/pepper/PepperShaper\$PepperMode;");
@@ -238,9 +249,24 @@ Java_com_simplexray_an_chain_pepper_PepperShaper_nativeShutdown(JNIEnv *env, jcl
     LOGD("Shutting down PepperShaper");
     
     std::lock_guard<std::mutex> lock(handleMutex);
+    // Clear all handles to prevent memory leaks
     handles.clear();
+    nextHandleId.store(1);
     
     LOGD("PepperShaper shutdown complete");
+}
+
+// Cleanup on JNI unload to prevent memory leaks
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* reserved) {
+    (void)reserved;
+    LOGD("PepperShaper JNI unloading - cleaning up handles");
+    
+    std::lock_guard<std::mutex> lock(handleMutex);
+    handles.clear();
+    nextHandleId.store(1);
+    initialized.store(false);
+    
+    LOGD("PepperShaper JNI unload complete");
 }
 
 } // extern "C"

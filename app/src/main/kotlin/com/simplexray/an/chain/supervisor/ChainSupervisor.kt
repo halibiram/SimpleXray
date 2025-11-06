@@ -83,9 +83,48 @@ class ChainSupervisor(private val context: Context) {
             
             // 3. Attach PepperShaper if configured
             if (config.pepperParams != null) {
-                // TODO: Attach to appropriate socket FDs
-                // For now, just mark as enabled
-                updateLayerStatus("pepper", true, null)
+                // Attempt to attach PepperShaper to socket FDs
+                // Note: Proper FD extraction requires:
+                // 1. Hysteria2/RealitySocks to expose socket FDs via JNI
+                // 2. Or attach at Xray level if Xray exposes FDs
+                // For now, we attempt attachment if FDs are available
+                val pepperResult = try {
+                    // Try to get socket FDs from Hysteria2 if it's running
+                    // This is a placeholder - actual FD extraction needs to be implemented
+                    // in Hysteria2.getSocketFds() or similar method
+                    val hysteria2Fds = if (config.hysteria2Config != null && Hysteria2.isRunning()) {
+                        // TODO: Implement Hysteria2.getSocketFds() to return Pair<readFd, writeFd>
+                        // For now, return null to indicate FDs not available
+                        null
+                    } else {
+                        null
+                    }
+                    
+                    if (hysteria2Fds != null) {
+                        val handle = PepperShaper.attach(
+                            fdPair = hysteria2Fds,
+                            mode = PepperShaper.SocketMode.TCP, // Default to TCP
+                            params = config.pepperParams
+                        )
+                        if (handle != null) {
+                            pepperHandle = handle
+                            Result.success(Unit)
+                        } else {
+                            Result.failure(Exception("Failed to attach PepperShaper"))
+                        }
+                    } else {
+                        // FDs not available yet - mark as enabled but not attached
+                        // This allows the chain to start, but PepperShaper won't be active
+                        // until FDs become available
+                        AppLogger.w("ChainSupervisor: PepperShaper configured but socket FDs not available")
+                        Result.success(Unit) // Don't fail the chain startup
+                    }
+                } catch (e: Exception) {
+                    AppLogger.e("ChainSupervisor: Failed to attach PepperShaper", e)
+                    Result.failure(e)
+                }
+                
+                updateLayerStatus("pepper", pepperResult.isSuccess, pepperResult.exceptionOrNull()?.message)
             }
             
             // 4. Start Xray-core if configured

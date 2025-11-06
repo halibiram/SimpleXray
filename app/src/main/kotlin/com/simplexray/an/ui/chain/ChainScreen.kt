@@ -90,7 +90,7 @@ fun ChainScreen(
                     // Create demo config for testing
                     val demoConfig = createDemoConfig()
                     when (status.state) {
-                        ChainState.STOPPED, ChainState.DEGRADED -> {
+                        ChainState.STOPPED, ChainState.DEGRADED, ChainState.FAILED -> {
                             viewModel.startChain(demoConfig)
                         }
                         ChainState.RUNNING, ChainState.STARTING -> {
@@ -106,7 +106,7 @@ fun ChainScreen(
             ) {
                 Text(
                     when (status.state) {
-                        ChainState.STOPPED, ChainState.DEGRADED -> "Start Chain"
+                        ChainState.STOPPED, ChainState.DEGRADED, ChainState.FAILED -> "Start Chain"
                         ChainState.RUNNING, ChainState.STARTING -> "Stop Chain"
                         ChainState.STOPPING -> "Stopping..."
                     }

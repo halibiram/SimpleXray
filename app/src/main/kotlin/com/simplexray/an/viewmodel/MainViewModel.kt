@@ -62,6 +62,7 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.Socket
 import java.net.URL
+import java.util.concurrent.TimeoutException
 import java.util.regex.Pattern
 import javax.net.ssl.SSLSocketFactory
 import kotlin.coroutines.cancellation.CancellationException
@@ -134,6 +135,20 @@ class MainViewModel(application: Application) :
 
     private val _coreStatsState = MutableStateFlow(CoreStatsState())
     val coreStatsState: StateFlow<CoreStatsState> = _coreStatsState.asStateFlow()
+    
+    private val _statsErrorState = MutableStateFlow<String?>(null)
+    val statsErrorState: StateFlow<String?> = _statsErrorState.asStateFlow()
+    
+    private val _isStatsRefreshing = MutableStateFlow(false)
+    val isStatsRefreshing: StateFlow<Boolean> = _isStatsRefreshing.asStateFlow()
+    
+    // Stats caching
+    private var cachedStats: CoreStatsState? = null
+    private var lastStatsUpdateTime = 0L
+    private val statsCacheValidityMs = 2000L // 2 seconds cache
+    
+    // Configurable update interval (default 1 second)
+    private var statsUpdateIntervalMs = 1000L
 
     private val _controlMenuClickable = MutableStateFlow(true)
     val controlMenuClickable: StateFlow<Boolean> = _controlMenuClickable.asStateFlow()
@@ -141,6 +156,8 @@ class MainViewModel(application: Application) :
     private val _isServiceEnabled = MutableStateFlow(false)
     val isServiceEnabled: StateFlow<Boolean> = _isServiceEnabled.asStateFlow()
 
+    // BUG: Channel.BUFFERED may cause memory issues if events accumulate
+    // PERF: Consider using Channel.UNLIMITED or RENDEZVOUS based on use case
     private val _uiEvent = Channel<MainViewUiEvent>(Channel.BUFFERED)
     val uiEvent = _uiEvent.receiveAsFlow()
 
@@ -295,23 +312,44 @@ class MainViewModel(application: Application) :
         )
     }
 
+    // PERF: Process creation is expensive - consider caching version result
     private fun loadKernelVersion() {
         viewModelScope.launch {
             val result = runSuspendCatchingWithError {
                 val libraryDir = TProxyService.getNativeLibraryDir(application)
-                val xrayPath = "$libraryDir/libxray.so"
-                val process = Runtime.getRuntime().exec("$xrayPath -version")
+                if (libraryDir == null) {
+                    throw IllegalStateException("Native library directory not found")
+                }
+                // SEC: Validate libraryDir path before using in command
+                val xrayPath = File(libraryDir, "libxray.so")
+                if (!xrayPath.exists() || !xrayPath.canRead()) {
+                    throw IllegalStateException("Xray binary not found or not readable: ${xrayPath.absolutePath}")
+                }
+                // Use array form to prevent command injection
+                val process = Runtime.getRuntime().exec(arrayOf(xrayPath.absolutePath, "-version"))
                 val firstLine = InputStreamReader(process.inputStream).use { isr ->
                     BufferedReader(isr).use { reader ->
                         reader.readLine()
                     }
                 }
                 try {
-                    process.waitFor()
+                    // Add timeout to prevent indefinite blocking
+                    val exited = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                    if (!exited) {
+                        AppLogger.w("Process did not exit within timeout, destroying")
+                        process.destroyForcibly()
+                        throw TimeoutException("Process execution timeout")
+                    }
+                } catch (e: InterruptedException) {
+                    AppLogger.w("Process wait interrupted", e)
+                    process.destroyForcibly()
+                    throw e
                 } finally {
-                    process.destroy()
+                    if (process.isAlive) {
+                        process.destroy()
+                    }
                 }
-                firstLine ?: "N/A"
+                firstLine ?: throw IllegalStateException("No output from xray version command")
             }
             
             result.fold(
@@ -412,45 +450,132 @@ class MainViewModel(application: Application) :
         return filePath
     }
 
-    // TODO: Add rate limiting for core stats updates to prevent excessive polling
-    // TODO: Consider using Flow for continuous stats updates instead of polling
-    suspend fun updateCoreStats() {
-        if (!_isServiceEnabled.value) return
-
-        // Use Mutex instead of synchronized for suspend functions
-        // TODO: Add connection retry logic for failed CoreStatsClient creation
-        coreStatsClientMutex.withLock {
-            if (coreStatsClient == null) {
-                coreStatsClient = CoreStatsClient.create("127.0.0.1", prefs.apiPort)
-            }
+    /**
+     * Get the current stats update interval in milliseconds.
+     * 
+     * @return Update interval in milliseconds (default: 1000ms)
+     * @see setStatsUpdateInterval
+     */
+    fun getStatsUpdateInterval(): Long = statsUpdateIntervalMs
+    
+    /**
+     * Set the stats update interval.
+     * 
+     * The minimum interval is 500ms to prevent excessive API calls.
+     * Lower intervals may impact performance and battery life.
+     * 
+     * @param intervalMs Desired update interval in milliseconds (minimum: 500ms)
+     * @see getStatsUpdateInterval
+     */
+    fun setStatsUpdateInterval(intervalMs: Long) {
+        statsUpdateIntervalMs = maxOf(500L, intervalMs)
+    }
+    
+    /**
+     * Manually refresh core stats, bypassing the cache.
+     * 
+     * This method forces an immediate update of core statistics from the Xray API,
+     * regardless of cache validity. Use this for pull-to-refresh functionality.
+     * 
+     * @see updateCoreStats
+     */
+    suspend fun refreshCoreStats() {
+        _isStatsRefreshing.value = true
+        _statsErrorState.value = null
+        try {
+            updateCoreStats(forceRefresh = true)
+        } catch (e: Exception) {
+            _statsErrorState.value = e.message ?: "Unknown error"
+            AppLogger.e("Failed to refresh core stats", e)
+        } finally {
+            _isStatsRefreshing.value = false
         }
-
-        val stats = coreStatsClientMutex.withLock { coreStatsClient?.getSystemStats() }
-        val traffic = coreStatsClientMutex.withLock { coreStatsClient?.getTraffic() }
-
-        if (stats == null && traffic == null) {
-            coreStatsClientMutex.withLock {
-                coreStatsClient?.close()
-                coreStatsClient = null
-            }
+    }
+    
+    /**
+     * Update core stats with caching and error handling.
+     * 
+     * This method fetches statistics from the Xray stats API with the following features:
+     * - **Caching**: Results are cached for 2 seconds to reduce API calls
+     * - **Error handling**: Errors are captured and exposed via `statsErrorState`
+     * - **Fallback**: Uses cached stats if API call fails
+     * - **Lifecycle-aware**: Returns cached stats if service is not enabled
+     * 
+     * @param forceRefresh If true, bypasses cache and forces a fresh API call
+     * 
+     * @see refreshCoreStats
+     * @see statsErrorState
+     * @see coreStatsState
+     */
+    suspend fun updateCoreStats(forceRefresh: Boolean = false) {
+        if (!_isServiceEnabled.value) {
+            // Return cached stats if available
+            cachedStats?.let { _coreStatsState.value = it }
             return
         }
 
-        _coreStatsState.value = CoreStatsState(
-            uplink = traffic?.uplink ?: 0,
-            downlink = traffic?.downlink ?: 0,
-            numGoroutine = stats?.numGoroutine ?: 0,
-            numGC = stats?.numGC ?: 0,
-            alloc = stats?.alloc ?: 0,
-            totalAlloc = stats?.totalAlloc ?: 0,
-            sys = stats?.sys ?: 0,
-            mallocs = stats?.mallocs ?: 0,
-            frees = stats?.frees ?: 0,
-            liveObjects = stats?.liveObjects ?: 0,
-            pauseTotalNs = stats?.pauseTotalNs ?: 0,
-            uptime = stats?.uptime ?: 0
-        )
-        AppLogger.d("Core stats updated")
+        // Check cache validity
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cachedStats != null && (now - lastStatsUpdateTime) < statsCacheValidityMs) {
+            _coreStatsState.value = cachedStats!!
+            return
+        }
+
+        _statsErrorState.value = null
+        
+        try {
+            // Use Mutex instead of synchronized for suspend functions
+            coreStatsClientMutex.withLock {
+                if (coreStatsClient == null) {
+                    coreStatsClient = CoreStatsClient.create("127.0.0.1", prefs.apiPort)
+                }
+            }
+
+            val stats = coreStatsClientMutex.withLock { 
+                runCatching { coreStatsClient?.getSystemStats() }.getOrNull()
+            }
+            val traffic = coreStatsClientMutex.withLock { 
+                runCatching { coreStatsClient?.getTraffic() }.getOrNull()
+            }
+
+            if (stats == null && traffic == null) {
+                // Connection failed, try to close and reset
+                coreStatsClientMutex.withLock {
+                    coreStatsClient?.close()
+                    coreStatsClient = null
+                }
+                // Use cached stats if available
+                cachedStats?.let { _coreStatsState.value = it }
+                _statsErrorState.value = "Failed to connect to stats API"
+                return
+            }
+
+            val newStats = CoreStatsState(
+                uplink = traffic?.uplink ?: 0,
+                downlink = traffic?.downlink ?: 0,
+                numGoroutine = stats?.numGoroutine ?: 0,
+                numGC = stats?.numGC ?: 0,
+                alloc = stats?.alloc ?: 0,
+                totalAlloc = stats?.totalAlloc ?: 0,
+                sys = stats?.sys ?: 0,
+                mallocs = stats?.mallocs ?: 0,
+                frees = stats?.frees ?: 0,
+                liveObjects = stats?.liveObjects ?: 0,
+                pauseTotalNs = stats?.pauseTotalNs ?: 0,
+                uptime = stats?.uptime ?: 0
+            )
+            
+            // Update cache
+            cachedStats = newStats
+            lastStatsUpdateTime = now
+            _coreStatsState.value = newStats
+            AppLogger.d("Core stats updated")
+        } catch (e: Exception) {
+            AppLogger.e("Error updating core stats", e)
+            _statsErrorState.value = e.message ?: "Unknown error"
+            // Use cached stats if available
+            cachedStats?.let { _coreStatsState.value = it }
+        }
     }
 
     suspend fun importConfigFromClipboard(): String? {
@@ -879,17 +1004,26 @@ class MainViewModel(application: Application) :
 
                     if (isHttps) {
                         // For HTTPS, properly manage SSL socket lifecycle
+                        // Note: Default SSLSocketFactory validates certificates by default
                         val sslSocket = (SSLSocketFactory.getDefault() as SSLSocketFactory)
                             .createSocket(socket, host, port, true) as javax.net.ssl.SSLSocket
                         try {
+                            // Set socket timeout before handshake
+                            sslSocket.soTimeout = timeout
+                            // Start handshake with timeout protection
                             sslSocket.startHandshake()
                             sslSocket.outputStream.bufferedWriter().use { writer ->
                                 sslSocket.inputStream.bufferedReader().use { reader ->
-                                    writer.write("GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n")
+                                    // SEC: Sanitize path to prevent CRLF injection
+                                    val sanitizedPath = path.replace("\r", "").replace("\n", "")
+                                    val sanitizedHost = host.replace("\r", "").replace("\n", "")
+                                    writer.write("GET $sanitizedPath HTTP/1.1\r\nHost: $sanitizedHost\r\nConnection: close\r\n\r\n")
                                     writer.flush()
+                                    // Read with timeout (socket timeout already set)
                                     val firstLine = reader.readLine()
                                     val latency = System.currentTimeMillis() - start
-                                    if (firstLine != null && firstLine.startsWith("HTTP/")) {
+                                    // Validate response format more strictly
+                                    if (firstLine != null && firstLine.matches(Regex("^HTTP/\\d\\.\\d\\s+\\d{3}.*"))) {
                                         latency.toInt()
                                     } else {
                                         null
@@ -999,6 +1133,7 @@ class MainViewModel(application: Application) :
         AppLogger.d("TProxyService receivers unregistered.")
         // BUG: BroadcastReceiver lifecycle management - ensure unregisterTProxyServiceReceivers() is called in onCleared()
         // BUG: If ViewModel is destroyed without calling unregisterTProxyServiceReceivers(), receivers may leak memory
+        // FIXME: Receivers are unregistered in onCleared() but may not be called if process is killed
     }
 
     fun restoreDefaultGeoip(callback: () -> Unit) {
@@ -1384,6 +1519,9 @@ class MainViewModel(application: Application) :
         // This must be done early to ensure cleanup even if exceptions occur
         try {
             unregisterTProxyServiceReceivers()
+        } catch (e: IllegalArgumentException) {
+            // Receiver was already unregistered, ignore
+            AppLogger.d("Receivers already unregistered")
         } catch (e: Exception) {
             AppLogger.w("Error unregistering receivers", e)
         }
@@ -1391,10 +1529,15 @@ class MainViewModel(application: Application) :
         geoipDownloadJob?.cancel()
         geositeDownloadJob?.cancel()
         activityScope.coroutineContext.cancelChildren()
-        coreStatsClientMutex.let {
-            // Close the client if exists
-            coreStatsClient?.close()
-            coreStatsClient = null
+        
+        // Close core stats client with proper error handling
+        try {
+            coreStatsClientMutex.withLock {
+                coreStatsClient?.close()
+                coreStatsClient = null
+            }
+        } catch (e: Exception) {
+            AppLogger.w("Error closing core stats client", e)
         }
     }
 

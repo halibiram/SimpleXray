@@ -17,19 +17,25 @@ import kotlinx.coroutines.cancel
 
 class App : Application() {
     // TODO: Consider using Dispatchers.IO for I/O operations instead of Default
+    // PERF: Dispatchers.Default may not be optimal for I/O-bound operations
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     // TODO: Add lifecycle-aware detector initialization to prevent memory leaks
+    // BUG: Detector may leak if not properly stopped
     private var detector: BurstDetector? = null
     
     /**
      * Check if current process is the main application process (not :native)
      */
+    // BUG: Process name detection may fail on some devices or Android versions
+    // PERF: runningAppProcesses is expensive - consider caching result
     private fun isMainProcess(): Boolean {
         val processName = try {
             val pid = android.os.Process.myPid()
+            // PERF: getRunningAppProcesses() is deprecated and expensive - consider alternative
             val activityManager = getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
             activityManager?.runningAppProcesses?.find { it.pid == pid }?.processName
         } catch (e: Exception) {
+            // BUG: Returns false on exception - may incorrectly identify process
             null
         }
         // Main process name is package name, native process has ":native" suffix
@@ -63,9 +69,14 @@ class App : Application() {
             }
             
             // Start burst/throttle detector (uses global BitrateBus)
-            // TODO: Add error handling for detector initialization failures
-            // BUG: If detector.start() throws exception, detector is still assigned but may be in invalid state
-            detector = BurstDetector(this, appScope).also { it.start() }
+            // Add error handling for detector initialization failures
+            try {
+                detector = BurstDetector(this, appScope)
+                detector?.start()
+            } catch (e: Exception) {
+                AppLogger.e("Failed to initialize BurstDetector", e)
+                detector = null
+            }
             // Initialize power-adaptive polling
             // TODO: Add configuration option to enable/disable power-adaptive features
             PowerAdaptive.init(this)
@@ -84,6 +95,7 @@ class App : Application() {
         // Cleanup resources
         // BUG: onTerminate() is not called on Android - cleanup should be done in onLowMemory() or process death handling
         // BUG: Resources may leak if app is killed without onTerminate() being called
+        // FIXME: Move cleanup to onLowMemory() and use ProcessLifecycleOwner for proper lifecycle management
         PowerAdaptive.cleanup()
         detector?.stop()
         MemoryMonitor.stop()

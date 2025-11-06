@@ -98,6 +98,8 @@ object XrayCoreLauncher {
         retryDelayMs: Long
     ): Boolean {
         return try {
+            // SEC: Validate bin path to prevent command injection
+            // BUG: No validation that bin file is actually executable
             val pb = ProcessBuilder(bin.absolutePath, "-config", cfg.absolutePath)
             val filesDir = context.filesDir
             val cacheDir = context.cacheDir
@@ -112,6 +114,7 @@ object XrayCoreLauncher {
             pb.directory(filesDir)
             pb.redirectErrorStream(true)
             val logFile = File(filesDir, "xray.log")
+            // BUG: Log file may grow unbounded - consider rotation or size limits
             pb.redirectOutput(logFile)
             val p = pb.start()
             procRef.set(p)
@@ -127,6 +130,8 @@ object XrayCoreLauncher {
             
             // Wait a short time to check if process stays alive (prevents immediate crashes)
             // This helps catch configuration errors or permission issues immediately
+            // PERF: Thread.sleep blocks thread - consider using delay() in coroutine
+            // BUG: Hard-coded sleep duration - may be too short or too long
             Thread.sleep(500) // Wait 500ms
             
             // Check if process is still alive after initial wait
@@ -173,6 +178,7 @@ object XrayCoreLauncher {
 
     /**
      * Monitor process health and restart on failure
+     * BUG: No exponential backoff on retries - may cause rapid restart loops
      */
     private fun startProcessMonitoring(
         context: Context,
@@ -184,6 +190,7 @@ object XrayCoreLauncher {
         retryJob?.cancel()
         retryJob = monitoringScope.launch {
             while (isActive) {
+                // PERF: Fixed delay may be too frequent - consider adaptive polling
                 delay(10000) // Check every 10 seconds
                 val proc = procRef.get()
                 if (proc == null || !proc.isAlive) {
@@ -338,6 +345,8 @@ object XrayCoreLauncher {
     /**
      * Kill process by PID as fallback when Process reference is invalid.
      * This is critical when app goes to background and Process reference becomes stale.
+     * UNSAFE: Process kill without verification - may kill wrong process
+     * SEC: Runtime.exec("kill -9") is a security risk - validate PID before execution
      */
     private fun killProcessByPid(pid: Long): Boolean {
         if (pid == -1L) {
@@ -359,6 +368,7 @@ object XrayCoreLauncher {
             AppLogger.d("Sent kill signal to process PID: $pid")
             
             // Wait a bit to see if it exits
+            // PERF: Thread.sleep blocks thread - consider using delay() in coroutine
             Thread.sleep(500)
             
             // Verify process is dead
@@ -366,9 +376,26 @@ object XrayCoreLauncher {
             if (stillAlive) {
                 AppLogger.w("Process (PID: $pid) still alive after killProcess, trying force kill")
                 // Last resort: try kill -9 via Runtime.exec
+                // SEC: Command injection risk if pid is not validated
+                // UNSAFE: Runtime.exec without proper validation
                 try {
-                    Runtime.getRuntime().exec("kill -9 $pid").waitFor()
-                    AppLogger.d("Force killed process PID: $pid")
+                    // SEC: Validate PID is numeric and within valid range before exec
+                    val pidStr = pid.toString()
+                    if (pidStr.matches(Regex("^\\d+$")) && pid > 0 && pid <= Int.MAX_VALUE) {
+                        // Use array form to prevent command injection
+                        val killCmd = arrayOf("kill", "-9", pidStr)
+                        val killProcess = Runtime.getRuntime().exec(killCmd)
+                        val exitCode = killProcess.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                        if (exitCode == 0) {
+                            AppLogger.d("Force killed process PID: $pid")
+                        } else {
+                            AppLogger.w("Kill command returned non-zero exit code: $exitCode")
+                            return false
+                        }
+                    } else {
+                        AppLogger.e("Invalid PID format or range: $pid")
+                        return false
+                    }
                 } catch (e: Exception) {
                     AppLogger.e("Failed to force kill process PID: $pid", e)
                     return false
@@ -392,15 +419,22 @@ object XrayCoreLauncher {
      * Uses /proc/PID directory existence check.
      */
     private fun isProcessAlive(pid: Int): Boolean {
+        // SEC: Validate PID is positive and within valid range
+        if (pid <= 0 || pid > Int.MAX_VALUE) {
+            return false
+        }
         return try {
             // Check /proc/PID directory exists
+            // SEC: Path traversal risk mitigated by PID validation above
             java.io.File("/proc/$pid").exists()
         } catch (e: Exception) {
-            // If we can't check, assume it might be alive and try to kill
-            true
+            // If we can't check, return false to avoid unnecessary kill attempts
+            AppLogger.w("Error checking process alive status for PID $pid", e)
+            false
         }
     }
 
+    // Add file verification after copy
     private fun copyExecutable(context: Context): File? {
         val libDir = context.applicationInfo.nativeLibraryDir ?: return null
         val src = File(libDir, "libxray.so")
@@ -413,15 +447,36 @@ object XrayCoreLauncher {
         }
         val dst = File(context.filesDir, "xray_core")
         try {
+            // Copy file and verify success by comparing sizes
+            val srcSize = src.length()
             src.inputStream().use { ins -> dst.outputStream().use { outs -> ins.copyTo(outs) } }
+            
+            // Verify copy was successful
+            if (dst.length() != srcSize) {
+                AppLogger.e("File copy verification failed: source size=$srcSize, dest size=${dst.length()}")
+                dst.delete()
+                return null
+            }
+            
             dst.setExecutable(true)
             if (!dst.canExecute()) {
                 AppLogger.e("Failed to set executable permission on ${dst.absolutePath}")
+                dst.delete()
                 return null
             }
+            AppLogger.d("Successfully copied xray executable: ${dst.absolutePath} (${srcSize} bytes)")
             return dst
+        } catch (e: java.io.IOException) {
+            AppLogger.e("IO error copying executable", e)
+            dst.delete()
+            return null
+        } catch (e: SecurityException) {
+            AppLogger.e("Security error copying executable", e)
+            dst.delete()
+            return null
         } catch (t: Throwable) {
-            AppLogger.e("copyExecutable failed", t)
+            AppLogger.e("Unexpected error copying executable", t)
+            dst.delete()
             return null
         }
     }

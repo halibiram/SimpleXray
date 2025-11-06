@@ -109,14 +109,14 @@ class DiagnosticBundle(private val context: Context) {
      * Get system info
      */
     private fun getSystemInfo(): Map<String, Any> {
-        return mapOf(
+        return mapOf<String, Any>(
             "androidVersion" to Build.VERSION.SDK_INT,
             "androidRelease" to Build.VERSION.RELEASE,
             "deviceModel" to Build.MODEL,
             "deviceManufacturer" to Build.MANUFACTURER,
             "abi" to Build.SUPPORTED_ABIS.joinToString(", "),
             "cpuAbi" to Build.CPU_ABI,
-            "cpuAbi2" to Build.CPU_ABI2 ?: "N/A"
+            "cpuAbi2" to (Build.CPU_ABI2 ?: "N/A")
         )
     }
 }

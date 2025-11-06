@@ -85,6 +85,7 @@ android {
             enableV1Signing true
             enableV2Signing true
             enableV3Signing true
+            // SEC: V4 signing disabled - may affect Android 11+ compatibility
             enableV4Signing false
         }
     }
@@ -113,6 +114,7 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
+    // SEC: Signing config loaded from file - ensure store.properties is not committed
     def propsFile = rootProject.file('store.properties')
     def configName = 'release'
 
@@ -121,7 +123,9 @@ android {
         props.load(new FileInputStream(propsFile))
         if (props != null && props.containsKey('storeFile')) {
             signingConfigs.named(configName).configure {
+                // SEC: No validation of storeFile path - may load wrong file
                 storeFile = rootProject.file(props['storeFile'])
+                // SEC: Passwords stored in plain text - consider using environment variables
                 storePassword = props['storePassword']
                 keyAlias = props['keyAlias']
                 keyPassword = props['keyPassword']
@@ -140,6 +144,7 @@ android {
         // This allows builds to complete while still reporting issues
         checkReleaseBuilds = true
         // Continue the build even when errors are found (warnings only)
+        // BUG: abortOnError=false may allow critical issues to slip through
         abortOnError = false
         // Treat warnings as errors only in strict mode (not enabled by default)
         warningsAsErrors = false

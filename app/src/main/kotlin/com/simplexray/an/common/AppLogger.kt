@@ -188,5 +188,85 @@ object AppLogger {
             // Fail silently
         }
     }
+    
+    /**
+     * Sanitize sensitive data from log messages.
+     * Removes or redacts passwords, tokens, API keys, and other sensitive information.
+     * 
+     * @param message Original message that may contain sensitive data
+     * @return Sanitized message with sensitive data redacted
+     */
+    fun sanitize(message: String): String {
+        if (!BuildConfig.DEBUG) {
+            // In production, always sanitize
+            return sanitizeInternal(message)
+        }
+        // In debug builds, return as-is for easier debugging
+        return message
+    }
+    
+    /**
+     * Internal sanitization logic.
+     * Redacts common patterns of sensitive data.
+     */
+    private fun sanitizeInternal(message: String): String {
+        var sanitized = message
+        
+        // Redact password patterns: password=xxx, pwd=xxx, pass=xxx
+        sanitized = Regex("(?i)(password|pwd|pass)[=:](\\S+)").replace(sanitized) {
+            "${it.groupValues[1]}=***REDACTED***"
+        }
+        
+        // Redact token patterns: token=xxx, api_key=xxx, apikey=xxx
+        sanitized = Regex("(?i)(token|api[_-]?key|apikey|secret|auth[_-]?token)[=:](\\S+)").replace(sanitized) {
+            "${it.groupValues[1]}=***REDACTED***"
+        }
+        
+        // Redact UUID patterns that might be session IDs
+        sanitized = Regex("(?i)(session[_-]?id|sessionid)[=:]([a-f0-9-]{20,})").replace(sanitized) {
+            "${it.groupValues[1]}=***REDACTED***"
+        }
+        
+        // Redact private keys (PEM format)
+        sanitized = Regex("-----BEGIN\\s+(?:PRIVATE|RSA PRIVATE)\\s+KEY-----.*?-----END\\s+(?:PRIVATE|RSA PRIVATE)\\s+KEY-----", RegexOption.DOT_MATCHES_ALL).replace(sanitized) {
+            "***REDACTED_PRIVATE_KEY***"
+        }
+        
+        // Redact email addresses (optional, can be enabled if needed)
+        // sanitized = Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b").replace(sanitized) {
+        //     "***REDACTED_EMAIL***"
+        // }
+        
+        return sanitized
+    }
+    
+    /**
+     * Log a debug message with automatic sanitization in production.
+     * Only logs in debug builds.
+     */
+    fun dSafe(message: String) {
+        d(sanitize(message))
+    }
+    
+    /**
+     * Log an error message with automatic sanitization in production.
+     */
+    fun eSafe(message: String, throwable: Throwable? = null) {
+        e(sanitize(message), throwable)
+    }
+    
+    /**
+     * Log a warning message with automatic sanitization in production.
+     */
+    fun wSafe(message: String, throwable: Throwable? = null) {
+        w(sanitize(message), throwable)
+    }
+    
+    /**
+     * Log an info message with automatic sanitization in production.
+     */
+    fun iSafe(message: String) {
+        i(sanitize(message))
+    }
 }
 

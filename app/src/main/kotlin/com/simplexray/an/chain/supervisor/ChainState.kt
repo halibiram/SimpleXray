@@ -8,7 +8,8 @@ enum class ChainState {
     STARTING,
     RUNNING,
     DEGRADED,
-    STOPPING
+    STOPPING,
+    FAILED
 }
 
 /**

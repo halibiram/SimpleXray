@@ -179,14 +179,66 @@ object RealitySocks {
     }
     
     /**
-     * Parse Xray log lines for metrics
+     * Parse Xray log lines to extract metrics.
+     * 
+     * Extracts the following metrics from Xray log output:
+     * - **Connected clients count**: Detects connection/disconnection events
+     * - **Traffic stats**: Parses uplink/downlink byte counts
+     * - **Handshake times**: Extracts TLS handshake duration
+     * 
+     * Supported log patterns:
+     * - Connection: "accepting connection", "new connection"
+     * - Disconnection: "connection closed", "connection terminated"
+     * - Traffic: "uplink: X", "downlink: Y"
+     * - Handshake: "handshake completed in Xms"
+     * 
+     * @param line Log line from Xray process output
      */
     private fun parseXrayLog(line: String) {
-        // TODO: Parse Xray stats API or log lines for:
-        // - Connected clients count
-        // - Bytes up/down
-        // - Handshake times
-        // For now, we'll rely on Xray stats API if available
+        try {
+            // Parse Xray log lines for metrics
+            // Xray logs may contain:
+            // - Connection info: "accepting connection from ..."
+            // - Traffic stats: "uplink: 1234, downlink: 5678"
+            // - Handshake info: "TLS handshake completed in 50ms"
+            
+            // Look for connection patterns
+            if (line.contains("accepting connection", ignoreCase = true) ||
+                line.contains("new connection", ignoreCase = true)) {
+                connectedClients.incrementAndGet()
+            }
+            
+            // Look for disconnection patterns
+            if (line.contains("connection closed", ignoreCase = true) ||
+                line.contains("connection terminated", ignoreCase = true)) {
+                val current = connectedClients.get()
+                if (current > 0) {
+                    connectedClients.decrementAndGet()
+                }
+            }
+            
+            // Parse traffic stats from log
+            // Pattern: "uplink: 1234, downlink: 5678" or "up: 1234, down: 5678"
+            val uplinkPattern = Regex("(?:uplink|up)[\\s:]+(\\d+)")
+            uplinkPattern.find(line)?.groupValues?.get(1)?.toLongOrNull()?.let {
+                bytesUp.addAndGet(it)
+            }
+            
+            val downlinkPattern = Regex("(?:downlink|down)[\\s:]+(\\d+)")
+            downlinkPattern.find(line)?.groupValues?.get(1)?.toLongOrNull()?.let {
+                bytesDown.addAndGet(it)
+            }
+            
+            // Parse handshake time
+            // Pattern: "handshake completed in 50ms" or "TLS handshake: 50ms"
+            val handshakePattern = Regex("handshake.*?(\\d+)\\s*ms", RegexOption.IGNORE_CASE)
+            handshakePattern.find(line)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                _status.value = _status.value.copy(handshakeTimeMs = it)
+            }
+        } catch (e: Exception) {
+            // Ignore parse errors for non-metric lines
+            AppLogger.d("RealitySocks: Log line (not metric): $line")
+        }
     }
     
     /**

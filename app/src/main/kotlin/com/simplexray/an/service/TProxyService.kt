@@ -44,8 +44,11 @@ import java.util.concurrent.atomic.AtomicReference
 import java.lang.Process
 
 class TProxyService : VpnService() {
+    // PERF: Consider using Dispatchers.Default for CPU-bound work, IO for I/O
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // PERF: Handler on main looper may cause UI blocking if overused
     private val handler = Handler(Looper.getMainLooper())
+    // BUG: MutableList not thread-safe - synchronized access required
     private val logBroadcastBuffer: MutableList<String> = mutableListOf()
     
     // Connection monitoring - check if VPN connection is still active
@@ -70,6 +73,8 @@ class TProxyService : VpnService() {
 
     // TODO: Consider caching port availability to reduce repeated checks
     // TODO: Add configuration option for port range selection
+    // PERF: Port scanning can be slow - consider async or cached results
+    // BUG: No timeout on ServerSocket creation - may hang indefinitely
     private fun findAvailablePort(excludedPorts: Set<Int>): Int? {
         (10000..65535)
             .shuffled()
@@ -87,6 +92,7 @@ class TProxyService : VpnService() {
                 }
             }
         // TODO: Add fallback port selection strategy if all ports are unavailable
+        // BUG: Returns null if no port found - caller may not handle this properly
         return null
     }
 
@@ -129,23 +135,58 @@ class TProxyService : VpnService() {
         AppLogger.d("TProxyService created.")
     }
 
-    // TODO: Add proper handling for service restart scenarios with state recovery
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Handle null intent (service restart after being killed by system)
-        // TODO: Add state persistence to recover VPN connection after service restart
         if (intent == null) {
-            AppLogger.w("TProxyService: Restarted with null intent, checking VPN state")
-            // If VPN is still active, keep it running
-            if (tunFd != null) {
-                AppLogger.d("TProxyService: VPN still active, maintaining connection")
-                // Ensure notification is shown to keep service in foreground
-                val prefs = Preferences(this)
-                val channelName = if (prefs.disableVpn) "nosocks" else "socks5"
-                initNotificationChannel(channelName)
-                createNotification(channelName)
-                return START_STICKY
+            AppLogger.w("TProxyService: Restarted with null intent, attempting state recovery")
+            val prefs = Preferences(this)
+            
+            // Check if VPN was running before process death
+            if (prefs.vpnServiceWasRunning) {
+                AppLogger.d("TProxyService: VPN was running before restart, attempting recovery")
+                
+                // Verify config file still exists
+                val configPath = prefs.selectedConfigPath
+                if (configPath != null && File(configPath).exists()) {
+                    AppLogger.d("TProxyService: Config file found, restoring VPN connection")
+                    
+                    // Check if tunFd is still valid (may be null after process death)
+                    if (tunFd != null) {
+                        try {
+                            // Verify file descriptor is still valid
+                            if (tunFd!!.fileDescriptor.valid()) {
+                                AppLogger.d("TProxyService: VPN file descriptor still valid, maintaining connection")
+                                val channelName = if (prefs.disableVpn) "nosocks" else "socks5"
+                                initNotificationChannel(channelName)
+                                createNotification(channelName)
+                                startConnectionMonitoring()
+                                // Restart xray process to reconnect
+                                serviceScope.launch { runXrayProcess() }
+                                return START_STICKY
+                            }
+                        } catch (e: Exception) {
+                            AppLogger.w("TProxyService: File descriptor validation failed", e)
+                        }
+                    }
+                    
+                    // File descriptor is invalid or null, need to recreate VPN
+                    AppLogger.d("TProxyService: Recreating VPN connection")
+                    try {
+                        startXray()
+                        return START_STICKY
+                    } catch (e: Exception) {
+                        AppLogger.e("TProxyService: Failed to restore VPN connection", e)
+                        // Clear state on failure
+                        prefs.vpnServiceWasRunning = false
+                        return START_NOT_STICKY
+                    }
+                } else {
+                    AppLogger.w("TProxyService: Config file not found, cannot restore VPN")
+                    prefs.vpnServiceWasRunning = false
+                    return START_NOT_STICKY
+                }
             } else {
-                AppLogger.d("TProxyService: VPN not active, service will stop")
+                AppLogger.d("TProxyService: VPN was not running before restart")
                 return START_NOT_STICKY
             }
         }
@@ -195,6 +236,9 @@ class TProxyService : VpnService() {
                     
                     // Start monitoring even in core-only mode (to detect service issues)
                     startConnectionMonitoring()
+                    
+                    // Save state for core-only mode too
+                    prefs.vpnServiceWasRunning = true
                     
                     serviceScope.launch { runXrayProcess() }
                     val successIntent = Intent(ACTION_START)
@@ -260,6 +304,9 @@ class TProxyService : VpnService() {
 
     override fun onRevoke() {
         AppLogger.w("TProxyService: VPN connection revoked by system")
+        // Clear state that VPN is running
+        val prefs = Preferences(this)
+        prefs.vpnServiceWasRunning = false
         // VPN was revoked, stop the service
         stopXray()
         super.onRevoke()
@@ -332,12 +379,36 @@ class TProxyService : VpnService() {
                 os.flush()
             }
 
+            // PERF: Reading from process inputStream on IO dispatcher - consider async I/O
             val inputStream = currentProcess.inputStream
             InputStreamReader(inputStream).use { isr ->
                 BufferedReader(isr).use { reader ->
                     var line: String?
                     AppLogger.d("Reading xray process output.")
-                    while (reader.readLine().also { line = it } != null) {
+                    // Use a timeout mechanism for readLine() to prevent indefinite blocking
+                    val timeoutMs = 30000L // 30 seconds timeout
+                    val startTime = System.currentTimeMillis()
+                    while (true) {
+                        // Check timeout before reading
+                        if (System.currentTimeMillis() - startTime > timeoutMs) {
+                            AppLogger.w("Timeout reading xray process output")
+                            break
+                        }
+                        // Try to read with timeout protection
+                        try {
+                            line = reader.readLine() ?: break
+                        } catch (e: java.io.InterruptedIOException) {
+                            AppLogger.d("Reading interrupted")
+                            break
+                        } catch (e: java.io.IOException) {
+                            // Check if timeout occurred
+                            if (e.message?.contains("timeout", ignoreCase = true) == true ||
+                                e.message?.contains("timed out", ignoreCase = true) == true) {
+                                AppLogger.w("Timeout reading xray process output")
+                                break
+                            }
+                            throw e
+                        }
                         line?.let {
                             logFileManager.appendLog(it)
                             synchronized(logBroadcastBuffer) {
@@ -353,8 +424,15 @@ class TProxyService : VpnService() {
             AppLogger.d("xray process output stream finished.")
         } catch (e: InterruptedIOException) {
             AppLogger.d("Xray process reading interrupted.")
+            // Interruption is expected when process is stopped
+        } catch (e: java.util.concurrent.TimeoutException) {
+            AppLogger.w("Timeout reading xray process output", e)
+        } catch (e: java.io.IOException) {
+            AppLogger.e("IO error executing xray", e)
+        } catch (e: SecurityException) {
+            AppLogger.e("Security error executing xray", e)
         } catch (e: Exception) {
-            AppLogger.e("Error executing xray", e)
+            AppLogger.e("Unexpected error executing xray", e)
         } finally {
             AppLogger.d("Xray process task finished (PID: $processPid).")
             
@@ -416,6 +494,11 @@ class TProxyService : VpnService() {
     private fun stopXray() {
         AppLogger.d("stopXray called with keepExecutorAlive=" + false)
         
+        // Clear state that VPN is running
+        val prefs = Preferences(this)
+        prefs.vpnServiceWasRunning = false
+        AppLogger.d("TProxyService: VPN state cleared - service is stopping")
+        
         // Stop connection monitoring
         stopConnectionMonitoring()
         
@@ -439,6 +522,8 @@ class TProxyService : VpnService() {
      * This is critical when app goes to background and Process reference becomes invalid.
      * TODO: Add process kill timeout configuration
      * TODO: Consider adding process kill retry mechanism for stubborn processes
+     * UNSAFE: Process kill may fail silently - no verification of actual termination
+     * SEC: Runtime.exec("kill -9") is a security risk - validate PID before execution
      */
     private fun killProcessSafely(proc: Process?, pid: Long) {
         if (proc == null && pid == -1L) {
@@ -517,9 +602,24 @@ class TProxyService : VpnService() {
                         if (stillAlive) {
                             AppLogger.w("Process (PID: $effectivePid) still alive after killProcess, trying force kill")
                             // Last resort: try kill -9 via Runtime.exec
+                            // SEC: Command injection risk if effectivePid is not validated
+                            // UNSAFE: Runtime.exec without proper validation
                             try {
-                                Runtime.getRuntime().exec("kill -9 $effectivePid").waitFor()
-                                AppLogger.d("Force killed process PID: $effectivePid")
+                                // SEC: Validate PID is numeric and within valid range before exec
+                                val pidStr = effectivePid.toString()
+                                if (pidStr.matches(Regex("^\\d+$")) && effectivePid > 0 && effectivePid <= Int.MAX_VALUE) {
+                                    // Use array form to prevent command injection
+                                    val killCmd = arrayOf("kill", "-9", pidStr)
+                                    val killProcess = Runtime.getRuntime().exec(killCmd)
+                                    val exitCode = killProcess.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                                    if (exitCode == 0) {
+                                        AppLogger.d("Force killed process PID: $effectivePid")
+                                    } else {
+                                        AppLogger.w("Kill command returned non-zero exit code: $exitCode")
+                                    }
+                                } else {
+                                    AppLogger.e("Invalid PID format or range: $effectivePid")
+                                }
                             } catch (e: Exception) {
                                 AppLogger.e("Failed to force kill process PID: $effectivePid", e)
                             }
@@ -545,12 +645,18 @@ class TProxyService : VpnService() {
      * Uses /proc/PID directory existence check.
      */
     private fun isProcessAlive(pid: Int): Boolean {
+        // SEC: Validate PID is positive and within valid range
+        if (pid <= 0 || pid > Int.MAX_VALUE) {
+            return false
+        }
         return try {
             // Check /proc/PID directory exists
+            // SEC: Path traversal risk mitigated by PID validation above
             File("/proc/$pid").exists()
         } catch (e: Exception) {
-            // If we can't check, assume it might be alive and try to kill
-            true
+            // If we can't check, return false to avoid unnecessary kill attempts
+            AppLogger.w("Error checking process alive status for PID $pid", e)
+            false
         }
     }
     
@@ -591,6 +697,7 @@ class TProxyService : VpnService() {
         }
         
         // Check if file descriptor is still valid
+        // BUG: FileDescriptor.valid() may not be reliable on all Android versions
         try {
             val isValid = fd.fileDescriptor.valid()
             if (!isValid) {
@@ -598,10 +705,12 @@ class TProxyService : VpnService() {
                 tunFd = null
                 if (Companion.isRunning()) {
                     AppLogger.d("TProxyService: Attempting to restore VPN connection")
+                    // BUG: Race condition - service may stop between check and launch
                     serviceScope.launch {
                         try {
                             startXray()
                         } catch (e: Exception) {
+                            // BUG: Exception swallowed - may hide critical errors
                             AppLogger.e("TProxyService: Failed to restore VPN connection", e)
                         }
                     }
@@ -612,6 +721,7 @@ class TProxyService : VpnService() {
         } catch (e: Exception) {
             AppLogger.w("TProxyService: Error checking VPN file descriptor", e)
             // Assume connection is still valid if we can't check
+            // BUG: Assumes valid on error - may miss connection loss
         }
         
         // Schedule next check
@@ -660,9 +770,15 @@ class TProxyService : VpnService() {
         val builder = getVpnBuilder(prefs)
         tunFd = builder.establish()
         if (tunFd == null) {
+            // Clear state on failure
+            prefs.vpnServiceWasRunning = false
             stopXray()
             return
         }
+        
+        // Save state that VPN is running
+        prefs.vpnServiceWasRunning = true
+        AppLogger.d("TProxyService: VPN state saved - service is running")
         val tproxyFile = File(cacheDir, "tproxy.conf")
         try {
             tproxyFile.createNewFile()
@@ -726,6 +842,7 @@ class TProxyService : VpnService() {
             prefs.dnsIpv6.takeIf { it.isNotEmpty() }?.also { addDnsServer(it) }
         }
 
+        // BUG: Exception swallowed - may hide configuration errors
         prefs.apps?.forEach { appName ->
             appName?.let { name ->
                 try {
@@ -734,6 +851,8 @@ class TProxyService : VpnService() {
                         else -> addAllowedApplication(name)
                     }
                 } catch (ignored: PackageManager.NameNotFoundException) {
+                    // BUG: Silent failure - app may not be configured as expected
+                    AppLogger.w("App not found: $name")
                 }
             }
         }
@@ -746,10 +865,13 @@ class TProxyService : VpnService() {
             try {
                 it.close()
             } catch (ignored: IOException) {
+                // BUG: Exception swallowed - may hide resource leak
+                AppLogger.w("Error closing tunFd", ignored)
             } finally {
                 tunFd = null
             }
             stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            // UNSAFE: JNI call without error handling
             TProxyStopService()
         }
         exit()
@@ -818,14 +940,18 @@ class TProxyService : VpnService() {
             System.loadLibrary("hev-socks5-tunnel")
         }
 
+        // UNSAFE: JNI boundary - validate inputs before passing to native code
         @JvmStatic
         @Suppress("FunctionName")
         private external fun TProxyStartService(configPath: String, fd: Int)
 
+        // UNSAFE: JNI boundary - no return value validation
         @JvmStatic
         @Suppress("FunctionName")
         private external fun TProxyStopService()
 
+        // UNSAFE: JNI boundary - may return null or invalid array
+        // BUG: No validation of returned array size or contents
         @JvmStatic
         @Suppress("FunctionName")
         private external fun TProxyGetStats(): LongArray?

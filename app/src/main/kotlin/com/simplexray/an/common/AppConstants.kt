@@ -16,4 +16,5 @@ const val ROUTE_TOPOLOGY = "topology"
 const val ROUTE_TRAFFIC_MONITOR = "traffic_monitor"
 const val ROUTE_CUSTOM_PROFILES = "custom_profiles"
 const val ROUTE_CUSTOM_PROFILE_EDIT = "custom_profile_edit"
+const val ROUTE_CHAIN = "chain"
 const val NAVIGATION_DEBOUNCE_DELAY = 500L

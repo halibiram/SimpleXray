@@ -70,7 +70,7 @@ object TlsModeDetector {
         return when (mode) {
             TlsImplementation.BORINGSSL -> TlsInfo(
                 implementation = "BoringSSL",
-                version = getBoringSSLVersion(),
+                version = getBoringSSLVersion(context),
                 cipherSuites = listOf(
                     "TLS_AES_128_GCM_SHA256",
                     "TLS_AES_256_GCM_SHA384",
@@ -106,9 +106,40 @@ object TlsModeDetector {
         }
     }
     
-    private fun getBoringSSLVersion(): String {
-        // TODO: Query BoringSSL version from native library
-        return "BoringSSL (via perf-net)"
+    /**
+     * Get BoringSSL version information.
+     * 
+     * BoringSSL doesn't expose a simple version string API like OpenSSL.
+     * This method checks for library availability and returns appropriate status strings.
+     * For more accurate version information, build-time version strings or git commit
+     * hashes would be needed.
+     * 
+     * @param context Android context for accessing native library directory
+     * @return Version string indicating BoringSSL availability status
+     */
+    private fun getBoringSSLVersion(context: Context): String {
+        return try {
+            // Try to load BoringSSL symbols to verify it's available
+            // BoringSSL doesn't expose a simple version string API like OpenSSL
+            // We can check if key symbols exist to confirm it's loaded
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            if (nativeLibDir != null) {
+                val perfNetLib = File(nativeLibDir, "libperf-net.so")
+                if (perfNetLib.exists()) {
+                    // BoringSSL is available via perf-net
+                    // For a more accurate version, we'd need to query build info or git commit
+                    // For now, return a generic version string
+                    "BoringSSL (via perf-net)"
+                } else {
+                    "BoringSSL (not available)"
+                }
+            } else {
+                "BoringSSL (unknown)"
+            }
+        } catch (e: Exception) {
+            AppLogger.e("Error querying BoringSSL version", e)
+            "BoringSSL (error)"
+        }
     }
     
     private fun getConscryptVersion(): String {
