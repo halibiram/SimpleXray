@@ -690,5 +690,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: xray-${{ matrix.abi }}
-          path: xray-output/${{ matrix.abi }}/libxray.so
+          path: xray-output/${{ matrix.abi }}
           retention-days: 7
