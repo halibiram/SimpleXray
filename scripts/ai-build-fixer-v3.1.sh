@@ -162,7 +162,9 @@ analyze_error_pattern() {
     local ERROR_LOG="$1"
     local PATTERN="unknown"
     
-    if echo "$ERROR_LOG" | grep -qiE "Cannot set.*read-only property.*path"; then
+    if echo "$ERROR_LOG" | grep -qiE "Could not find method arguments\(\)"; then
+        PATTERN="gradle_arguments_method"
+    elif echo "$ERROR_LOG" | grep -qiE "Cannot set.*read-only property.*path"; then
         PATTERN="gradle_readonly_path"
     elif echo "$ERROR_LOG" | grep -qiE "Could not find method path"; then
         PATTERN="gradle_path_method"
@@ -197,6 +199,9 @@ apply_fix_by_pattern() {
     echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
     
     case "$PATTERN" in
+        "gradle_arguments_method")
+            fix_gradle_arguments_issue
+            ;;
         "gradle_readonly_path"|"gradle_path_method")
             fix_gradle_path_issue
             ;;
@@ -217,6 +222,95 @@ apply_fix_by_pattern() {
 }
 
 # Fix functions
+fix_gradle_arguments_issue() {
+    echo -e "${YELLOW}→ Fixing Gradle arguments() method issue...${NC}"
+    
+    BUILD_GRADLE="$ROOT_DIR/app/build.gradle"
+    
+    # Replace arguments() calls with arguments = [] array syntax
+    if grep -q "arguments \"" "$BUILD_GRADLE" 2>/dev/null; then
+        echo -e "${BLUE}  Converting arguments() to arguments = [] array syntax...${NC}"
+        
+        # Convert cmake arguments
+        sed -i.bak '/cmake {/,/^[[:space:]]*}/ {
+            /arguments "/ {
+                s/arguments "\([^"]*\)"/"\1",/
+            }
+        }' "$BUILD_GRADLE" 2>/dev/null || true
+        
+        # Wrap in array syntax for cmake
+        sed -i.bak '/cmake {/,/^[[:space:]]*}/ {
+            /path "/a\
+            arguments = [\
+            /arguments =/! {
+                /^[[:space:]]*"[^"]*",$/ {
+                    s/^\([[:space:]]*\)"\([^"]*\)",$/\1"\2",/
+                }
+            }
+        }' "$BUILD_GRADLE" 2>/dev/null || true
+        
+        # Manual fix: Replace all arguments "..." with array syntax
+        python3 << 'PYEOF' 2>/dev/null || {
+import re
+
+with open('$BUILD_GRADLE', 'r') as f:
+    content = f.read()
+
+# Find cmake block and convert arguments
+cmake_pattern = r'(cmake \{[^}]*?)(arguments "[^"]+"\s*\n)+'
+def replace_cmake_args(match):
+    block = match.group(1)
+    args = re.findall(r'arguments "([^"]+)"', match.group(0))
+    args_array = 'arguments = [\n' + '\n'.join(f'                "{arg}",' for arg in args) + '\n            ]'
+    return block + args_array + '\n'
+
+content = re.sub(r'cmake \{([^}]*?)(arguments "[^"]+"\s*\n)+([^}]*?)\}', replace_cmake_args, content, flags=re.DOTALL)
+
+with open('$BUILD_GRADLE', 'w') as f:
+    f.write(content)
+}
+PYEOF
+        
+        # Fallback: Simple sed replacement
+        sed -i.bak 's/^\([[:space:]]*\)arguments "\([^"]*\)"$/\1arguments = ["\2"]/' "$BUILD_GRADLE" 2>/dev/null || true
+        
+        # Fix multiple arguments - combine into array
+        awk '
+        /cmake \{/ { in_cmake=1; cmake_start=NR; print; next }
+        in_cmake && /arguments "/ {
+            if (!args_start) {
+                args_start=NR
+                args="arguments = [\n"
+            }
+            match($0, /arguments "([^"]+)"/, arr)
+            args = args "                \"" arr[1] "\",\n"
+            next
+        }
+        in_cmake && /^[[:space:]]*\}/ {
+            if (args_start) {
+                sub(/,$/, "", args)
+                print args "            ]"
+                args=""
+                args_start=0
+            }
+            in_cmake=0
+            print
+            next
+        }
+        { print }
+        ' "$BUILD_GRADLE" > "$BUILD_GRADLE.tmp" 2>/dev/null && mv "$BUILD_GRADLE.tmp" "$BUILD_GRADLE" || true
+        
+        echo -e "${BLUE}  ✅ Arguments converted to array syntax${NC}"
+    fi
+    
+    # Fix cppFlags
+    if grep -q "cppFlags \"" "$BUILD_GRADLE" 2>/dev/null; then
+        echo -e "${BLUE}  Converting cppFlags to array syntax...${NC}"
+        sed -i.bak 's/cppFlags "\([^"]*\)", "\([^"]*\)"/cppFlags = ["\1", "\2"]/' "$BUILD_GRADLE" 2>/dev/null || true
+        echo -e "${BLUE}  ✅ cppFlags converted to array syntax${NC}"
+    fi
+}
+
 fix_gradle_path_issue() {
     echo -e "${YELLOW}→ Fixing Gradle path issue...${NC}"
     
@@ -361,7 +455,23 @@ main() {
     echo -e "${BOLD}${GREEN}This agent will NEVER stop until all workflows are successful${NC}"
     echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════════════════${NC}\n"
     
-    while [ $ATTEMPT_COUNT -lt $MAX_ATTEMPTS ]; do
+    # CORE RULE: Infinite loop until success (with safety limit that auto-extends)
+    while true; do
+        # Safety check - extend limit if reached
+        if [ $ATTEMPT_COUNT -ge $MAX_ATTEMPTS ]; then
+            if [ "$CONTINUE_UNTIL_SUCCESS" = "true" ]; then
+                echo -e "\n${YELLOW}⚠️  Maximum attempts (${MAX_ATTEMPTS}) reached${NC}"
+                echo -e "${BOLD}${CYAN}[CORE RULE] Continuing anyway - will not stop until success${NC}"
+                echo -e "${YELLOW}Resetting attempt counter and extending limit...${NC}\n"
+                ATTEMPT_COUNT=0
+                MAX_ATTEMPTS=$((MAX_ATTEMPTS + 10))  # Extend limit
+            else
+                echo -e "\n${RED}❌ Maximum attempts reached (${MAX_ATTEMPTS})${NC}"
+                echo -e "${YELLOW}Total fixes: ${TOTAL_FIXES_APPLIED}${NC}"
+                exit 1
+            fi
+        fi
+        
         echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${BOLD}[$(date '+%H:%M:%S')]${NC} ${CYAN}V3.1 Monitoring...${NC}\n"
         
@@ -439,20 +549,6 @@ main() {
             sleep 35
         fi
     done
-    
-    # CORE RULE: If max attempts reached but still failing, continue anyway
-    if [ "$CONTINUE_UNTIL_SUCCESS" = "true" ]; then
-        echo -e "\n${YELLOW}⚠️  Maximum attempts (${MAX_ATTEMPTS}) reached${NC}"
-        echo -e "${BOLD}${CYAN}[CORE RULE] Continuing anyway - will not stop until success${NC}"
-        echo -e "${YELLOW}Resetting attempt counter and continuing...${NC}\n"
-        ATTEMPT_COUNT=0
-        MAX_ATTEMPTS=$((MAX_ATTEMPTS + 10))  # Extend limit
-        continue
-    fi
-    
-    echo -e "\n${RED}❌ Maximum attempts reached (${MAX_ATTEMPTS})${NC}"
-    echo -e "${YELLOW}Total fixes: ${TOTAL_FIXES_APPLIED}${NC}"
-    exit 1
 }
 
 # Main
