@@ -582,15 +582,39 @@ jobs:
           export CXX=$TOOLCHAIN_DIR/bin/${{ matrix.toolchain }}-clang++
           
           # Set CGO flags to link BoringSSL
-          BORINGSSL_LIB_DIR=$(dirname "$BORINGSSL_CRYPTO")
+          # Both crypto and ssl directories need to be in library path
+          BORINGSSL_CRYPTO_DIR=$(dirname "$BORINGSSL_CRYPTO")
+          BORINGSSL_SSL_DIR=$(dirname "$BORINGSSL_SSL")
+          
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE"
-          export CGO_LDFLAGS="-L$BORINGSSL_LIB_DIR -lcrypto -lssl -static -Wl,--allow-shlib-undefined"
+          # Include both directories and link both libraries
+          # Use -Wl,--allow-shlib-undefined to ignore missing system libs like -llog
+          # -Wl,--as-needed removes unused library dependencies
+          export CGO_LDFLAGS="-L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR -lcrypto -lssl -static -Wl,--allow-shlib-undefined -Wl,--as-needed"
           
           echo "🔗 BoringSSL linking configuration:"
           echo "   CGO_CFLAGS: $CGO_CFLAGS"
           echo "   CGO_LDFLAGS: $CGO_LDFLAGS"
           echo "   BoringSSL Crypto: $BORINGSSL_CRYPTO"
           echo "   BoringSSL SSL: $BORINGSSL_SSL"
+          echo "   Crypto Dir: $BORINGSSL_CRYPTO_DIR"
+          echo "   SSL Dir: $BORINGSSL_SSL_DIR"
+          
+          # Verify library directories exist
+          if [ ! -d "$BORINGSSL_CRYPTO_DIR" ]; then
+            echo "❌ Crypto directory not found: $BORINGSSL_CRYPTO_DIR"
+            exit 1
+          fi
+          if [ ! -d "$BORINGSSL_SSL_DIR" ]; then
+            echo "❌ SSL directory not found: $BORINGSSL_SSL_DIR"
+            exit 1
+          fi
+          
+          # List files in library directories for debugging
+          echo "📁 Files in crypto directory:"
+          ls -lh "$BORINGSSL_CRYPTO_DIR" || echo "Cannot list crypto directory"
+          echo "📁 Files in ssl directory:"
+          ls -lh "$BORINGSSL_SSL_DIR" || echo "Cannot list ssl directory"
           
           go build \
             -o libxray.so \
