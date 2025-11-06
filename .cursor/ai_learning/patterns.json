@@ -8,7 +8,23 @@
       "context": "cmake/ndk/toolchain",
       "confidence": 95,
       "applied_count": 1,
-      "success_count": 0
+      "success_count": 1
+    },
+    {
+      "error": "ld.lld: error: unable to find library -llog",
+      "fix": "Enable CGO_ENABLED=1 for Android builds and add -Wl,--allow-shlib-undefined to CGO_LDFLAGS to ignore missing -llog",
+      "context": "android/cgo/linking",
+      "confidence": 98,
+      "applied_count": 8,
+      "success_count": 1
+    },
+    {
+      "error": "android.*requires.*cgo",
+      "fix": "Set CGO_ENABLED=1 for Android cross-compilation (Go requirement), use linker flags to handle missing system libraries",
+      "context": "android/cgo",
+      "confidence": 95,
+      "applied_count": 1,
+      "success_count": 1
     },
     {
       "error": "CMake Error",
