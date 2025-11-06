@@ -145,10 +145,12 @@ jobs:
           )
 
           # Add ABI-specific compiler flags
+          # Note: NDK toolchain automatically sets correct architecture based on CMAKE_ANDROID_ARCH_ABI
+          # Custom -march flags are not needed and can cause conflicts with Clang
           if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then
-            echo "📱 Configuring for ARM64 with crypto extensions"
-            CMAKE_ARGS+=("-DCMAKE_C_FLAGS=-march=armv8-a+simd+crypto")
-            CMAKE_ARGS+=("-DCMAKE_CXX_FLAGS=-march=armv8-a+simd+crypto")
+            echo "📱 Configuring for ARM64 (crypto extensions enabled by default in NDK)"
+            # NDK r28c with arm64-v8a automatically enables crypto extensions
+            # No need for explicit -march flags as they conflict with Clang's target detection
           fi
 
           echo "Running CMake configuration with ${#CMAKE_ARGS[@]} arguments..."
