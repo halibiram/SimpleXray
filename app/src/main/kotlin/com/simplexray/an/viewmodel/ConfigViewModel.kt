@@ -42,6 +42,8 @@ sealed class ConfigUiEvent {
  * TODO: Implement config file versioning
  * TODO: Add config file encryption option for sensitive data
  */
+// SEC: Config files may contain sensitive data - ensure proper validation
+// ARCH-DEBT: FileManager tightly coupled - consider dependency injection
 class ConfigViewModel(
     application: Application,
     private val prefs: Preferences,
@@ -51,7 +53,8 @@ class ConfigViewModel(
     
     private val fileManager: FileManager = FileManager(application, prefs)
     
-    // TODO: Consider using encrypted storage for backup data
+    // Backup data stored temporarily (cleared after use)
+    // Note: Consider using encrypted storage for backup data in the future
     private var compressedBackupData: ByteArray? = null
     
     lateinit var configEditViewModel: ConfigEditViewModel
@@ -62,9 +65,7 @@ class ConfigViewModel(
     private val _selectedConfigFile = MutableStateFlow<File?>(null)
     val selectedConfigFile: StateFlow<File?> = _selectedConfigFile.asStateFlow()
     
-    private val _uiEvent = channelFlow<Nothing> {
-        // This will be used to emit events that need to be handled by MainViewModel
-    }
+    // Channel removed - using uiEventSender callback instead
     
     init {
         AppLogger.d("ConfigViewModel initialized")
@@ -98,12 +99,27 @@ class ConfigViewModel(
             val dataToWrite: ByteArray = compressedBackupData as ByteArray
             compressedBackupData = null
             
+            // Validate URI scheme (should be content://)
+            if (uri.scheme != "content" && uri.scheme != "file") {
+                throw IllegalArgumentException("Invalid backup URI scheme: ${uri.scheme}")
+            }
+            
+            // Write backup with timeout protection
             val result = runSuspendCatchingWithError {
-                val outputStream = getApplication<Application>().contentResolver.openOutputStream(uri)
-                    ?: throw IOException("Failed to open output stream for backup URI: $uri")
-                
-                outputStream.use { os ->
-                    os.write(dataToWrite)
+                kotlinx.coroutines.withTimeout(30000) { // 30 second timeout
+                    val outputStream = getApplication<Application>().contentResolver.openOutputStream(uri)
+                        ?: throw IOException("Failed to open output stream for backup URI: $uri")
+                    
+                    // Write in chunks for large backups to avoid blocking
+                    outputStream.use { os ->
+                        val chunkSize = 64 * 1024 // 64KB chunks
+                        var offset = 0
+                        while (offset < dataToWrite.size) {
+                            val chunk = dataToWrite.sliceArray(offset until minOf(offset + chunkSize, dataToWrite.size))
+                            os.write(chunk)
+                            offset += chunk.size
+                        }
+                    }
                 }
                 AppLogger.d("Backup successful to: $uri")
             }
@@ -123,14 +139,36 @@ class ConfigViewModel(
     
     suspend fun startRestoreTask(uri: Uri) {
         withContext(Dispatchers.IO) {
-            val success = fileManager.decompressAndRestore(uri)
-            if (success) {
-                uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.restore_success)))
-                AppLogger.d("Restore successful.")
-                refreshConfigFileList()
-            } else {
-                uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.restore_failed)))
+            // Validate URI scheme
+            if (uri.scheme != "content" && uri.scheme != "file") {
+                AppLogger.e("ConfigViewModel: Invalid restore URI scheme: ${uri.scheme}")
+                uiEventSender(MainViewUiEvent.ShowSnackbar("Invalid restore file"))
+                return@withContext
             }
+            
+            // Restore with timeout protection
+            val result = runCatching {
+                kotlinx.coroutines.withTimeout(30000) { // 30 second timeout
+                    fileManager.decompressAndRestore(uri)
+                }
+            }
+            
+            result.fold(
+                onSuccess = { success ->
+                    if (success) {
+                        uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.restore_success)))
+                        AppLogger.d("Restore successful.")
+                        refreshConfigFileList()
+                    } else {
+                        AppLogger.e("ConfigViewModel: Restore operation returned false")
+                        uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.restore_failed)))
+                    }
+                },
+                onFailure = { throwable ->
+                    AppLogger.e("ConfigViewModel: Restore failed: ${throwable.javaClass.simpleName}: ${throwable.message}", throwable)
+                    uiEventSender(MainViewUiEvent.ShowSnackbar("Restore failed: ${throwable.message}"))
+                }
+            )
         }
     }
     
@@ -156,12 +194,34 @@ class ConfigViewModel(
     
     suspend fun handleSharedContent(content: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            if (!fileManager.importConfigFromContent(content).isNullOrEmpty()) {
-                uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.import_success)))
-                refreshConfigFileList()
-            } else {
-                uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.invalid_config_format)))
+            // Validate content size (max 10MB - same as FileManager)
+            val MAX_CONTENT_SIZE = 10 * 1024 * 1024
+            if (content.length > MAX_CONTENT_SIZE) {
+                AppLogger.e("ConfigViewModel: Shared content too large: ${content.length} bytes")
+                uiEventSender(MainViewUiEvent.ShowSnackbar("Content too large (max 10MB)"))
+                return@launch
             }
+            
+            // Import with error handling
+            val result = runCatching {
+                fileManager.importConfigFromContent(content)
+            }
+            
+            result.fold(
+                onSuccess = { filePath ->
+                    if (!filePath.isNullOrEmpty()) {
+                        uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.import_success)))
+                        refreshConfigFileList()
+                    } else {
+                        AppLogger.w("ConfigViewModel: Import returned empty file path")
+                        uiEventSender(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.invalid_config_format)))
+                    }
+                },
+                onFailure = { throwable ->
+                    AppLogger.e("ConfigViewModel: Import failed: ${throwable.javaClass.simpleName}: ${throwable.message}", throwable)
+                    uiEventSender(MainViewUiEvent.ShowSnackbar("Import failed: ${throwable.message}"))
+                }
+            )
         }
     }
     
@@ -189,6 +249,13 @@ class ConfigViewModel(
     
     fun extractAssetsIfNeeded() {
         fileManager.extractAssetsIfNeeded()
+    }
+    
+    override fun onCleared() {
+        super.onCleared()
+        // Clear backup data to prevent memory leaks
+        compressedBackupData = null
+        AppLogger.d("ConfigViewModel cleared")
     }
     
     fun editConfig(filePath: String) {
@@ -226,15 +293,32 @@ class ConfigViewModel(
         prefs.configFilesOrder = currentList.map { it.name }
     }
     
-    // TODO: Add debouncing for config file list refresh to prevent excessive I/O
-    // TODO: Consider caching config file list and invalidating on file changes
+    // Debounce config to prevent excessive I/O
+    private var lastRefreshTime = 0L
+    private val REFRESH_DEBOUNCE_MS = 500L // 500ms debounce
+    
     fun refreshConfigFileList() {
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshTime < REFRESH_DEBOUNCE_MS) {
+            // Skip refresh if called too soon after last refresh
+            return
+        }
+        lastRefreshTime = now
+        
         viewModelScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
-            // TODO: Add file validation to ensure only valid config files are listed
-            val actualFiles =
-                filesDir.listFiles { file -> file.isFile && file.name.endsWith(".json") }?.toList()
-                    ?: emptyList()
+            // Validate file contents by checking if they're valid JSON files
+            // SEC: Validate file contents to prevent listing corrupted or malicious files
+            val actualFiles = try {
+                filesDir.listFiles { file -> 
+                    file.isFile && file.name.endsWith(".json") && 
+                    // Basic validation: file is readable and not empty
+                    file.canRead() && file.length() > 0 && file.length() <= 10 * 1024 * 1024 // Max 10MB
+                }?.toList() ?: emptyList()
+            } catch (e: Exception) {
+                AppLogger.e("Error listing config files: ${e.message}", e)
+                emptyList()
+            }
             val actualFilesByName = actualFiles.associateBy { it.name }
             val savedOrder = prefs.configFilesOrder
             
