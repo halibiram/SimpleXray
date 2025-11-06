@@ -134,9 +134,6 @@ android {
             path "src/main/jni/perf-net/CMakeLists.txt"
             version "3.22.0"
         }
-        ndkBuild {
-            path "src/main/jni/Android.mk"
-        }
     }
 
     lint {
