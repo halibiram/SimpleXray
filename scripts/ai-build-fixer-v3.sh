@@ -201,7 +201,7 @@ match_error_pattern_v3() {
     return 1
 }
 
-# Predictive failure prevention
+# Predictive failure prevention (jq optional)
 predictive_prevention() {
     local RUN_ID=$1
     
@@ -212,11 +212,15 @@ predictive_prevention() {
     echo -e "${CYAN}[AI-MVC v3] 🔮 Predictive prevention check...${NC}"
     
     # Check if similar failures occurred recently
-    RECENT_FAILURES=$(gh run list --workflow="$WORKFLOW_NAME" --limit 5 --json conclusion --jq '.[] | select(.conclusion == "failure")' 2>/dev/null | jq -s 'length' || echo "0")
+    if command -v jq &> /dev/null; then
+        RECENT_FAILURES=$(gh run list --workflow="$WORKFLOW_NAME" --limit 5 --json conclusion --jq '.[] | select(.conclusion == "failure")' 2>/dev/null | jq -s 'length' || echo "0")
+    else
+        # Fallback: count failures manually
+        RECENT_FAILURES=$(gh run list --workflow="$WORKFLOW_NAME" --limit 5 2>/dev/null | grep -c "failure" || echo "0")
+    fi
     
     if [ "$RECENT_FAILURES" -gt 2 ]; then
         echo -e "${YELLOW}⚠️  Multiple recent failures detected - applying preventive measures...${NC}"
-        # Could trigger preventive fixes here
         PREVENTED_FAILURES=$((PREVENTED_FAILURES + 1))
     fi
     
@@ -672,19 +676,37 @@ monitor_and_fix_v3() {
         fi
         
         # Get latest run
-        if [ -z "$RUN_ID" ]; then
-            LATEST_RUN=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion --jq '.[0] | "\(.databaseId)|\(.status)|\(.conclusion // "in_progress")"' 2>/dev/null || echo "")
-            if [ -z "$LATEST_RUN" ]; then
+        if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "Build Xray-core with BoringSSL" ]; then
+            # Get latest run from workflow
+            if command -v jq &> /dev/null; then
+                LATEST_RUN=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion --jq '.[0] | "\(.databaseId)|\(.status)|\(.conclusion // "in_progress")"' 2>/dev/null || echo "")
+            else
+                # Fallback without jq
+                LATEST_RUN=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1"|"$2"|"$3}' || echo "")
+            fi
+            
+            if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" = "" ]; then
                 echo -e "${YELLOW}⚠️  No runs found${NC}"
                 sleep 30
                 continue
             fi
+            
             RUN_ID=$(echo "$LATEST_RUN" | cut -d'|' -f1)
             STATUS=$(echo "$LATEST_RUN" | cut -d'|' -f2)
             CONCLUSION=$(echo "$LATEST_RUN" | cut -d'|' -f3)
+            
+            # Clean RUN_ID (remove workflow name if accidentally included)
+            if echo "$RUN_ID" | grep -q "Build\|Xray"; then
+                RUN_ID=$(gh run list --workflow="$WORKFLOW_NAME" --limit 1 2>/dev/null | head -1 | awk '{print $1}' || echo "")
+            fi
         else
-            STATUS=$(gh run view "$RUN_ID" --json status --jq '.status' 2>/dev/null || echo "unknown")
-            CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion // "in_progress"' 2>/dev/null || echo "in_progress")
+            if command -v jq &> /dev/null; then
+                STATUS=$(gh run view "$RUN_ID" --json status --jq '.status' 2>/dev/null || echo "unknown")
+                CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion // "in_progress"' 2>/dev/null || echo "in_progress")
+            else
+                STATUS=$(gh run view "$RUN_ID" 2>/dev/null | grep -i "status:" | awk '{print $2}' || echo "unknown")
+                CONCLUSION=$(gh run view "$RUN_ID" 2>/dev/null | grep -i "conclusion:" | awk '{print $2}' || echo "in_progress")
+            fi
         fi
         
         echo -e "${BLUE}Run ID:${NC} $RUN_ID"
