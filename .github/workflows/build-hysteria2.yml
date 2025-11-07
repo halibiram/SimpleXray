@@ -41,10 +41,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read Go Version
+        id: go_version
+        run: |
+          GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)
+          echo "version=$GO_VERSION" >> $GITHUB_OUTPUT
+          echo "Using Go version: $GO_VERSION"
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: ${{ steps.go_version.outputs.version }}
 
       - name: Setup NDK
         run: |
@@ -70,6 +77,16 @@ jobs:
           
           echo "Hysteria2 commit: $(git rev-parse HEAD)"
           echo "Hysteria2 version: $(git describe --tags --always || echo 'unknown')"
+          
+          # Debug: Check repository structure
+          echo "📁 Repository structure:"
+          ls -la
+          echo "📁 Checking for cmd directory:"
+          ls -la cmd/ 2>/dev/null || echo "⚠️  cmd/ directory not found"
+          echo "📁 Checking for app directory:"
+          ls -la app/ 2>/dev/null || echo "⚠️  app/ directory not found"
+          echo "📁 Checking for main.go:"
+          ls -la *.go 2>/dev/null || echo "⚠️  No .go files in root"
 
       - name: Build Hysteria2 for ${{ matrix.abi }}
         run: |
@@ -93,12 +110,30 @@ jobs:
           echo "  CC: $CC"
           echo "  Toolchain: ${{ matrix.toolchain }}"
           
+          # Determine build path - check multiple possible locations
+          BUILD_PATH=""
+          if [ -d "cmd/hysteria2" ]; then
+            BUILD_PATH="./cmd/hysteria2"
+            echo "✅ Found cmd/hysteria2"
+          elif [ -d "app" ]; then
+            BUILD_PATH="./app"
+            echo "✅ Found app directory"
+          elif [ -f "main.go" ]; then
+            BUILD_PATH="."
+            echo "✅ Found main.go in root"
+          else
+            echo "❌ Cannot find build path"
+            echo "📁 Current directory structure:"
+            find . -maxdepth 2 -type d | head -20
+            exit 1
+          fi
+          
           # Build
           go build -o hysteria2 \
             -trimpath \
             -buildvcs=false \
             -ldflags="-s -w" \
-            ./cmd/hysteria2
+            $BUILD_PATH
           
           # Verify binary
           if [ ! -f "hysteria2" ]; then
