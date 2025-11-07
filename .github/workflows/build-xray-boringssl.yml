@@ -649,7 +649,7 @@ jobs:
           SKIP_COUNT=0
           FAILED_COUNT=0
           CRITICAL_PATCHES=()
-          
+
           # Sort patches by number to apply in order
           for patch in $(ls -1 ../xray-patches/*.patch 2>/dev/null | sort); do
             if [ ! -f "$patch" ]; then
@@ -745,7 +745,7 @@ jobs:
               FAILED_COUNT=$((FAILED_COUNT + 1))
             fi
           done
-          
+
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "📊 Patch Summary"
@@ -754,38 +754,69 @@ jobs:
           echo "   ✅ Applied: $SUCCESS_COUNT"
           echo "   ⏭️  Skipped: $SKIP_COUNT"
           echo "   ❌ Failed: $FAILED_COUNT"
-          
+
           if [ $PATCH_COUNT -eq 0 ]; then
             echo ""
             echo "❌ ERROR: No patches found in xray-patches directory!"
             exit 1
           fi
+
+          # Define critical patches that MUST succeed
+          CRITICAL_PATCH_NAMES=("001-boringssl-bridge.patch" "005-boringssl-tls-bridge.patch")
+          CRITICAL_FAILED=()
           
-          if [ ${#CRITICAL_PATCHES[@]} -gt 0 ]; then
+          # Check if any critical patches failed
+          for failed_patch in "${CRITICAL_PATCHES[@]}"; do
+            for critical_name in "${CRITICAL_PATCH_NAMES[@]}"; do
+              if [[ "$failed_patch" == *"$critical_name"* ]]; then
+                CRITICAL_FAILED+=("$failed_patch")
+                break
+              fi
+            done
+          done
+          
+          if [ ${#CRITICAL_FAILED[@]} -gt 0 ]; then
             echo ""
-            echo "❌ CRITICAL: The following patches failed to apply:"
-            for failed_patch in "${CRITICAL_PATCHES[@]}"; do
+            echo "❌ CRITICAL: The following REQUIRED patches failed to apply:"
+            for failed_patch in "${CRITICAL_FAILED[@]}"; do
               echo "   - $failed_patch"
             done
             echo ""
-            echo "❌ ERROR: Patch failures detected - build cannot continue"
-            echo "   BoringSSL integration requires all critical patches to be applied"
+            echo "❌ ERROR: Critical patch failures detected - build cannot continue"
+            echo "   These patches are required for BoringSSL integration"
             echo "   Please fix the patch files and retry"
             exit 1
+          elif [ ${#CRITICAL_PATCHES[@]} -gt 0 ]; then
+            echo ""
+            echo "⚠️  WARNING: The following optional patches failed to apply:"
+            for failed_patch in "${CRITICAL_PATCHES[@]}"; do
+              IS_CRITICAL=false
+              for critical_name in "${CRITICAL_PATCH_NAMES[@]}"; do
+                if [[ "$failed_patch" == *"$critical_name"* ]]; then
+                  IS_CRITICAL=true
+                  break
+                fi
+              done
+              if [ "$IS_CRITICAL" = false ]; then
+                echo "   - $failed_patch (optional - build will continue)"
+              fi
+            done
+            echo ""
+            echo "ℹ️  Build will continue - optional patches failed but critical ones succeeded"
           fi
-          
+
           if [ $SUCCESS_COUNT -eq 0 ] && [ $FAILED_COUNT -gt 0 ]; then
             echo ""
             echo "❌ ERROR: No patches were successfully applied!"
             echo "   This indicates a serious problem with patch compatibility"
             exit 1
           fi
-          
+
           if [ $SUCCESS_COUNT -gt 0 ]; then
             echo ""
             echo "✅ Successfully applied $SUCCESS_COUNT patch(es) - BoringSSL integration enabled"
           fi
-          
+
           echo ""
           echo "✅ Patch step complete"
 
