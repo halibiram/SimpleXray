@@ -122,30 +122,40 @@ object ConfigUtils {
         }
         
         // Check if API inbound already exists with correct settings
+        // Only check if apiPort is valid (1-65535)
         var hasApiInbound = false
-        for (i in 0 until inboundsArray.length()) {
-            val inbound = inboundsArray.getJSONObject(i)
-            val protocol = inbound.optString("protocol", "")
-            val port = inbound.optInt("port", -1)
-            val tag = inbound.optString("tag", "")
-            if (protocol == "dokodemo-door" && port == prefs.apiPort && tag == "api-in") {
-                hasApiInbound = true
-                break
+        val apiPort = prefs.apiPort
+        if (apiPort > 0 && apiPort <= 65535) {
+            for (i in 0 until inboundsArray.length()) {
+                val inbound = inboundsArray.getJSONObject(i)
+                val protocol = inbound.optString("protocol", "")
+                val port = inbound.optInt("port", -1)
+                val tag = inbound.optString("tag", "")
+                if (protocol == "dokodemo-door" && port == apiPort && tag == "api-in") {
+                    hasApiInbound = true
+                    break
+                }
             }
         }
         
         if (!hasApiInbound) {
-            val apiInbound = JSONObject().apply {
-                put("listen", "127.0.0.1")
-                put("port", prefs.apiPort)
-                put("protocol", "dokodemo-door")
-                put("tag", "api-in")
-                put("settings", JSONObject().apply {
-                    put("address", "127.0.0.1")
-                })
+            // Validate port before adding to config
+            val apiPort = prefs.apiPort
+            if (apiPort <= 0 || apiPort > 65535) {
+                Log.w(TAG, "Invalid API port: $apiPort (must be 1-65535), skipping API inbound injection")
+            } else {
+                val apiInbound = JSONObject().apply {
+                    put("listen", "127.0.0.1")
+                    put("port", apiPort)
+                    put("protocol", "dokodemo-door")
+                    put("tag", "api-in")
+                    put("settings", JSONObject().apply {
+                        put("address", "127.0.0.1")
+                    })
+                }
+                inboundsArray.put(apiInbound)
+                Log.d(TAG, "Added API inbound listener on port $apiPort")
             }
-            inboundsArray.put(apiInbound)
-            Log.d(TAG, "Added API inbound listener on port ${prefs.apiPort}")
         }
 
         // 5. Routing - route API inbound to API outbound

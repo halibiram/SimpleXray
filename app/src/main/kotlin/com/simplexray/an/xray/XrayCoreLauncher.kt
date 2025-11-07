@@ -145,8 +145,10 @@ object XrayCoreLauncher {
     ): Boolean {
         return try {
             // Validate bin path to prevent command injection
+            // Allow both filesDir (for copied binary) and nativeLibraryDir (for direct execution)
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir ?: ""
             if (!bin.canonicalPath.startsWith(context.filesDir.canonicalPath) &&
-                !bin.canonicalPath.startsWith(context.applicationInfo.nativeLibraryDir ?: "")) {
+                !bin.canonicalPath.startsWith(nativeLibDir)) {
                 AppLogger.e("Binary path outside allowed directories: ${bin.absolutePath}")
                 return false
             }
@@ -667,7 +669,9 @@ object XrayCoreLauncher {
         }
     }
 
-    // Add file verification after copy
+    // Android 16+ SELinux compliance: Use native library directly instead of copying
+    // Copying to app_data_file context causes execute_no_trans denial on Android 16+
+    // Using native library directory directly avoids SELinux restrictions
     // Made internal to allow TProxyService to use it for SELinux compliance
     internal fun copyExecutable(context: Context): File? {
         // Validate nativeLibraryDir path to prevent path traversal
@@ -688,6 +692,24 @@ object XrayCoreLauncher {
             AppLogger.e("Validation result: ${validation.message}")
             return null
         }
+        
+        // Android 16+ SELinux fix: Use native library directly instead of copying
+        // Native library directory has different SELinux context that allows execution
+        // This avoids execute_no_trans denial from app_data_file context
+        val androidVersion = Build.VERSION.SDK_INT
+        if (androidVersion >= 34) { // Android 14+ (API 34+)
+            // For Android 14+, try using native library directly
+            // Native library directory has app_file_exec context which allows execution
+            if (src.canExecute()) {
+                AppLogger.i("Using native library directly (Android $androidVersion SELinux compliance): ${src.absolutePath}")
+                return src
+            } else {
+                AppLogger.w("Native library not executable, falling back to copy method")
+            }
+        }
+        
+        // Fallback for older Android versions: copy to filesDir
+        // This maintains backward compatibility with Android 13 and below
         val dst = File(context.filesDir, "xray_core")
         try {
             // Copy file and verify success by comparing sizes and basic integrity
