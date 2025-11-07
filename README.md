@@ -1,6 +1,6 @@
 # SimpleXray
 
-<img src="https://raw.githubusercontent.com/lhear/SimpleXray/main/metadata/en-US/images/icon.png" alt="icon" width="150">
+<img src="https://raw.githubusercontent.com/halibiram/SimpleXray/main/metadata/en-US/images/icon.png" alt="icon" width="150">
 
 [![GitHub Release](https://img.shields.io/github/v/release/halibiram/SimpleXray)](https://github.com/halibiram/SimpleXray/releases)
 [![GitHub License](https://img.shields.io/github/license/halibiram/SimpleXray)](LICENSE)
@@ -208,4 +208,3 @@ Contributions welcome! Please:
 
 - [@XTLS/Xray-core](https://github.com/XTLS/Xray-core)
 - [@heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel)
-- Original: [@lhear/SimpleXray](https://github.com/lhear/SimpleXray)

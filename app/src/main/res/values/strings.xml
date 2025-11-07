@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">SimpleXray</string>
-    <string name="source_url" translatable="false">https://github.com/lhear/SimpleXray</string>
+    <string name="source_url" translatable="false">https://github.com/halibiram/SimpleXray</string>
     <string name="geoip_url" translatable="false">https://github.com/lhear/v2ray-rules-dat/releases/latest/download/geoip.dat</string>
     <string name="geosite_url" translatable="false">https://github.com/lhear/v2ray-rules-dat/releases/latest/download/geosite.dat</string>
     <string name="connectivity_test_url" translatable="false">http://www.gstatic.com/generate_204</string>
