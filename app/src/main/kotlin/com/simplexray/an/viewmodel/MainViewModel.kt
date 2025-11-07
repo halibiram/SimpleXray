@@ -343,15 +343,17 @@ class MainViewModel(application: Application) :
                     }
                 }
                 
-                // Use ProcessBuilder to prevent command injection
-                val process = ProcessBuilder(xrayCore.absolutePath, "-version")
+                AppLogger.d("Getting Xray version from: ${xrayCore.absolutePath}")
+
+                // Use ProcessBuilder with 'version' subcommand (modern Xray syntax)
+                val process = ProcessBuilder(xrayCore.absolutePath, "version")
                     .redirectErrorStream(true)
                     .start()
                 
                 // Read output before waiting for process to complete
                 val output = try {
                     BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                        reader.readLine() ?: ""
+                        reader.readText().trim()
                     }
                 } catch (e: IOException) {
                     AppLogger.w("Failed to read process output", e)
@@ -375,15 +377,18 @@ class MainViewModel(application: Application) :
                 }
                 
                 val exitCode = process.exitValue()
+                AppLogger.d("Xray version command exit code: $exitCode, output: $output")
+
                 if (exitCode != 0) {
-                    throw IllegalStateException("Xray version command failed with exit code: $exitCode")
+                    throw IllegalStateException("Xray version command failed with exit code: $exitCode, output: $output")
                 }
                 
                 if (output.isBlank()) {
                     throw IllegalStateException("No output from xray version command")
                 }
                 
-                output.trim()
+                // Extract first line (usually contains version info)
+                output.lines().firstOrNull()?.trim() ?: output.trim()
             }
             
             result.fold(
