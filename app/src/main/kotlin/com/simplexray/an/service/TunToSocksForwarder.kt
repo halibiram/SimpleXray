@@ -36,7 +36,7 @@ class TunToSocksForwarder(
                 try {
                     // Use FileInputStream/FileOutputStream for TUN interface
                     // ParcelFileDescriptor doesn't support NIO FileChannel directly
-                    forwardWithStreams(tunFd.fileDescriptor)
+                    forwardWithStreams(tunFd)
                 } catch (e: Exception) {
                     AppLogger.e("$TAG: Error in forwarder: ${e.message}", e)
                 } finally {
@@ -60,8 +60,8 @@ class TunToSocksForwarder(
     /**
      * Forward using FileInputStream/FileOutputStream
      */
-    private suspend fun forwardWithStreams(tunFd: java.io.FileDescriptor) {
-        val inputStream = android.os.ParcelFileDescriptor.AutoCloseInputStream(tunFd)
+    private suspend fun forwardWithStreams(tunFd: ParcelFileDescriptor) {
+        val inputStream = ParcelFileDescriptor.AutoCloseInputStream(tunFd)
         val buffer = ByteArray(BUFFER_SIZE)
         
         while (isRunning.get() && !Thread.currentThread().isInterrupted) {

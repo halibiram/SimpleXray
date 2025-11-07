@@ -80,7 +80,7 @@ fun StreamingScreen(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
                     text = { Text("Platforms") },
-                    icon = { Icon(Icons.AutoMirrored.Filled.ViewList, null) }
+                    icon = { Icon(Icons.Default.Apps, null) }
                 )
                 Tab(
                     selected = selectedTab == 1,

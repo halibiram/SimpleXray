@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
-import androidx.compose.ui.input.pointer.MenuAnchorType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -166,9 +165,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 value = threadPoolSize.toString(),
                                 onValueChange = {},
                                 readOnly = true,
-                                modifier = Modifier
-                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
-                                    .width(100.dp),
+                                modifier = Modifier.width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = threadPoolExpanded) }
                             )
                             ExposedDropdownMenu(
@@ -208,9 +205,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 value = memoryPoolSize.toString(),
                                 onValueChange = {},
                                 readOnly = true,
-                                modifier = Modifier
-                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
-                                    .width(100.dp),
+                                modifier = Modifier.width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = memoryPoolExpanded) }
                             )
                             ExposedDropdownMenu(
@@ -246,9 +241,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 value = String.format(Locale.US, "%.1fx", socketBufferMultiplier),
                                 onValueChange = {},
                                 readOnly = true,
-                                modifier = Modifier
-                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
-                                    .width(100.dp),
+                                modifier = Modifier.width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = socketBufferExpanded) }
                             )
                             ExposedDropdownMenu(
@@ -288,9 +281,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 value = connectionPoolSize.toString(),
                                 onValueChange = {},
                                 readOnly = true,
-                                modifier = Modifier
-                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
-                                    .width(100.dp),
+                                modifier = Modifier.width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = connectionPoolExpanded) }
                             )
                             ExposedDropdownMenu(
