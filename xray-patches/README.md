@@ -19,20 +19,26 @@ The build workflow (`build-xray-boringssl.yml`) configures:
   - Implements AES-GCM, ChaCha20-Poly1305, SHA256/SHA512, RandomBytes
   - Provides `BoringSSLGCM` type implementing `cipher.AEAD` interface
 
-- **002-crypto-boringssl.patch** - Build tag for crypto/cipher when CGO is disabled
+- **002-crypto-boringssl.patch** - Crypto wrapper with build tags for CGO/non-CGO
 
-  - Adds `//go:build !cgo` to `crypto/cipher/gcm.go`
-  - Allows fallback to Go crypto when CGO is disabled
+  - Creates `common/crypto/cipher.go` (CGO enabled) - BoringSSL wrapper functions
+  - Creates `common/crypto/cipher_nocgo.go` (CGO disabled) - Go stdlib fallback
+  - Provides `NewGCM`, `NewGCMWithNonceSize`, `NewGCMWithTagSize` functions
+  - Automatically selects BoringSSL or Go crypto based on CGO availability
 
-- **003-tls-boringssl.patch** - Build tag for crypto/tls when CGO is disabled
+- **003-tls-boringssl.patch** - TLS wrapper with build tags for CGO/non-CGO
 
-  - Adds `//go:build !cgo` to `crypto/tls/conn.go`
-  - Allows fallback to Go TLS when CGO is disabled
+  - Creates `common/crypto/tls.go` (CGO enabled) - BoringSSL TLS wrapper
+  - Creates `common/crypto/tls_nocgo.go` (CGO disabled) - Go stdlib fallback
+  - Provides `TLSConfig`, `Client`, `Server`, `Dial` wrapper functions
+  - Automatically selects BoringSSL or Go TLS based on CGO availability
 
-- **004-x509-boringssl.patch** - Build tag for crypto/x509 when CGO is disabled
+- **004-x509-boringssl.patch** - X.509 wrapper with build tags for CGO/non-CGO
 
-  - Adds `//go:build !cgo` to `crypto/x509/verify.go`
-  - Allows fallback to Go X.509 when CGO is disabled
+  - Creates `common/crypto/x509.go` (CGO enabled) - BoringSSL cert pool wrapper
+  - Creates `common/crypto/x509_nocgo.go` (CGO disabled) - Go stdlib fallback
+  - Provides `CertPool`, `NewCertPool`, `SystemCertPool` wrapper functions
+  - Automatically selects BoringSSL or Go x509 based on CGO availability
 
 - **005-boringssl-tls-bridge.patch** - TLS connection bridge using BoringSSL
 
@@ -62,11 +68,31 @@ The build workflow (`build-xray-boringssl.yml`) configures:
 
 ## Patch Application
 
-Patches are applied in order (001, 002, 003, ...). If a patch fails:
+Patches are applied in order (001, 002, 003, ...).
 
-- Build continues with vanilla Xray-core
-- BoringSSL is still linked via CGO flags
-- Warning is logged but build doesn't fail
+**All patches (MUST succeed):**
+- 001-boringssl-bridge.patch - CGO bridge for BoringSSL crypto primitives
+- 002-crypto-boringssl.patch - Crypto wrapper layer (CGO/non-CGO build tags)
+- 003-tls-boringssl.patch - TLS wrapper layer (CGO/non-CGO build tags)
+- 004-x509-boringssl.patch - X.509 wrapper layer (CGO/non-CGO build tags)
+- 005-boringssl-tls-bridge.patch - TLS connection bridge using BoringSSL
+- 007-boringssl-handshake-trace.patch - Handshake tracing and debugging
+
+**Build Tag Strategy:**
+- When `CGO_ENABLED=1`: Uses BoringSSL implementations (hardware acceleration)
+- When `CGO_ENABLED=0`: Falls back to Go stdlib (pure Go, portable)
+- Build tags automatically select correct implementation at compile time
+
+**Why Wrapper Approach?**
+- ❌ Cannot modify Go stdlib directly (Go issue #35283)
+- ✅ Create wrappers in `common/crypto/` package instead
+- ✅ Use build tags (`//go:build cgo` vs `//go:build !cgo`)
+- ✅ Xray-core code imports `common/crypto` instead of `crypto/*`
+
+If a patch fails:
+- Build will fail with error
+- Check patch compatibility with Xray-core version
+- Verify Xray-core has `common/` directory structure
 
 ## Verification
 

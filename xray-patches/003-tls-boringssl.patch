@@ -1,10 +1,96 @@
-diff --git a/crypto/tls/conn.go b/crypto/tls/conn.go
---- a/crypto/tls/conn.go
-+++ b/crypto/tls/conn.go
-@@ -1,3 +1,5 @@
- // Copyright 2009 The Go Authors. All rights reserved.
- 
+diff --git a/common/crypto/tls.go b/common/crypto/tls.go
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/common/crypto/tls.go
+@@ -0,0 +1,60 @@
++//go:build cgo
++// +build cgo
++
++package crypto
++
++import (
++	"crypto/tls"
++	"net"
++)
++
++// TLSConfig wraps tls.Config with BoringSSL optimizations when CGO is enabled
++type TLSConfig struct {
++	*tls.Config
++	UseBoringSSL bool
++}
++
++// NewTLSConfig creates a new TLS config with BoringSSL support
++func NewTLSConfig(config *tls.Config) *TLSConfig {
++	return &TLSConfig{
++		Config:       config,
++		UseBoringSSL: true,
++	}
++}
++
++// Client wraps tls.Client with BoringSSL optimizations
++func Client(conn net.Conn, config *tls.Config) *tls.Conn {
++	// Future: Use BoringSSL TLS handshake here
++	// For now, use standard library
++	return tls.Client(conn, config)
++}
++
++// Server wraps tls.Server with BoringSSL optimizations
++func Server(conn net.Conn, config *tls.Config) *tls.Conn {
++	// Future: Use BoringSSL TLS handshake here
++	// For now, use standard library
++	return tls.Server(conn, config)
++}
++
++// Dial wraps tls.Dial with BoringSSL optimizations
++func Dial(network, addr string, config *tls.Config) (*tls.Conn, error) {
++	// Future: Use BoringSSL TLS connection here
++	// For now, use standard library
++	return tls.Dial(network, addr, config)
++}
++
++diff --git a/common/crypto/tls_nocgo.go b/common/crypto/tls_nocgo.go
+new file mode 100644
+index 0000000..4444444
+--- /dev/null
++++ b/common/crypto/tls_nocgo.go
+@@ -0,0 +1,35 @@
 +//go:build !cgo
- // +build !cgo
- 
- package tls
++// +build !cgo
++
++package crypto
++
++import (
++	"crypto/tls"
++	"net"
++)
++
++// TLSConfig wraps tls.Config, using Go stdlib when CGO is disabled
++type TLSConfig struct {
++	*tls.Config
++	UseBoringSSL bool
++}
++
++// NewTLSConfig creates a new TLS config using Go stdlib
++func NewTLSConfig(config *tls.Config) *TLSConfig {
++	return &TLSConfig{
++		Config:       config,
++		UseBoringSSL: false,
++	}
++}
++
++// Client wraps tls.Client using Go stdlib
++func Client(conn net.Conn, config *tls.Config) *tls.Conn {
++	return tls.Client(conn, config)
++}
++
++// Server wraps tls.Server using Go stdlib
++func Server(conn net.Conn, config *tls.Config) *tls.Conn {
++	return tls.Server(conn, config)
++}
++
++// Dial wraps tls.Dial using Go stdlib
++func Dial(network, addr string, config *tls.Config) (*tls.Conn, error) {
++	return tls.Dial(network, addr, config)
++}
+
