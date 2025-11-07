@@ -345,7 +345,7 @@ class TProxyService : VpnService() {
         // Crash Detector: Check if VPN was unexpectedly stopped
         val vpnActive = tunFd != null && isServiceRunning.get()
         if (vpnActive) {
-            AppLogger.e("VPN", "Unexpected Stop: VPN was active when service destroyed. tunFd=${if (tunFd != null) "valid" else "null"}, isRunning=${isServiceRunning.get()}")
+            AppLogger.e("VPN: Unexpected Stop: VPN was active when service destroyed. tunFd=${if (tunFd != null) "valid" else "null"}, isRunning=${isServiceRunning.get()}")
         }
         
         super.onDestroy()

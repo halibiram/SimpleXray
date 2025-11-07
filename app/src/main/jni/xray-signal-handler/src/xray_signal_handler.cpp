@@ -10,8 +10,10 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
-#include <execinfo.h>
+#include <stdlib.h>
 #include <cxxabi.h>
+#include <unwind.h>
+#include <dlfcn.h>
 
 #define LOG_TAG "XraySignalHandler"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -40,32 +42,52 @@ static char* demangle(const char* symbol) {
     return nullptr;
 }
 
+// Structure to hold stack trace data
+struct stack_trace_data {
+    void* addresses[MAX_STACK_DEPTH];
+    size_t count;
+};
+
+// Callback for _Unwind_Backtrace
+static _Unwind_Reason_Code unwind_callback(struct _Unwind_Context* context, void* arg) {
+    stack_trace_data* data = static_cast<stack_trace_data*>(arg);
+    if (data->count >= MAX_STACK_DEPTH) {
+        return _URC_END_OF_STACK;
+    }
+    data->addresses[data->count++] = reinterpret_cast<void*>(_Unwind_GetIP(context));
+    return _URC_NO_REASON;
+}
+
 /**
- * Print stack trace to logcat
+ * Print stack trace to logcat using _Unwind_Backtrace
  */
 static void print_stack_trace() {
-    void* array[MAX_STACK_DEPTH];
-    size_t size = backtrace(array, MAX_STACK_DEPTH);
-    char** symbols = backtrace_symbols(array, size);
+    stack_trace_data data;
+    data.count = 0;
     
-    if (symbols == nullptr) {
-        LOGE("Failed to get stack trace symbols");
+    _Unwind_Backtrace(unwind_callback, &data);
+    
+    if (data.count == 0) {
+        LOGE("No stack frames found");
         return;
     }
     
-    LOGE("Stack trace (%zu frames):", size);
-    for (size_t i = 0; i < size; i++) {
-        // Try to demangle C++ symbols
-        char* demangled = demangle(symbols[i]);
-        if (demangled) {
-            LOGE("  #%zu: %s", i, demangled);
-            free(demangled);
+    LOGE("Stack trace (%zu frames):", data.count);
+    for (size_t i = 0; i < data.count; i++) {
+        Dl_info info;
+        if (dladdr(data.addresses[i], &info) != 0 && info.dli_sname != nullptr) {
+            // Try to demangle C++ symbols
+            char* demangled = demangle(info.dli_sname);
+            if (demangled) {
+                LOGE("  #%zu: %s", i, demangled);
+                free(demangled);
+            } else {
+                LOGE("  #%zu: %s", i, info.dli_sname);
+            }
         } else {
-            LOGE("  #%zu: %s", i, symbols[i]);
+            LOGE("  #%zu: <unknown> (%p)", i, data.addresses[i]);
         }
     }
-    
-    free(symbols);
 }
 
 /**

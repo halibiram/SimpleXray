@@ -5,7 +5,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := xray-signal-handler
 LOCAL_SRC_FILES := src/xray_signal_handler.cpp
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include
-LOCAL_LDLIBS := -llog -ldl -lunwind
+LOCAL_LDLIBS := -llog -ldl
 
 # Enable C++ exceptions and RTTI
 LOCAL_CPP_FEATURES := exceptions rtti

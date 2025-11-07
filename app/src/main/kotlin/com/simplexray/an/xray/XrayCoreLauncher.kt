@@ -58,9 +58,9 @@ object XrayCoreLauncher {
         if (isRunning()) return true
         
         // Validate ABI before starting
-        val validation = XrayAbiValidator.validateCurrentAbi(context)
-        if (!validation.isValid) {
-            AppLogger.e("ABI validation failed: ${validation.message}")
+        val abiValidation = XrayAbiValidator.validateCurrentAbi(context)
+        if (!abiValidation.isValid) {
+            AppLogger.e("ABI validation failed: ${abiValidation.message}")
             return false // Fail fast if ABI validation fails
         }
         

@@ -3,6 +3,8 @@ package com.simplexray.an.xray
 import android.net.VpnService
 import android.util.Log
 import com.simplexray.an.common.AppLogger
+import java.io.FileDescriptor
+import java.lang.reflect.Method
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -12,6 +14,21 @@ import java.net.Socket
  */
 object VpnProtectTester {
     private const val TAG = "VpnProtectTester"
+    
+    // Use reflection to get file descriptor from Socket
+    private fun getSocketFd(socket: Socket): Int {
+        return try {
+            val getFileDescriptor: Method = Socket::class.java.getDeclaredMethod("getFileDescriptor")
+            getFileDescriptor.isAccessible = true
+            val fd: FileDescriptor = getFileDescriptor.invoke(socket) as FileDescriptor
+            val field = FileDescriptor::class.java.getDeclaredField("descriptor")
+            field.isAccessible = true
+            field.getInt(fd)
+        } catch (e: Exception) {
+            AppLogger.w("$TAG: Failed to get file descriptor via reflection: ${e.message}")
+            -1
+        }
+    }
     
     /**
      * Test if VpnService.protect() is working correctly
@@ -31,7 +48,7 @@ object VpnProtectTester {
             // Create a test socket
             testSocket = Socket()
             testSocket.connect(InetSocketAddress("8.8.8.8", 53), 5000) // Google DNS
-            val fd = testSocket.getFileDescriptor()?.fd ?: -1
+            val fd = getSocketFd(testSocket)
             
             if (fd < 0) {
                 AppLogger.e("$TAG: Failed to get file descriptor from test socket")
@@ -92,7 +109,7 @@ object VpnProtectTester {
                     socket.connect(InetSocketAddress("8.8.8.8", 53), 5000)
                     sockets.add(socket)
                     
-                    val fd = socket.getFileDescriptor()?.fd ?: -1
+                    val fd = getSocketFd(socket)
                     if (fd >= 0) {
                         val protected = vpnService.protect(fd)
                         if (protected) {
