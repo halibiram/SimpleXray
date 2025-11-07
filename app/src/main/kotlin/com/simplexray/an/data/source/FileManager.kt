@@ -15,7 +15,6 @@ import com.simplexray.an.common.FilenameValidator
 import com.simplexray.an.common.configFormat.ConfigFormatConverter
 import com.simplexray.an.prefs.Preferences
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONException
 import java.io.ByteArrayOutputStream
@@ -87,16 +86,11 @@ class FileManager(private val application: Application, private val prefs: Prefe
         return null
     }
 
-    // TODO: Add filename validation to prevent invalid characters
-    // TODO: Consider adding duplicate filename detection
     suspend fun createConfigFile(assets: AssetManager): String? {
         return withContext(Dispatchers.IO) {
             val filename = System.currentTimeMillis().toString() + ".json"
-            // TODO: Add file existence check before creation
             val newFile = File(application.filesDir, filename)
             try {
-                Log.d(TAG, "Creating config file: $filename")
-                
                 val fileContent: String
                 if (prefs.useTemplate) {
                     assets.open("template").use { assetInputStream ->
@@ -108,57 +102,10 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 } else {
                     fileContent = "{}"
                 }
-                
-                // Write file with explicit flush to ensure data is persisted
-                newFile.outputStream().use { fileOutputStream ->
+                FileOutputStream(newFile).use { fileOutputStream ->
                     fileOutputStream.write(fileContent.toByteArray())
-                    fileOutputStream.flush()
                 }
-                
-                // Verify file was created and is readable
-                if (!newFile.exists()) {
-                    Log.e(TAG, "Config file was not created: ${newFile.absolutePath}")
-                    return@withContext null
-                }
-                
-                if (!newFile.canRead()) {
-                    Log.e(TAG, "Config file is not readable: ${newFile.absolutePath}")
-                    return@withContext null
-                }
-                
-                Log.d(TAG, "Config file created successfully: ${newFile.absolutePath}, exists: ${newFile.exists()}, size: ${newFile.length()}")
-                
-                // Add to configFilesOrder if not already present
-                val currentOrder = prefs.configFilesOrder.toMutableList()
-                Log.d(TAG, "Current configFilesOrder before update: $currentOrder")
-                
-                if (!currentOrder.contains(filename)) {
-                    currentOrder.add(filename)
-                    prefs.configFilesOrder = currentOrder
-                    Log.d(TAG, "Added $filename to configFilesOrder")
-                    
-                    // Wait for ContentProvider IPC to complete and verify
-                    delay(100)
-                    val verifiedOrder = prefs.configFilesOrder
-                    if (!verifiedOrder.contains(filename)) {
-                        Log.e(TAG, "Failed to add $filename to configFilesOrder, retrying...")
-                        // Retry once
-                        prefs.configFilesOrder = currentOrder
-                        delay(100)
-                        val retryVerifiedOrder = prefs.configFilesOrder
-                        if (!retryVerifiedOrder.contains(filename)) {
-                            Log.e(TAG, "Failed to add $filename to configFilesOrder after retry")
-                        } else {
-                            Log.d(TAG, "Successfully added $filename to configFilesOrder after retry")
-                        }
-                    } else {
-                        Log.d(TAG, "Verified: $filename is in configFilesOrder: $verifiedOrder")
-                    }
-                } else {
-                    Log.d(TAG, "$filename already exists in configFilesOrder")
-                }
-                
-                Log.d(TAG, "Final configFilesOrder: ${prefs.configFilesOrder}")
+                Log.d(TAG, "Created new config file: ${newFile.absolutePath}")
                 newFile.absolutePath
             } catch (e: IOException) {
                 Log.e(TAG, "Error creating new config file", e)
@@ -185,98 +132,26 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 Log.w(TAG, "Content to import is empty.")
                 return@withContext null
             }
-            
-            // SEC: Validate content size to prevent OOM (max 10MB)
-            val MAX_CONFIG_SIZE = 10 * 1024 * 1024 // 10MB
-            if (content.length > MAX_CONFIG_SIZE) {
-                Log.e(TAG, "Config content too large: ${content.length} bytes (max: $MAX_CONFIG_SIZE)")
-                return@withContext null
-            }
-            
-            // SEC: Validate content format before importing
+
             val (name, configContent) = ConfigFormatConverter.convert(application, content).getOrElse { e ->
-                Log.e(TAG, "Failed to parse config: ${e.javaClass.simpleName}: ${e.message}", e)
-                return@withContext null
-            }
-            
-            // SEC: Validate filename to prevent path traversal
-            if (!FilenameValidator.isValid(name)) {
-                Log.e(TAG, "Invalid filename from config conversion: $name")
+                Log.e(TAG, "Failed to parse config", e)
                 return@withContext null
             }
 
             val formattedContent = try {
                 ConfigUtils.formatConfigContent(configContent)
             } catch (e: JSONException) {
-                Log.e(TAG, "Invalid JSON format in provided content: ${e.message}", e)
+                Log.e(TAG, "Invalid JSON format in provided content.", e)
                 return@withContext null
             }
 
-            // SEC: Filename already validated above, construct safely
             val filename = "$name.json"
-            // SEC: Ensure filename doesn't contain path separators
-            val safeFilename = filename.replace(File.separatorChar, '_').replace('/', '_').replace('\\', '_')
-            val newFile = File(application.filesDir, safeFilename)
-            
-            // SEC: Validate final path is within allowed directory
-            if (!newFile.canonicalPath.startsWith(application.filesDir.canonicalPath)) {
-                Log.e(TAG, "Path traversal attempt detected: ${newFile.canonicalPath}")
-                return@withContext null
-            }
+            val newFile = File(application.filesDir, filename)
 
             try {
-                Log.d(TAG, "Importing config from content to file: $safeFilename")
-                
-                // Write file with explicit flush to ensure data is persisted
-                newFile.outputStream().use { fileOutputStream ->
+                FileOutputStream(newFile).use { fileOutputStream ->
                     fileOutputStream.write(formattedContent.toByteArray(StandardCharsets.UTF_8))
-                    fileOutputStream.flush()
                 }
-                
-                // Verify file was created and is readable
-                if (!newFile.exists()) {
-                    Log.e(TAG, "Imported config file was not created: ${newFile.absolutePath}")
-                    return@withContext null
-                }
-                
-                if (!newFile.canRead()) {
-                    Log.e(TAG, "Imported config file is not readable: ${newFile.absolutePath}")
-                    return@withContext null
-                }
-                
-                Log.d(TAG, "Imported config file created successfully: ${newFile.absolutePath}, exists: ${newFile.exists()}, size: ${newFile.length()}")
-                
-                // Add to configFilesOrder if not already present
-                val currentOrder = prefs.configFilesOrder.toMutableList()
-                Log.d(TAG, "Current configFilesOrder before update: $currentOrder")
-                
-                if (!currentOrder.contains(safeFilename)) {
-                    currentOrder.add(safeFilename)
-                    prefs.configFilesOrder = currentOrder
-                    Log.d(TAG, "Added $safeFilename to configFilesOrder")
-                    
-                    // Wait for ContentProvider IPC to complete and verify
-                    delay(100)
-                    val verifiedOrder = prefs.configFilesOrder
-                    if (!verifiedOrder.contains(safeFilename)) {
-                        Log.e(TAG, "Failed to add $safeFilename to configFilesOrder, retrying...")
-                        // Retry once
-                        prefs.configFilesOrder = currentOrder
-                        delay(100)
-                        val retryVerifiedOrder = prefs.configFilesOrder
-                        if (!retryVerifiedOrder.contains(safeFilename)) {
-                            Log.e(TAG, "Failed to add $safeFilename to configFilesOrder after retry")
-                        } else {
-                            Log.d(TAG, "Successfully added $safeFilename to configFilesOrder after retry")
-                        }
-                    } else {
-                        Log.d(TAG, "Verified: $safeFilename is in configFilesOrder: $verifiedOrder")
-                    }
-                } else {
-                    Log.d(TAG, "$safeFilename already exists in configFilesOrder")
-                }
-                
-                Log.d(TAG, "Final configFilesOrder: ${prefs.configFilesOrder}")
                 Log.d(
                     TAG,
                     "Successfully imported config from content to: ${newFile.absolutePath}"

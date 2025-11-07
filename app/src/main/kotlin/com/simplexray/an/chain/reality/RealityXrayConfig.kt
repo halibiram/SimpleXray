@@ -1,8 +1,5 @@
 package com.simplexray.an.chain.reality
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import com.google.gson.JsonObject
 import com.google.gson.JsonArray
 import com.google.gson.JsonPrimitive
@@ -17,78 +14,14 @@ import com.google.gson.JsonPrimitive
 object RealityXrayConfig {
     
     /**
-     * Read SNI from clipboard if available
-     * @param context Android Context to access clipboard
-     * @return SNI string from clipboard, or null if not available
-     */
-    private fun getSniFromClipboard(context: Context?): String? {
-        if (context == null) return null
-        
-        return try {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (clipboard?.hasPrimaryClip() == true) {
-                val clipData: ClipData? = clipboard.primaryClip
-                if (clipData != null && clipData.itemCount > 0) {
-                    val item: ClipData.Item = clipData.getItemAt(0)
-                    val text: CharSequence? = item.text
-                    val sni = text?.toString()?.trim()
-                    if (!sni.isNullOrBlank()) {
-                        sni
-                    } else {
-                        null
-                    }
-                } else {
-                    null
-                }
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-    
-    /**
      * Build Xray config JSON for Reality SOCKS
-     * @param config Reality configuration
-     * @param context Optional Android Context to read SNI from clipboard
      */
-    fun buildConfig(config: RealityConfig, context: Context? = null): JsonObject {
-        // Try to get SNI from clipboard first (user requirement: "clipboardaki sni kesinlikle eklesin")
-        val clipboardSni = getSniFromClipboard(context)
-        val finalServerName = if (!clipboardSni.isNullOrBlank()) {
-            clipboardSni // Use clipboard SNI if available
-        } else {
-            config.serverName // Fallback to config serverName
-        }
-        
-        // Validate config before building
-        require(config.publicKey.isNotBlank()) {
-            "Reality publicKey cannot be empty"
-        }
-        require(config.server.isNotBlank()) {
-            "Reality server address cannot be empty"
-        }
-        require(finalServerName.isNotBlank()) {
-            "Reality serverName (SNI) cannot be empty. Check clipboard or config."
-        }
-        require(config.shortId.isNotBlank()) {
-            "Reality shortId cannot be empty"
-        }
-        require(config.port > 0 && config.port <= 65535) {
-            "Reality port must be between 1 and 65535"
-        }
-        require(config.localPort > 0 && config.localPort <= 65535) {
-            "Reality localPort must be between 1 and 65535"
-        }
-        
+    fun buildConfig(config: RealityConfig): JsonObject {
         val root = JsonObject()
         
-        // Logging - Use debug level with access/error log paths
+        // Logging
         root.add("log", JsonObject().apply {
-            addProperty("loglevel", "debug")
-            addProperty("access", "/data/data/com.simplexray.an/files/xray_access.log")
-            addProperty("error", "/data/data/com.simplexray.an/files/xray_error.log")
+            addProperty("loglevel", "warning")
         })
         
         // Inbounds: SOCKS5 server on local port
@@ -119,7 +52,7 @@ object RealityXrayConfig {
                     addProperty("port", config.port)
                     val users = JsonArray()
                     val user = JsonObject().apply {
-                        addProperty("id", config.uuid ?: generateUUID()) // Use config UUID or generate
+                        addProperty("id", generateUUID()) // Generate or use config UUID
                         addProperty("encryption", "none")
                     }
                     users.add(user)
@@ -134,21 +67,11 @@ object RealityXrayConfig {
                 add("security", JsonPrimitive("reality"))
                 add("realitySettings", JsonObject().apply {
                     addProperty("show", false)
-                    // dest: Target server for REALITY handshake (must match serverNames SNI)
-                    addProperty("dest", "${finalServerName}:443")
+                    addProperty("dest", "${config.serverName}:443")
                     addProperty("xver", 0)
-                    // serverNames: SNI (Server Name Indication) array - REQUIRED for REALITY
-                    // This is the SNI that will be sent in TLS handshake
-                    // Priority: clipboard SNI > config serverName
-                    val serverNamesArray = JsonArray()
-                    if (finalServerName.isNotBlank()) {
-                        serverNamesArray.add(JsonPrimitive(finalServerName))
-                    }
-                    // Ensure serverNames array is not empty (SNI is required)
-                    require(serverNamesArray.size() > 0) {
-                        "Reality serverNames (SNI) array cannot be empty"
-                    }
-                    add("serverNames", serverNamesArray)
+                    add("serverNames", JsonArray().apply {
+                        add(JsonPrimitive(config.serverName))
+                    })
                     addProperty("publicKey", config.publicKey) // Xray REALITY uses publicKey
                     add("shortIds", JsonArray().apply {
                         add(JsonPrimitive(config.shortId))
@@ -158,8 +81,7 @@ object RealityXrayConfig {
                     addProperty("maxTimeDiff", 0L)
                 })
                 
-                // TLS fingerprint based on profile (utls required for Reality)
-                // Ensure fingerprint is always set for Reality protocol
+                // TLS fingerprint based on profile
                 val fingerprint = when (config.fingerprintProfile) {
                     TlsFingerprintProfile.CHROME -> "chrome"
                     TlsFingerprintProfile.FIREFOX -> "firefox"
@@ -167,20 +89,7 @@ object RealityXrayConfig {
                     TlsFingerprintProfile.EDGE -> "edge"
                     TlsFingerprintProfile.CUSTOM -> "random"
                 }
-                // Reality requires TLS fingerprint (utls) to be enabled
-                require(fingerprint.isNotBlank()) {
-                    "Reality protocol requires TLS fingerprint (utls) to be enabled"
-                }
                 addProperty("fingerprint", fingerprint)
-                
-                // Validate port and key match server configuration
-                // Port validation already done above, but ensure it matches server port
-                require(config.port > 0 && config.port <= 65535) {
-                    "Reality port must match server port (1-65535)"
-                }
-                require(config.publicKey.isNotBlank()) {
-                    "Reality publicKey must match server publicKey"
-                }
             })
         }
         outbounds.add(realityOutbound)

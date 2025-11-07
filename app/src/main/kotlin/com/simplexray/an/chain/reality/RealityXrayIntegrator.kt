@@ -111,14 +111,12 @@ object RealityXrayIntegrator {
      * @param originalXrayConfigPath Path to original Xray config
      * @param realityConfig Reality configuration to integrate
      * @param chainMode If true, configures for chain tunnel (Reality → Hysteria2 → Xray)
-     * @param context Optional Android Context to read SNI from clipboard
      * @return Modified Xray config JSON as string, or null if failed
      */
     fun buildUnifiedXrayConfig(
         originalXrayConfigPath: String,
         realityConfig: RealityConfig,
-        chainMode: Boolean = true,
-        context: Context? = null
+        chainMode: Boolean = true
     ): String? {
         return try {
             // Validate Reality config before building
@@ -209,8 +207,7 @@ object RealityXrayIntegrator {
             // Add Reality outbound if not exists
             if (!hasRealityOutbound) {
                 try {
-                    // Pass context to read SNI from clipboard if available
-                    val realityOutbound = RealityXrayConfig.buildConfig(realityConfig, context)
+                    val realityOutbound = RealityXrayConfig.buildConfig(realityConfig)
                         .getAsJsonArray("outbounds")
                         ?.firstOrNull()
                         ?.asJsonObject

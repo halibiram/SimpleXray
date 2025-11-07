@@ -254,12 +254,10 @@ class ChainSupervisor(private val context: Context) {
                         val originalConfigPath = File(context.filesDir, config.xrayConfigPath)
                         if (originalConfigPath.exists()) {
                             // Build unified config with Reality integration
-                            // Pass context to read SNI from clipboard if available
                             val unifiedConfig = RealityXrayIntegrator.buildUnifiedXrayConfig(
                                 originalConfigPath.absolutePath,
                                 config.realityConfig,
-                                chainMode = true,
-                                context = context
+                                chainMode = true
                             )
                             
                             if (unifiedConfig != null) {

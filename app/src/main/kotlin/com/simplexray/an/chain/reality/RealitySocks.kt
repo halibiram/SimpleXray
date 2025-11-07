@@ -77,8 +77,7 @@ object RealitySocks {
             AppLogger.i("RealitySocks: Starting on port ${config.localPort}")
             
             // Build Xray config for Reality SOCKS
-            // Pass context to read SNI from clipboard if available
-            val xrayConfig = RealityXrayConfig.buildConfig(config, ctx)
+            val xrayConfig = RealityXrayConfig.buildConfig(config)
             
             // Write config to file (path is within filesDir, safe)
             val configFile = File(ctx.filesDir, "reality-socks-${config.localPort}.json")
