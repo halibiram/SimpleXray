@@ -693,13 +693,17 @@ jobs:
             fi
             
             # Try to apply patch with detailed error output
+            echo "   Running: git apply --check \"$patch\""
             PATCH_CHECK_OUTPUT=$(git apply --check "$patch" 2>&1)
             PATCH_CHECK_EXIT=$?
+            echo "   Check exit code: $PATCH_CHECK_EXIT"
             
             if [ $PATCH_CHECK_EXIT -eq 0 ]; then
               # Patch check passed, try to apply
+              echo "   Running: git apply \"$patch\""
               PATCH_APPLY_OUTPUT=$(git apply "$patch" 2>&1)
               PATCH_APPLY_EXIT=$?
+              echo "   Apply exit code: $PATCH_APPLY_EXIT"
               
               if [ $PATCH_APPLY_EXIT -eq 0 ]; then
                 echo "✅ Successfully applied: $PATCH_NAME"
@@ -711,10 +715,12 @@ jobs:
                 echo "$PATCH_APPLY_OUTPUT" | sed 's/^/   /'
                 
                 # Check if already applied
+                echo "   Checking if patch is already applied..."
                 if git apply --reverse --check "$patch" 2>/dev/null; then
                   echo "   ℹ️  Patch appears to be already applied (reversing check passed)"
                   SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
                 else
+                  echo "   ❌ Patch is not already applied"
                   CRITICAL_PATCHES+=("$PATCH_NAME (apply failed)")
                   FAILED_COUNT=$((FAILED_COUNT + 1))
                 fi
@@ -722,7 +728,7 @@ jobs:
             else
               echo "❌ ERROR: Patch check failed for: $PATCH_NAME"
               echo "   Exit code: $PATCH_CHECK_EXIT"
-              echo "   Error output:"
+              echo "   Full error output:"
               echo "$PATCH_CHECK_OUTPUT" | sed 's/^/   /'
               
               # Show what files the patch expects
@@ -732,11 +738,16 @@ jobs:
                 
                 # Check if files exist
                 PATCH_FILES=$(grep "^diff --git" "$patch" | sed 's/^diff --git a\///;s/ b\/.*$//' | head -3)
+                echo "   Checking if target files exist:"
                 for file in $PATCH_FILES; do
                   if [ -f "$file" ]; then
                     echo "      ✅ File exists: $file"
+                    echo "      First 5 lines of file:"
+                    head -5 "$file" | sed 's/^/         /' || true
                   else
                     echo "      ❌ File missing: $file"
+                    echo "      Searching for similar files:"
+                    find . -name "$(basename "$file")" -type f 2>/dev/null | head -3 | sed 's/^/         /' || echo "         (none found)"
                   fi
                 done
               fi
