@@ -108,6 +108,15 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 FileOutputStream(newFile).use { fileOutputStream ->
                     fileOutputStream.write(fileContent.toByteArray())
                 }
+                
+                // Add to configFilesOrder if not already present
+                val currentOrder = prefs.configFilesOrder.toMutableList()
+                if (!currentOrder.contains(filename)) {
+                    currentOrder.add(filename)
+                    prefs.configFilesOrder = currentOrder
+                    Log.d(TAG, "Added $filename to configFilesOrder")
+                }
+                
                 Log.d(TAG, "Created new config file: ${newFile.absolutePath}")
                 newFile.absolutePath
             } catch (e: IOException) {
@@ -178,6 +187,15 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 FileOutputStream(newFile).use { fileOutputStream ->
                     fileOutputStream.write(formattedContent.toByteArray(StandardCharsets.UTF_8))
                 }
+                
+                // Add to configFilesOrder if not already present
+                val currentOrder = prefs.configFilesOrder.toMutableList()
+                if (!currentOrder.contains(safeFilename)) {
+                    currentOrder.add(safeFilename)
+                    prefs.configFilesOrder = currentOrder
+                    Log.d(TAG, "Added $safeFilename to configFilesOrder")
+                }
+                
                 Log.d(
                     TAG,
                     "Successfully imported config from content to: ${newFile.absolutePath}"
