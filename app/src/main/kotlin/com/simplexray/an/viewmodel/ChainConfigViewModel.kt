@@ -158,7 +158,12 @@ class ChainConfigViewModel(application: Application) : AndroidViewModel(applicat
                             val users = vnext.getAsJsonArray("users")?.firstOrNull()?.asJsonObject
                             val uuid = users?.get("id")?.asString ?: return null
                             
-                            val publicKey = realitySettings.get("publicKey")?.asString ?: return null
+                            val publicKey = realitySettings.get("publicKey")?.asString
+                            // Validate publicKey is not empty
+                            if (publicKey.isNullOrBlank()) {
+                                AppLogger.w("ChainConfigViewModel: Found REALITY outbound with empty publicKey, skipping")
+                                continue
+                            }
                             val shortIds = realitySettings.getAsJsonArray("shortIds")
                             val shortId = shortIds?.firstOrNull()?.asString ?: ""
                             val serverNames = realitySettings.getAsJsonArray("serverNames")

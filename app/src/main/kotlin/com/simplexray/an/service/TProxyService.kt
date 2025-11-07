@@ -1243,9 +1243,14 @@ class TProxyService : VpnService() {
                         val server = vnext[0].asJsonObject
                         val serverAddr = server.get("address")?.asString ?: return null
                         val serverPort = server.get("port")?.asInt ?: return null
-                        val publicKey = realitySettings?.get("publicKey")?.asString ?: return null
+                        val publicKey = realitySettings?.get("publicKey")?.asString
+                        // Validate publicKey is not empty
+                        if (publicKey.isNullOrBlank()) {
+                            AppLogger.w("TProxyService: Found REALITY outbound with empty publicKey, skipping")
+                            return null
+                        }
                         val shortIds = realitySettings?.getAsJsonArray("shortIds")
-                        val shortId = shortIds?.get(0)?.asString ?: return null
+                        val shortId = shortIds?.get(0)?.asString ?: ""
                         val serverNames = realitySettings?.getAsJsonArray("serverNames")
                         val serverName = serverNames?.get(0)?.asString ?: serverAddr
                         val users = server.getAsJsonArray("users")

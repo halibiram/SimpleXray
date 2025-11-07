@@ -53,7 +53,12 @@ object RealityXrayIntegrator {
                             val users = vnext.getAsJsonArray("users")?.firstOrNull()?.asJsonObject
                             val uuid = users?.get("id")?.asString
                             
-                            val publicKey = realitySettings.get("publicKey")?.asString ?: return null
+                            val publicKey = realitySettings.get("publicKey")?.asString
+                            // Validate publicKey is not empty
+                            if (publicKey.isNullOrBlank()) {
+                                AppLogger.w("RealityXrayIntegrator: Found REALITY outbound with empty publicKey, skipping")
+                                continue
+                            }
                             val shortIds = realitySettings.getAsJsonArray("shortIds")
                             val shortId = shortIds?.firstOrNull()?.asString ?: ""
                             val serverNames = realitySettings.getAsJsonArray("serverNames")
@@ -113,6 +118,16 @@ object RealityXrayIntegrator {
         chainMode: Boolean = true
     ): String? {
         return try {
+            // Validate Reality config before building
+            if (realityConfig.publicKey.isBlank()) {
+                AppLogger.e("RealityXrayIntegrator: Reality publicKey is empty, cannot build unified config")
+                return null
+            }
+            if (realityConfig.server.isBlank()) {
+                AppLogger.e("RealityXrayIntegrator: Reality server address is empty, cannot build unified config")
+                return null
+            }
+            
             val configFile = File(originalXrayConfigPath)
             if (!configFile.exists()) {
                 AppLogger.e("RealityXrayIntegrator: Original Xray config not found: $originalXrayConfigPath")
@@ -151,28 +166,72 @@ object RealityXrayIntegrator {
             // Get existing outbounds
             val outbounds = root.getAsJsonArray("outbounds") ?: com.google.gson.JsonArray()
             
-            // Check if Reality outbound already exists
-            val hasRealityOutbound = outbounds.any { outbound ->
-                outbound.asJsonObject.get("tag")?.asString == "reality-out"
+            // Clean up existing REALITY outbounds with invalid settings
+            // Remove or fix REALITY outbounds with empty publicKey
+            val cleanedOutbounds = com.google.gson.JsonArray()
+            outbounds.forEach { outboundElement ->
+                val outbound = outboundElement.asJsonObject
+                val streamSettings = outbound.getAsJsonObject("streamSettings")
+                val realitySettings = streamSettings?.getAsJsonObject("realitySettings")
+                
+                // Check if this is a REALITY outbound with invalid settings
+                // Remove REALITY outbounds with:
+                // 1. Empty publicKey (client-side REALITY requires publicKey)
+                // 2. Has privateKey (server-side config, not for client use)
+                val isInvalidReality = streamSettings?.get("security")?.asString == "reality" &&
+                    (realitySettings?.get("publicKey")?.asString?.isBlank() == true ||
+                     realitySettings?.has("privateKey") == true) // Remove if has privateKey (server-side)
+                
+                if (!isInvalidReality) {
+                    // Also check for detour outbounds that might point to invalid REALITY outbounds
+                    val detourTag = outbound.get("detour")?.asString
+                    if (detourTag != null) {
+                        // Keep detour outbounds, they will be validated when Xray loads
+                        cleanedOutbounds.add(outbound)
+                    } else {
+                        cleanedOutbounds.add(outbound)
+                    }
+                } else {
+                    AppLogger.w("RealityXrayIntegrator: Removing invalid REALITY outbound: ${outbound.get("tag")?.asString}")
+                }
+            }
+            
+            // Check if Reality outbound already exists (after cleanup)
+            val hasRealityOutbound = cleanedOutbounds.any { outbound ->
+                val streamSettings = outbound.asJsonObject.getAsJsonObject("streamSettings")
+                streamSettings?.get("security")?.asString == "reality" &&
+                streamSettings.getAsJsonObject("realitySettings")?.get("publicKey")?.asString?.isNotBlank() == true
             }
             
             // Add Reality outbound if not exists
             if (!hasRealityOutbound) {
-                val realityOutbound = RealityXrayConfig.buildConfig(realityConfig)
-                    .getAsJsonArray("outbounds")
-                    ?.firstOrNull()
-                    ?.asJsonObject
-                
-                if (realityOutbound != null) {
-                    // Insert Reality outbound at the beginning (highest priority)
-                    val newOutbounds = com.google.gson.JsonArray()
-                    newOutbounds.add(realityOutbound)
+                try {
+                    val realityOutbound = RealityXrayConfig.buildConfig(realityConfig)
+                        .getAsJsonArray("outbounds")
+                        ?.firstOrNull()
+                        ?.asJsonObject
                     
-                    // Add existing outbounds
-                    outbounds.forEach { newOutbounds.add(it) }
-                    
-                    root.add("outbounds", newOutbounds)
+                    if (realityOutbound != null) {
+                        // Insert Reality outbound at the beginning (highest priority)
+                        val newOutbounds = com.google.gson.JsonArray()
+                        newOutbounds.add(realityOutbound)
+                        
+                        // Add existing cleaned outbounds
+                        cleanedOutbounds.forEach { newOutbounds.add(it) }
+                        
+                        root.add("outbounds", newOutbounds)
+                    } else {
+                        AppLogger.w("RealityXrayIntegrator: Failed to build Reality outbound, using cleaned outbounds")
+                        root.add("outbounds", cleanedOutbounds)
+                    }
+                } catch (e: Exception) {
+                    AppLogger.e("RealityXrayIntegrator: Error building Reality outbound: ${e.message}", e)
+                    // Use cleaned outbounds without Reality
+                    root.add("outbounds", cleanedOutbounds)
                 }
+            } else {
+                // Use cleaned outbounds
+                root.add("outbounds", cleanedOutbounds)
             }
             
             // Update routing rules for chain mode

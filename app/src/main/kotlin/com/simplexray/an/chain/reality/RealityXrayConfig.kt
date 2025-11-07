@@ -17,6 +17,20 @@ object RealityXrayConfig {
      * Build Xray config JSON for Reality SOCKS
      */
     fun buildConfig(config: RealityConfig): JsonObject {
+        // Validate config before building
+        require(config.publicKey.isNotBlank()) {
+            "Reality publicKey cannot be empty"
+        }
+        require(config.server.isNotBlank()) {
+            "Reality server address cannot be empty"
+        }
+        require(config.port > 0 && config.port <= 65535) {
+            "Reality port must be between 1 and 65535"
+        }
+        require(config.localPort > 0 && config.localPort <= 65535) {
+            "Reality localPort must be between 1 and 65535"
+        }
+        
         val root = JsonObject()
         
         // Logging
