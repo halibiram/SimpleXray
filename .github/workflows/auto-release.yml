@@ -36,13 +36,21 @@ jobs:
       (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
     secrets: inherit
 
+  build-quiche-libs:
+    name: Build QUICHE Native Client
+    uses: ./.github/workflows/build-quiche.yml
+    if: |
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    secrets: inherit
+
   build-and-release:
     name: Build and Auto Release
     runs-on: ubuntu-latest
-    needs: [build-xray-libs, build-hysteria2-libs]
+    needs: [build-xray-libs, build-hysteria2-libs, build-quiche-libs]
     if: always() &&
       (needs.build-xray-libs.result == 'success' || needs.build-xray-libs.result == 'skipped') &&
-      (needs.build-hysteria2-libs.result == 'success' || needs.build-hysteria2-libs.result == 'skipped')
+      (needs.build-hysteria2-libs.result == 'success' || needs.build-hysteria2-libs.result == 'skipped') &&
+      (needs.build-quiche-libs.result == 'success' || needs.build-quiche-libs.result == 'skipped')
 
     steps:
       - name: Checkout
@@ -151,6 +159,14 @@ jobs:
           pattern: hysteria2-*
           merge-multiple: false
 
+      - name: Download QUICHE Native Client
+        if: steps.check_tag.outputs.exists == 'false' && needs.build-quiche-libs.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          path: quiche-libs
+          pattern: quiche-client-*
+          merge-multiple: false
+
       - name: Replace Xray Binaries
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
         run: |
@@ -202,6 +218,35 @@ jobs:
           # Verify binaries
           echo "📋 Verifying Hysteria2 binaries:"
           ls -lh app/src/main/jniLibs/*/libhysteria2.so 2>/dev/null || echo "⚠️  No Hysteria2 binaries found"
+
+      - name: Replace QUICHE Native Client Libraries
+        if: steps.check_tag.outputs.exists == 'false' && needs.build-quiche-libs.result == 'success'
+        run: |
+          echo "🚀 Replacing QUICHE native client libraries..."
+
+          # Ensure jniLibs directory structure exists
+          mkdir -p app/src/main/jniLibs
+
+          # Remove old QUICHE libraries if they exist
+          rm -f app/src/main/jniLibs/*/libquiche-client.so
+
+          # Copy new QUICHE native client libraries
+          for abi in arm64-v8a x86_64; do
+            if [ -f "quiche-libs/quiche-client-$abi/libquiche-client.so" ]; then
+              mkdir -p app/src/main/jniLibs/$abi
+              cp quiche-libs/quiche-client-$abi/libquiche-client.so app/src/main/jniLibs/$abi/libquiche-client.so
+              echo "✅ Copied QUICHE native client for $abi"
+
+              # Show library info
+              ls -lh app/src/main/jniLibs/$abi/libquiche-client.so
+            else
+              echo "⚠️  QUICHE native client not found for $abi"
+            fi
+          done
+
+          # Verify QUICHE binaries
+          echo "📋 Verifying QUICHE native client binaries:"
+          ls -lh app/src/main/jniLibs/*/libquiche-client.so 2>/dev/null || echo "⚠️  No QUICHE binaries found"
 
           # Verify resource directories are intact (important for build)
           echo "📋 Verifying resource directories:"
