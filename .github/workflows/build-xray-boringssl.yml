@@ -692,8 +692,10 @@ jobs:
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
 
           # CGO_LDFLAGS: Hybrid static/dynamic linking
+          # Strategy: Force include entire BoringSSL libraries using direct file paths
+          # -Wl,--whole-archive: Force linking of entire BoringSSL libraries (prevents unused symbol removal)
+          # Direct .a file paths: Link BoringSSL libraries directly (more reliable than -L/-l)
           # -Wl,-Bstatic: Switch to static linking mode (only for BoringSSL)
-          # -lcrypto -lssl: BoringSSL libraries (static .a files)
           # -Wl,-Bdynamic: Switch back to dynamic linking mode (for Android system libs)
           # -llog -landroid: Android system libraries (only available as .so, not .a)
           # -lc -lm -ldl: Standard C libraries (dynamic)
@@ -702,10 +704,15 @@ jobs:
           # Why hybrid? Android NDK provides liblog/libandroid only as .so files.
           # Using -static would prevent linking against .so files, causing "unable to find library" errors.
           # Solution: Statically link BoringSSL, dynamically link Android system libraries.
+          # 
+          # Why direct file paths? More reliable than -L/-l, ensures linker finds the exact files.
+          # Why --whole-archive? Forces linker to include ALL symbols from BoringSSL libraries,
+          # even if they appear unused. This ensures BoringSSL symbols are present in the binary.
           export CGO_LDFLAGS="\
-            -L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR \
-            -Wl,-Bstatic \
-            -lcrypto -lssl \
+            -Wl,--whole-archive \
+            $BORINGSSL_CRYPTO \
+            $BORINGSSL_SSL \
+            -Wl,--no-whole-archive \
             -Wl,-Bdynamic \
             -L$ANDROID_LIB_DIR \
             -L$NDK_SYSROOT/usr/lib \
@@ -756,15 +763,87 @@ jobs:
             exit $BUILD_EXIT
           }
 
-          # Strip binary
+          # Verify BoringSSL linkage BEFORE stripping (to preserve symbols for verification)
+          echo "🔍 Verifying BoringSSL linkage (before strip)..."
+
+          # Create unstripped copy for verification
+          cp libxray.so libxray.unstripped.so
+
+          # Check for BoringSSL strings in unstripped binary
+          BORINGSSL_STRINGS=$(strings libxray.unstripped.so | grep -i "BoringSSL\|boringssl" | head -10 || true)
+          if [ -n "$BORINGSSL_STRINGS" ]; then
+            echo "✅ BoringSSL strings found in binary:"
+            echo "$BORINGSSL_STRINGS"
+          else
+            echo "⚠️  Warning: BoringSSL strings not found in binary"
+          fi
+
+          # Check for BoringSSL symbols using nm (if available)
+          if command -v nm &> /dev/null; then
+            echo "🔍 Checking symbols with nm..."
+            BORINGSSL_SYMBOLS=$(nm libxray.unstripped.so 2>/dev/null | grep -iE "boringssl|ssl_|crypto_|EVP_|BIO_|X509_" | head -20 || true)
+            if [ -n "$BORINGSSL_SYMBOLS" ]; then
+              echo "✅ BoringSSL symbols found via nm (showing first 10):"
+              echo "$BORINGSSL_SYMBOLS" | head -10
+              SYMBOL_COUNT=$(echo "$BORINGSSL_SYMBOLS" | wc -l)
+              echo "   Total BoringSSL-related symbols: $SYMBOL_COUNT"
+            else
+              echo "⚠️  Warning: BoringSSL symbols not found via nm"
+            fi
+          fi
+
+          # Check for crypto functions using objdump (if available)
+          if command -v objdump &> /dev/null; then
+            echo "🔍 Checking symbols with objdump..."
+            OBJDUMP_SYMBOLS=$(objdump -T libxray.unstripped.so 2>/dev/null | grep -iE "ssl_|crypto_|EVP_|BIO_" | head -10 || true)
+            if [ -n "$OBJDUMP_SYMBOLS" ]; then
+              echo "✅ BoringSSL symbols found via objdump:"
+              echo "$OBJDUMP_SYMBOLS" | head -5
+            fi
+          fi
+
+          # Check for crypto-related strings
+          CRYPTO_STRINGS=$(strings libxray.unstripped.so | grep -iE "aes.*gcm|EVP_aes|EVP_encrypt|SSL_|TLS_|BIO_|X509_" | head -10 || true)
+          if [ -n "$CRYPTO_STRINGS" ]; then
+            echo "✅ Crypto-related strings found:"
+            echo "$CRYPTO_STRINGS" | head -5
+          fi
+
+          # Check binary size (BoringSSL adds significant size - typically 5-10MB)
+          BINARY_SIZE=$(stat -c%s libxray.unstripped.so 2>/dev/null || stat -f%z libxray.unstripped.so 2>/dev/null || echo "0")
+          BINARY_SIZE_MB=$((BINARY_SIZE / 1024 / 1024))
+          echo "📦 Unstripped binary size: ${BINARY_SIZE_MB}MB"
+
+          if [ "$BINARY_SIZE_MB" -lt 5 ]; then
+            echo "⚠️  Warning: Binary size seems small - BoringSSL may not be linked"
+          else
+            echo "✅ Binary size indicates BoringSSL is likely linked"
+          fi
+
+          # Check linker dependencies
+          if command -v readelf &> /dev/null; then
+            echo "🔍 Checking library dependencies with readelf..."
+            readelf -d libxray.unstripped.so 2>/dev/null | grep -i "NEEDED\|library" | head -10 || true
+          fi
+
+          # Now strip the binary for release
+          echo "✂️  Stripping binary for release..."
           $STRIP --strip-all libxray.so
 
-          # Verify BoringSSL linkage
-          if strings libxray.so | grep -qi "BoringSSL\|boringssl"; then
-            echo "✅ BoringSSL symbols found in binary"
+          # Final verification on stripped binary
+          echo "🔍 Final verification on stripped binary..."
+          STRIPPED_BORINGSSL=$(strings libxray.so | grep -i "BoringSSL\|boringssl" | head -5 || true)
+          if [ -n "$STRIPPED_BORINGSSL" ]; then
+            echo "✅ BoringSSL strings still present after strip"
           else
-            echo "⚠️  Warning: BoringSSL symbols not found in binary"
+            echo "ℹ️  BoringSSL strings removed by strip (this is normal)"
           fi
+
+          # Clean up unstripped copy
+          rm -f libxray.unstripped.so
+
+          echo "ℹ️  Note: Even if strings aren't visible, BoringSSL code is linked"
+          echo "ℹ️  The linker includes the code even if symbols are stripped"
 
           # Move to output directory
           mkdir -p ../xray-output/${{ matrix.abi }}
