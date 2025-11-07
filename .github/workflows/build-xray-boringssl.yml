@@ -694,9 +694,19 @@ jobs:
             
             # Try to apply patch with detailed error output
             echo "   Running: git apply --check \"$patch\""
-            PATCH_CHECK_OUTPUT=$(git apply --check "$patch" 2>&1)
+            # Capture both stdout and stderr, and exit code separately
+            set +e  # Temporarily disable exit on error to capture exit code
+            git apply --check "$patch" > /tmp/patch_check_stdout.txt 2> /tmp/patch_check_stderr.txt
             PATCH_CHECK_EXIT=$?
+            set -e  # Re-enable exit on error
+            PATCH_CHECK_OUTPUT=$(cat /tmp/patch_check_stdout.txt /tmp/patch_check_stderr.txt 2>/dev/null || echo "")
             echo "   Check exit code: $PATCH_CHECK_EXIT"
+            if [ $PATCH_CHECK_EXIT -ne 0 ]; then
+              echo "   Error output (stdout):"
+              cat /tmp/patch_check_stdout.txt 2>/dev/null | sed 's/^/      /' || echo "      (empty)"
+              echo "   Error output (stderr):"
+              cat /tmp/patch_check_stderr.txt 2>/dev/null | sed 's/^/      /' || echo "      (empty)"
+            fi
             
             if [ $PATCH_CHECK_EXIT -eq 0 ]; then
               # Patch check passed, try to apply
