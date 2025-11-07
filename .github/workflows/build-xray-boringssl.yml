@@ -782,8 +782,15 @@ jobs:
             exit 1
           fi
 
-          # Define critical patches that MUST succeed
-          CRITICAL_PATCH_NAMES=("001-boringssl-bridge.patch" "005-boringssl-tls-bridge.patch")
+          # Define critical patches that MUST succeed (ALL patches are now required)
+          CRITICAL_PATCH_NAMES=(
+            "001-boringssl-bridge.patch"
+            "002-crypto-boringssl.patch"
+            "003-tls-boringssl.patch"
+            "004-x509-boringssl.patch"
+            "005-boringssl-tls-bridge.patch"
+            "007-boringssl-handshake-trace.patch"
+          )
           CRITICAL_FAILED=()
 
           # Check if any critical patches failed
