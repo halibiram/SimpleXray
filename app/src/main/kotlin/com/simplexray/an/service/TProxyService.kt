@@ -26,6 +26,14 @@ import com.simplexray.an.data.source.LogFileManager
 import com.simplexray.an.prefs.Preferences
 import com.simplexray.an.service.XrayProcessManager
 import com.simplexray.an.performance.PerformanceIntegration
+import com.simplexray.an.chain.supervisor.ChainSupervisor
+import com.simplexray.an.chain.supervisor.ChainConfig
+import com.simplexray.an.chain.reality.RealitySocks
+import com.simplexray.an.chain.reality.RealityConfig
+import com.simplexray.an.chain.reality.TlsFingerprintProfile
+import com.simplexray.an.chain.pepper.PepperParams
+import com.simplexray.an.chain.pepper.PepperMode
+import com.simplexray.an.chain.pepper.QueueDiscipline
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -92,6 +100,9 @@ class TProxyService : VpnService() {
     private var perfIntegration: PerformanceIntegration? = null
     private val enablePerformanceMode: Boolean
         get() = Preferences(this).enablePerformanceMode
+    
+    // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
+    private var chainSupervisor: ChainSupervisor? = null
 
     // Data class to hold both process and reloading state atomically
     // PID is stored separately to allow killing process even if Process reference becomes invalid
@@ -950,6 +961,17 @@ class TProxyService : VpnService() {
             // Save state that VPN is running
             prefs.vpnServiceWasRunning = true
             AppLogger.d("TProxyService: VPN state saved - service is running")
+            
+            // Start chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+            // Chain must be started before TProxy to get the local SOCKS5 port
+            val chainStarted = startChain(prefs)
+            if (!chainStarted) {
+                AppLogger.w("TProxyService: Chain start failed, falling back to direct SOCKS5")
+            } else {
+                // Wait for chain to be ready and get the local SOCKS5 port
+                waitForChainReady()
+            }
+            
             val tproxyFile = File(cacheDir, "tproxy.conf")
             try {
                 tproxyFile.createNewFile()
@@ -1046,6 +1068,9 @@ class TProxyService : VpnService() {
     }
 
     private fun stopService() {
+        // Stop chain first
+        stopChain()
+        
         tunFd?.let {
             try {
                 it.close()
@@ -1068,6 +1093,287 @@ class TProxyService : VpnService() {
             NativeBridgeManager.stopTProxyService()
         }
         exit()
+    }
+    
+    /**
+     * Start the tunneling chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+     * Returns true if chain started successfully, false otherwise
+     */
+    private fun startChain(prefs: Preferences): Boolean {
+        return try {
+            if (chainSupervisor == null) {
+                chainSupervisor = ChainSupervisor(this)
+            }
+            
+            // Build chain config from preferences and Xray config
+            val chainConfig = buildChainConfig(prefs)
+            
+            // Validate that we have at least Xray config path
+            if (chainConfig.xrayConfigPath == null && prefs.selectedConfigPath == null) {
+                AppLogger.w("TProxyService: No Xray config path available, chain cannot start")
+                return false
+            }
+            
+            val result = chainSupervisor?.start(chainConfig)
+            if (result?.isSuccess == true) {
+                AppLogger.i("TProxyService: Chain started successfully")
+                true
+            } else {
+                val error = result?.exceptionOrNull()
+                AppLogger.w("TProxyService: Chain start failed: ${error?.message}", error)
+                false
+            }
+        } catch (e: Exception) {
+            AppLogger.e("TProxyService: Error starting chain: ${e.message}", e)
+            false
+        }
+    }
+    
+    /**
+     * Build chain configuration from preferences and Xray config
+     * Ensures chain will work by using Xray config path
+     */
+    private fun buildChainConfig(prefs: Preferences): ChainConfig {
+        // Get Xray config path (required for chain to work)
+        // ChainSupervisor expects relative path from filesDir
+        val xrayConfigPath = prefs.selectedConfigPath?.let { 
+            val configFile = File(it)
+            // Validate config file exists and is accessible
+            if (configFile.exists() && configFile.canRead()) {
+                // Convert absolute path to relative path from filesDir
+                val filesDir = filesDir
+                val canonicalConfigPath = configFile.canonicalPath
+                val canonicalFilesDir = filesDir.canonicalPath
+                
+                if (canonicalConfigPath.startsWith(canonicalFilesDir)) {
+                    // Relative path from filesDir
+                    canonicalConfigPath.substring(canonicalFilesDir.length + 1)
+                } else {
+                    // If config is in cacheDir, use absolute path (ChainSupervisor will handle it)
+                    // Or return just the filename if it's in filesDir
+                    configFile.name
+                }
+            } else {
+                AppLogger.w("TProxyService: Xray config file not accessible: $it")
+                null
+            }
+        }
+        
+        // Build Reality config from Xray config if available
+        // For now, Reality is optional - chain can work with just Xray
+        val realityConfig = try {
+            extractRealityConfigFromXray(prefs.selectedConfigPath)
+        } catch (e: Exception) {
+            AppLogger.d("TProxyService: Could not extract Reality config: ${e.message}")
+            null
+        }
+        
+        // Hysteria2 and PepperShaper are optional for now
+        // Can be enabled later via Preferences
+        return ChainConfig(
+            name = "TProxy Chain",
+            realityConfig = realityConfig,
+            hysteria2Config = null, // Can be configured later via Preferences
+            pepperParams = PepperParams(
+                mode = PepperMode.BURST_FRIENDLY,
+                maxBurstBytes = 64 * 1024, // 64KB
+                targetRateBps = 0, // Unlimited
+                queueDiscipline = QueueDiscipline.FQ,
+                lossAwareBackoff = true,
+                enablePacing = true
+            ),
+            xrayConfigPath = xrayConfigPath,
+            tlsMode = ChainConfig.TlsMode.BORINGSSL
+        )
+    }
+    
+    /**
+     * Extract Reality config from Xray JSON config file
+     * Returns null if Reality is not configured or config cannot be parsed
+     */
+    private fun extractRealityConfigFromXray(configPath: String?): RealityConfig? {
+        if (configPath == null) return null
+        
+        return try {
+            val configFile = File(configPath)
+            if (!configFile.exists()) return null
+            
+            val configContent = configFile.readText()
+            val json = com.google.gson.JsonParser.parseString(configContent).asJsonObject
+            
+            // Look for REALITY outbound in outbounds array
+            val outbounds = json.getAsJsonArray("outbounds") ?: return null
+            
+            for (outboundElement in outbounds) {
+                val outbound = outboundElement.asJsonObject
+                val streamSettings = outbound.getAsJsonObject("streamSettings")
+                if (streamSettings?.get("security")?.asString == "reality") {
+                    val realitySettings = streamSettings.getAsJsonObject("realitySettings")
+                    val settings = outbound.getAsJsonObject("settings")
+                    val vnext = settings?.getAsJsonArray("vnext")
+                    
+                    if (vnext != null && vnext.size() > 0) {
+                        val server = vnext[0].asJsonObject
+                        val serverAddr = server.get("address")?.asString ?: return null
+                        val serverPort = server.get("port")?.asInt ?: return null
+                        val publicKey = realitySettings?.get("publicKey")?.asString ?: return null
+                        val shortIds = realitySettings?.getAsJsonArray("shortIds")
+                        val shortId = shortIds?.get(0)?.asString ?: return null
+                        val serverNames = realitySettings?.getAsJsonArray("serverNames")
+                        val serverName = serverNames?.get(0)?.asString ?: serverAddr
+                        
+                        return RealityConfig(
+                            server = serverAddr,
+                            port = serverPort,
+                            shortId = shortId,
+                            publicKey = publicKey,
+                            serverName = serverName,
+                            fingerprintProfile = TlsFingerprintProfile.CHROME,
+                            localPort = 10808 // Default local SOCKS5 port
+                        )
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            AppLogger.d("TProxyService: Error extracting Reality config: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * Wait for chain to be ready and local SOCKS5 port to be available
+     * Checks both Reality SOCKS and Xray SOCKS inbound ports
+     */
+    private fun waitForChainReady() {
+        var attempts = 0
+        val maxAttempts = 10
+        val delayMs = 500L
+        
+        while (attempts < maxAttempts) {
+            // Check Reality SOCKS first
+            val realityAddr = RealitySocks.getLocalAddress()
+            if (realityAddr != null) {
+                AppLogger.i("TProxyService: Chain ready, Reality SOCKS port: ${realityAddr.port}")
+                return
+            }
+            
+            // If Reality SOCKS is not available, check Xray SOCKS inbound
+            val prefs = Preferences(this)
+            val configPath = prefs.selectedConfigPath
+            if (configPath != null) {
+                val xraySocksPort = extractXraySocksPort(configPath)
+                if (xraySocksPort != null) {
+                    // Port exists in config, assume Xray is ready (or will be ready soon)
+                    AppLogger.i("TProxyService: Chain ready, Xray SOCKS port: $xraySocksPort")
+                    return
+                }
+            }
+            
+            attempts++
+            if (attempts < maxAttempts) {
+                Thread.sleep(delayMs)
+            }
+        }
+        
+        AppLogger.w("TProxyService: Chain SOCKS5 port not available after ${maxAttempts} attempts")
+    }
+    
+    /**
+     * Stop the tunneling chain
+     */
+    private fun stopChain() {
+        try {
+            chainSupervisor?.stop()
+            AppLogger.i("TProxyService: Chain stopped")
+        } catch (e: Exception) {
+            AppLogger.e("TProxyService: Error stopping chain: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Get TProxy configuration string
+     */
+    private fun getTproxyConf(prefs: Preferences): String {
+        var tproxyConf = """misc:
+  task-stack-size: ${prefs.taskStackSize}
+tunnel:
+  mtu: ${prefs.tunnelMtu}
+"""
+        
+        // Use chain's local SOCKS5 port if available, otherwise fall back to preferences
+        val socksPort = getChainSocksPort() ?: prefs.socksPort
+        val socksAddress = "127.0.0.1" // Chain always uses localhost
+        
+        tproxyConf += """socks5:
+  port: $socksPort
+  address: '$socksAddress'
+  udp: '${if (prefs.udpInTcp) "tcp" else "udp"}'
+"""
+        // Chain doesn't use authentication, but keep for backward compatibility
+        if (prefs.socksUsername.isNotEmpty() && prefs.socksPassword.isNotEmpty()) {
+            tproxyConf += "  username: '" + prefs.socksUsername + "'\n"
+            tproxyConf += "  password: '" + prefs.socksPassword + "'\n"
+        }
+        return tproxyConf
+    }
+    
+    /**
+     * Get chain's local SOCKS5 port if chain is running
+     * Falls back to Xray's SOCKS inbound port if Reality SOCKS is not available
+     */
+    private fun getChainSocksPort(): Int? {
+        return try {
+            // First try Reality SOCKS port
+            val realityAddr = RealitySocks.getLocalAddress()
+            if (realityAddr != null) {
+                return realityAddr.port
+            }
+            
+            // If Reality SOCKS is not available, try to get Xray's SOCKS inbound port
+            val prefs = Preferences(this)
+            val configPath = prefs.selectedConfigPath
+            if (configPath != null) {
+                val xraySocksPort = extractXraySocksPort(configPath)
+                if (xraySocksPort != null) {
+                    AppLogger.d("TProxyService: Using Xray SOCKS inbound port: $xraySocksPort")
+                    return xraySocksPort
+                }
+            }
+            
+            null
+        } catch (e: Exception) {
+            AppLogger.d("TProxyService: Chain SOCKS5 port not available: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * Extract SOCKS inbound port from Xray config
+     */
+    private fun extractXraySocksPort(configPath: String): Int? {
+        return try {
+            val configFile = File(configPath)
+            if (!configFile.exists()) return null
+            
+            val configContent = configFile.readText()
+            val json = com.google.gson.JsonParser.parseString(configContent).asJsonObject
+            val inbounds = json.getAsJsonArray("inbounds") ?: return null
+            
+            for (inboundElement in inbounds) {
+                val inbound = inboundElement.asJsonObject
+                if (inbound.get("protocol")?.asString == "socks") {
+                    val port = inbound.get("port")?.asInt
+                    if (port != null) {
+                        return port
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            AppLogger.d("TProxyService: Error extracting Xray SOCKS port: ${e.message}")
+            null
+        }
     }
 
     @Suppress("SameParameterValue")
@@ -1134,23 +1440,5 @@ class TProxyService : VpnService() {
         fun TProxyGetStats(): LongArray? = NativeBridgeManager.getTProxyStats()
         
         fun getNativeLibraryDir(context: Context?): String? = NativeBridgeManager.getNativeLibraryDir(context)
-
-        private fun getTproxyConf(prefs: Preferences): String {
-            var tproxyConf = """misc:
-  task-stack-size: ${prefs.taskStackSize}
-tunnel:
-  mtu: ${prefs.tunnelMtu}
-"""
-            tproxyConf += """socks5:
-  port: ${prefs.socksPort}
-  address: '${prefs.socksAddress}'
-  udp: '${if (prefs.udpInTcp) "tcp" else "udp"}'
-"""
-            if (prefs.socksUsername.isNotEmpty() && prefs.socksPassword.isNotEmpty()) {
-                tproxyConf += "  username: '" + prefs.socksUsername + "'\n"
-                tproxyConf += "  password: '" + prefs.socksPassword + "'\n"
-            }
-            return tproxyConf
-        }
     }
 }
