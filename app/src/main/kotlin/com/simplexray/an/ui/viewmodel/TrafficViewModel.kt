@@ -87,7 +87,7 @@ class TrafficViewModel(application: Application) : AndroidViewModel(application)
                         // New port is valid - create/restart observer
                         if (xrayObserver == null) {
                             // Create new observer
-                            xrayObserver = XrayStatsObserver(application, viewModelScope).also { it.start() }
+                            xrayObserver = XrayStatsObserver(getApplication<Application>(), viewModelScope).also { it.start() }
                             // Stop TrafficObserver since we're using XrayStatsObserver now
                             trafficObserver.stop()
                         } else {

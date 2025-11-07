@@ -1,6 +1,3 @@
-
-Invalid workflow file: .github/workflows/android-hy2-reality-pepper.yml#L1
-(Line: 91, Col: 14): Unrecognized function: 'split'. Located at position 67 within expression: github.event.inputs.build_abis && fromJSON(format('["{0}"]', join(split(github.event.inputs.build_abis, ','), '","'))) || ['arm64-v8a', 'armeabi-v7a', 'x86_64'], (Line: 91, Col: 14): Unexpected value '${{ github.event.inputs.build_abis && fromJSON(format('["{0}"]', join(split(github.event.inputs.build_abis, ','), '","'))) || ['arm64-v8a', 'armeabi-v7a', 'x86_64'] }}'
 package com.simplexray.an.xray
 
 import android.content.Context

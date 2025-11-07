@@ -1,7 +1,7 @@
 package com.simplexray.an.viewmodel
 
 import android.app.Application
-import android.net.URL
+import java.net.URL
 import com.simplexray.an.BuildConfig
 import com.simplexray.an.R
 import com.simplexray.an.common.AppLogger
@@ -103,9 +103,10 @@ class SettingsViewModel(
     private fun loadKernelVersion() {
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
-                val xrayCore = java.io.File(application.filesDir, "xray_core")
+                val app = getApplication<Application>()
+                val xrayCore = java.io.File(app.filesDir, "xray_core")
                 if (!xrayCore.exists() || !xrayCore.canExecute()) {
-                    val libraryDir = application.applicationInfo.nativeLibraryDir
+                    val libraryDir = app.applicationInfo.nativeLibraryDir
                     if (libraryDir == null) {
                         throw IllegalStateException("Native library directory not found")
                     }

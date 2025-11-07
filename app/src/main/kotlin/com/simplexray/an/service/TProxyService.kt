@@ -28,6 +28,7 @@ import com.simplexray.an.service.XrayProcessManager
 import com.simplexray.an.performance.PerformanceIntegration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -323,7 +324,8 @@ class TProxyService : VpnService() {
     private fun startXray() {
         // Ensure scope is active before launching coroutines
         // This prevents issues if scope was cancelled unexpectedly
-        if (!serviceScope.isActive) {
+        val job = (serviceScope.coroutineContext[Job]) ?: SupervisorJob()
+        if (!job.isActive) {
             AppLogger.w("TProxyService: serviceScope was inactive, recreating it")
             serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         }

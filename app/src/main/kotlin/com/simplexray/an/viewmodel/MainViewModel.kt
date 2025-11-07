@@ -58,6 +58,8 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
+import java.net.InetSocketAddress
+import java.net.Proxy
 import kotlin.coroutines.cancellation.CancellationException
 
 private const val TAG = "MainViewModel"
@@ -589,26 +591,11 @@ class MainViewModel(application: Application) :
             val success = fileManager.importRuleFile(uri, fileName)
             if (success) {
                 when (fileName) {
-                    "geoip.dat" -> {
-                        _settingsState.value = _settingsState.value.copy(
-                            files = _settingsState.value.files.copy(
-                                isGeoipCustom = prefs.customGeoipImported
-                            ),
-                            info = _settingsState.value.info.copy(
-                                geoipSummary = fileManager.getRuleFileSummary("geoip.dat")
-                            )
-                        )
-                    }
-
-                    "geosite.dat" -> {
-                        _settingsState.value = _settingsState.value.copy(
-                            files = _settingsState.value.files.copy(
-                                isGeositeCustom = prefs.customGeositeImported
-                            ),
-                            info = _settingsState.value.info.copy(
-                                geositeSummary = fileManager.getRuleFileSummary("geosite.dat")
-                            )
-                        )
+                    "geoip.dat", "geosite.dat" -> {
+                        // Update settings state after file import
+                        if (::settingsViewModel.isInitialized) {
+                            settingsViewModel.updateSettingsState()
+                        }
                     }
                 }
                 _uiEvent.trySend(
@@ -832,14 +819,9 @@ class MainViewModel(application: Application) :
     fun restoreDefaultGeoip(callback: () -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             fileManager.restoreDefaultGeoip()
-            _settingsState.value = _settingsState.value.copy(
-                files = _settingsState.value.files.copy(
-                    isGeoipCustom = prefs.customGeoipImported
-                ),
-                info = _settingsState.value.info.copy(
-                    geoipSummary = fileManager.getRuleFileSummary("geoip.dat")
-                )
-            )
+            if (::settingsViewModel.isInitialized) {
+                settingsViewModel.updateSettingsState()
+            }
             _uiEvent.trySend(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.rule_file_restore_geoip_success)))
             withContext(Dispatchers.Main) {
                 AppLogger.d("Restored default geoip.dat.")
@@ -851,14 +833,9 @@ class MainViewModel(application: Application) :
     fun restoreDefaultGeosite(callback: () -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             fileManager.restoreDefaultGeosite()
-            _settingsState.value = _settingsState.value.copy(
-                files = _settingsState.value.files.copy(
-                    isGeositeCustom = prefs.customGeositeImported
-                ),
-                info = _settingsState.value.info.copy(
-                    geositeSummary = fileManager.getRuleFileSummary("geosite.dat")
-                )
-            )
+            if (::settingsViewModel.isInitialized) {
+                settingsViewModel.updateSettingsState()
+            }
             _uiEvent.trySend(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.rule_file_restore_geosite_success)))
             withContext(Dispatchers.Main) {
                 AppLogger.d("Restored default geosite.dat.")
@@ -937,26 +914,11 @@ class MainViewModel(application: Application) :
                     }
                     if (success) {
                         when (fileName) {
-                            "geoip.dat" -> {
-                                _settingsState.value = _settingsState.value.copy(
-                                    files = _settingsState.value.files.copy(
-                                        isGeoipCustom = prefs.customGeoipImported
-                                    ),
-                                    info = _settingsState.value.info.copy(
-                                        geoipSummary = fileManager.getRuleFileSummary("geoip.dat")
-                                    )
-                                )
-                            }
-
-                            "geosite.dat" -> {
-                                _settingsState.value = _settingsState.value.copy(
-                                    files = _settingsState.value.files.copy(
-                                        isGeositeCustom = prefs.customGeositeImported
-                                    ),
-                                    info = _settingsState.value.info.copy(
-                                        geositeSummary = fileManager.getRuleFileSummary("geosite.dat")
-                                    )
-                                )
+                            "geoip.dat", "geosite.dat" -> {
+                                // Update settings state after download
+                                if (::settingsViewModel.isInitialized) {
+                                    settingsViewModel.updateSettingsState()
+                                }
                             }
                         }
                         _uiEvent.trySend(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.download_success)))

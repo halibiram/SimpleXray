@@ -249,15 +249,15 @@ class Preferences(context: Context) {
             }
             
             val jsonList = getPrefData(CONFIG_FILES_ORDER).first
-            val result = jsonList?.let {
+            val result: List<String> = jsonList?.let {
                 try {
                     val type = object : TypeToken<List<String>>() {}.type
-                    gson.fromJson(it, type)
+                    gson.fromJson<List<String>>(it, type)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error deserializing CONFIG_FILES_ORDER List<String>", e)
-                    emptyList()
+                    emptyList<String>()
                 }
-            } ?: emptyList()
+            } ?: emptyList<String>()
             
             // Update cache
             cachedConfigFilesOrder = result
