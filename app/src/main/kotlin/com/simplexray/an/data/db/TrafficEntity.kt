@@ -1,6 +1,7 @@
 package com.simplexray.an.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.simplexray.an.domain.model.TrafficSnapshot
 
@@ -8,7 +9,10 @@ import com.simplexray.an.domain.model.TrafficSnapshot
  * Room entity for storing traffic history.
  * Stores periodic snapshots of network traffic for analysis and charting.
  */
-@Entity(tableName = "traffic_logs")
+@Entity(
+    tableName = "traffic_logs",
+    indices = [Index(value = ["timestamp"])]
+)
 data class TrafficEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,

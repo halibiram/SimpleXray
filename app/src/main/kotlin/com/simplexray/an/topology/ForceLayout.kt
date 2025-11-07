@@ -58,24 +58,55 @@ class ForceLayout(
             val dispX = FloatArray(n)
             val dispY = FloatArray(n)
 
-            // Enhanced repulsive forces with better distance handling
+            // Optimized repulsive forces using spatial hashing (O(n) instead of O(n²))
+            // Use spatial grid to only check nearby nodes
+            val cellSize = k * 2f // Cell size based on ideal distance
+            val gridWidth = (width / cellSize).toInt() + 1
+            val gridHeight = (height / cellSize).toInt() + 1
+            val grid = Array(gridWidth * gridHeight) { mutableListOf<Int>() }
+            
+            // Build spatial hash grid
+            for (i in 0 until n) {
+                val cellX = (posX[i] / cellSize).toInt().coerceIn(0, gridWidth - 1)
+                val cellY = (posY[i] / cellSize).toInt().coerceIn(0, gridHeight - 1)
+                grid[cellY * gridWidth + cellX].add(i)
+            }
+            
+            // Calculate repulsive forces using spatial hashing
             for (i in 0 until n) {
                 if (pinned.containsKey(nodes[i].id)) continue
-                for (j in i + 1 until n) {
-                    val dx = posX[i] - posX[j]
-                    val dy = posY[i] - posY[j]
-                    val distSq = dx * dx + dy * dy
-                    val dist = max(0.01f, sqrt(distSq))
-                    
-                    // Avoid division by zero and improve force calculation
-                    val force = if (dist > 0.01f) repulsion / distSq else repulsion
-                    val fx = (dx / dist) * force
-                    val fy = (dy / dist) * force
-                    
-                    dispX[i] += fx
-                    dispY[i] += fy
-                    dispX[j] -= fx
-                    dispY[j] -= fy
+                
+                val cellX = (posX[i] / cellSize).toInt().coerceIn(0, gridWidth - 1)
+                val cellY = (posY[i] / cellSize).toInt().coerceIn(0, gridHeight - 1)
+                
+                // Check current cell and neighboring cells (3x3 grid)
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        val checkX = (cellX + dx).coerceIn(0, gridWidth - 1)
+                        val checkY = (cellY + dy).coerceIn(0, gridHeight - 1)
+                        val cellIndex = checkY * gridWidth + checkX
+                        
+                        for (j in grid[cellIndex]) {
+                            if (i >= j) continue // Avoid duplicate calculations
+                            
+                            val dxPos = posX[i] - posX[j]
+                            val dyPos = posY[i] - posY[j]
+                            val distSq = dxPos * dxPos + dyPos * dyPos
+                            
+                            // Only apply force if within reasonable distance
+                            if (distSq < cellSize * cellSize * 4) {
+                                val dist = max(0.01f, sqrt(distSq))
+                                val force = if (dist > 0.01f) repulsion / distSq else repulsion
+                                val fx = (dxPos / dist) * force
+                                val fy = (dyPos / dist) * force
+                                
+                                dispX[i] += fx
+                                dispY[i] += fy
+                                dispX[j] -= fx
+                                dispY[j] -= fy
+                            }
+                        }
+                    }
                 }
             }
 

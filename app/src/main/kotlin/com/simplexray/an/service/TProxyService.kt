@@ -82,81 +82,8 @@ class TProxyService : VpnService() {
         }
     }
 
-    // Cache port availability to reduce repeated checks
-    private var cachedAvailablePort: Int? = null
-    private var portCacheTime = 0L
-    private val portCacheValidityMs = 60000L // 1 minute cache
-    
-    // Add configuration option for port range selection
-    private val portRangeStart = 10000
-    private val portRangeEnd = 65535
-    
-    // Port scanning with timeout to prevent hanging
-    @Synchronized
-    private fun findAvailablePort(excludedPorts: Set<Int>): Int? {
-        // Check cache first (thread-safe)
-        val now = System.currentTimeMillis()
-        synchronized(this) {
-            if (cachedAvailablePort != null && (now - portCacheTime) < portCacheValidityMs) {
-                val cached = cachedAvailablePort!!
-                if (cached !in excludedPorts) {
-                    // Verify cached port is still available (with timeout)
-                    runCatching {
-                        val socket = ServerSocket()
-                        try {
-                            socket.reuseAddress = true
-                            socket.bind(java.net.InetSocketAddress(cached), 1)
-                            socket.close()
-                            return cached
-                        } catch (e: Exception) {
-                            socket.close()
-                            throw e
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Scan ports with timeout (limit attempts for performance)
-        val portsToTry = (portRangeStart..portRangeEnd).shuffled().take(100)
-        for (port in portsToTry) {
-            if (port in excludedPorts) continue
-            
-            runCatching {
-                val socket = ServerSocket()
-                try {
-                    socket.reuseAddress = true
-                    socket.bind(java.net.InetSocketAddress(port), 1)
-                    socket.close()
-                    // Cache successful port (thread-safe)
-                    synchronized(this) {
-                        cachedAvailablePort = port
-                        portCacheTime = System.currentTimeMillis()
-                    }
-                    return port
-                } finally {
-                    if (!socket.isClosed) {
-                        socket.close()
-                    }
-                }
-            }.onFailure {
-                AppLogger.d("Port $port unavailable: ${it.message}")
-            }
-        }
-        
-        // Fallback: try system-assigned port
-        return try {
-            ServerSocket(0).use { socket ->
-                val fallbackPort = socket.localPort
-                cachedAvailablePort = fallbackPort
-                portCacheTime = now
-                fallbackPort
-            }
-        } catch (e: Exception) {
-            AppLogger.e("Failed to find any available port: ${e.message}", e)
-            null
-        }
-    }
+    // Port availability checker with caching
+    private val portChecker = PortAvailabilityChecker()
 
     private lateinit var logFileManager: LogFileManager
     
@@ -450,8 +377,8 @@ class TProxyService : VpnService() {
             }
             
             // Find available port with retry mechanism
-            val apiPort = findAvailablePort(extractPortsFromJson(configContent)) 
-                ?: findAvailablePort(emptySet()) // Fallback: try without exclusions
+            val apiPort = portChecker.findAvailablePort(extractPortsFromJson(configContent)) 
+                ?: portChecker.findAvailablePort(emptySet()) // Fallback: try without exclusions
                 ?: run {
                     AppLogger.e("No available port found after retries")
                     stopXray()
@@ -1006,55 +933,70 @@ class TProxyService : VpnService() {
         if (tunFd != null) return
         val prefs = Preferences(this)
         val builder = getVpnBuilder(prefs)
-        tunFd = builder.establish()
-        if (tunFd == null) {
-            // Clear state on failure
-            prefs.vpnServiceWasRunning = false
-            stopXray()
-            return
-        }
-        
-        // Save state that VPN is running
-        prefs.vpnServiceWasRunning = true
-        AppLogger.d("TProxyService: VPN state saved - service is running")
-        val tproxyFile = File(cacheDir, "tproxy.conf")
+        var establishedFd: ParcelFileDescriptor? = null
         try {
-            tproxyFile.createNewFile()
-            FileOutputStream(tproxyFile, false).use { fos ->
-                val tproxyConf = getTproxyConf(prefs)
-                fos.write(tproxyConf.toByteArray())
+            establishedFd = builder.establish()
+            if (establishedFd == null) {
+                // Clear state on failure
+                prefs.vpnServiceWasRunning = false
+                stopXray()
+                return
             }
-        } catch (e: IOException) {
-            AppLogger.e(e.toString())
-            stopXray()
-            return
-        }
-        tunFd?.fd?.let { fd ->
-            TProxyStartService(tproxyFile.absolutePath, fd)
             
-            // Apply performance optimizations if enabled
-            if (enablePerformanceMode && perfIntegration != null) {
-                try {
-                    perfIntegration?.applyNetworkOptimizations(fd)
-                } catch (e: Exception) {
-                    AppLogger.w("Failed to apply network optimizations", e)
+            tunFd = establishedFd
+            
+            // Save state that VPN is running
+            prefs.vpnServiceWasRunning = true
+            AppLogger.d("TProxyService: VPN state saved - service is running")
+            val tproxyFile = File(cacheDir, "tproxy.conf")
+            try {
+                tproxyFile.createNewFile()
+                FileOutputStream(tproxyFile, false).use { fos ->
+                    val tproxyConf = getTproxyConf(prefs)
+                    fos.write(tproxyConf.toByteArray())
+                }
+            } catch (e: IOException) {
+                AppLogger.e(e.toString())
+                stopXray()
+                return
+            }
+            
+            establishedFd.fd.let { fd ->
+                NativeBridgeManager.startTProxyService(tproxyFile.absolutePath, fd)
+                
+                // Apply performance optimizations if enabled
+                if (enablePerformanceMode && perfIntegration != null) {
+                    try {
+                        perfIntegration?.applyNetworkOptimizations(fd)
+                    } catch (e: Exception) {
+                        AppLogger.w("Failed to apply network optimizations", e)
+                    }
                 }
             }
-        } ?: run {
-            AppLogger.e("tunFd is null after establish()")
-            stopXray()
-            return
-        }
 
-        val successIntent = Intent(ACTION_START)
-        successIntent.setPackage(application.packageName)
-        sendBroadcast(successIntent)
-        @Suppress("SameParameterValue") val channelName = "socks5"
-        initNotificationChannel(channelName)
-        createNotification(channelName)
-        
-        // Start monitoring VPN connection to detect if it's lost when app goes to background
-        startConnectionMonitoring()
+            val successIntent = Intent(ACTION_START)
+            successIntent.setPackage(application.packageName)
+            sendBroadcast(successIntent)
+            @Suppress("SameParameterValue") val channelName = "socks5"
+            initNotificationChannel(channelName)
+            createNotification(channelName)
+            
+            // Start monitoring VPN connection to detect if it's lost when app goes to background
+            startConnectionMonitoring()
+        } catch (e: Exception) {
+            AppLogger.e("Error in startService: ${e.message}", e)
+            // Ensure tunFd is closed in exception case
+            establishedFd?.use { fd ->
+                try {
+                    fd.close()
+                } catch (closeException: Exception) {
+                    AppLogger.w("Error closing tunFd in exception handler: ${closeException.message}", closeException)
+                }
+            }
+            tunFd = null
+            prefs.vpnServiceWasRunning = false
+            stopXray()
+        }
     }
 
     private fun getVpnBuilder(prefs: Preferences): Builder = Builder().apply {
@@ -1121,14 +1063,7 @@ class TProxyService : VpnService() {
             }
             stopForeground(Service.STOP_FOREGROUND_REMOVE)
             // Safe JNI call with error handling
-            try {
-                TProxyStopService()
-            } catch (e: UnsatisfiedLinkError) {
-                AppLogger.e("Native library not loaded for TProxyStopService: ${e.message}", e)
-            } catch (e: Exception) {
-                AppLogger.e("Error stopping TProxy service via JNI: ${e.javaClass.simpleName}: ${e.message}", e)
-                // Continue with cleanup even if JNI call fails
-            }
+            NativeBridgeManager.stopTProxyService()
         }
         exit()
     }
@@ -1192,132 +1127,11 @@ class TProxyService : VpnService() {
         private const val TAG = "VpnService"
         private const val BROADCAST_DELAY_MS: Long = 3000
 
-        init {
-            System.loadLibrary("hev-socks5-tunnel")
-        }
-
-        // UNSAFE: JNI boundary - validate inputs before passing to native code
-        // MEM-LEAK: JNI string not released if native code crashes
-        // CRASH-RISK: Native code crash may not be caught - may crash entire app
+        // Delegate to NativeBridgeManager for JNI operations
         @JvmStatic
-        @Suppress("FunctionName")
-        private external fun TProxyStartServiceNative(configPath: String, fd: Int)
+        fun TProxyGetStats(): LongArray? = NativeBridgeManager.getTProxyStats()
         
-        @JvmStatic
-        fun TProxyStartService(configPath: String, fd: Int) {
-            // SEC: Validate configPath length to prevent buffer overflow
-            // SEC: Path length validation may be insufficient - native code may have different limits
-            if (configPath.length > 4096) {
-                AppLogger.e("Config path too long: ${configPath.length} bytes")
-                throw IllegalArgumentException("Config path exceeds maximum length")
-            }
-            // SEC: Validate file descriptor range
-            // Note: We can't check if fd is actually valid/open without native code,
-            // but we validate the range to prevent obvious issues
-            if (fd < 0 || fd > Int.MAX_VALUE) {
-                AppLogger.e("Invalid file descriptor: $fd")
-                throw IllegalArgumentException("File descriptor out of valid range")
-            }
-            // Additional validation: file descriptors are typically small positive integers
-            // Very large values are suspicious
-            if (fd > 1000000) {
-                AppLogger.w("File descriptor value suspiciously large: $fd")
-                throw IllegalArgumentException("File descriptor value suspiciously large")
-            }
-            // SEC: Validate configPath doesn't contain null bytes or control characters
-            if (configPath.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) {
-                AppLogger.e("Config path contains invalid characters")
-                throw IllegalArgumentException("Config path contains invalid characters")
-            }
-            // SEC: Path traversal check - ensure path doesn't contain ".." sequences
-            if (configPath.contains("..") || configPath.contains("//")) {
-                AppLogger.e("Config path contains path traversal sequences")
-                throw IllegalArgumentException("Config path contains path traversal sequences")
-            }
-            try {
-                TProxyStartServiceNative(configPath, fd)
-            } catch (e: Exception) {
-                AppLogger.e("JNI TProxyStartService failed", e)
-                throw e
-            }
-        }
-
-        // UNSAFE: JNI boundary - no return value validation
-        @JvmStatic
-        @Suppress("FunctionName")
-        private external fun TProxyStopServiceNative()
-        
-        @JvmStatic
-        private fun TProxyStopService() {
-            try {
-                TProxyStopServiceNative()
-            } catch (e: Exception) {
-                AppLogger.e("JNI TProxyStopService failed", e)
-                // Don't throw - stopping service should be best-effort
-            }
-        }
-
-        // UNSAFE: JNI boundary - may return null or invalid array
-        // BUG: No validation of returned array size or contents
-        // MEM-LEAK: JNI array not released if exception thrown
-        // CRASH-RISK: Native code may return corrupted array - may cause IndexOutOfBoundsException
-        @JvmStatic
-        @Suppress("FunctionName")
-        private external fun TProxyGetStatsNative(): LongArray?
-        
-        // Maximum expected stats array size (defensive limit)
-        private const val MAX_STATS_ARRAY_SIZE = 100
-        
-        @JvmStatic
-        fun TProxyGetStats(): LongArray? {
-            return try {
-                val stats = TProxyGetStatsNative()
-                // Validate returned array
-                if (stats != null) {
-                    // SEC: Validate array size to prevent buffer overflow
-                    if (stats.size > MAX_STATS_ARRAY_SIZE) {
-                        AppLogger.w("Stats array size suspiciously large: ${stats.size}, max expected: $MAX_STATS_ARRAY_SIZE")
-                        return null
-                    }
-                    // Validate array is not empty
-                    if (stats.isEmpty()) {
-                        AppLogger.w("Stats array is empty")
-                        return null
-                    }
-                    // Note: Some stats may legitimately be negative (e.g., error counts, deltas)
-                    // Only validate that values are within reasonable range
-                    if (stats.any { it < Long.MIN_VALUE / 2 || it > Long.MAX_VALUE / 2 }) {
-                        AppLogger.w("Stats array contains values outside reasonable range")
-                        return null
-                    }
-                }
-                stats
-            } catch (e: Exception) {
-                AppLogger.e("JNI TProxyGetStats failed", e)
-                null
-            }
-        }
-
-        fun getNativeLibraryDir(context: Context?): String? {
-            if (context == null) {
-                AppLogger.e("Context is null")
-                return null
-            }
-            try {
-                val applicationInfo = context.applicationInfo
-                if (applicationInfo != null) {
-                    val nativeLibraryDir = applicationInfo.nativeLibraryDir
-                    AppLogger.d("Native Library Directory: $nativeLibraryDir")
-                    return nativeLibraryDir
-                } else {
-                    AppLogger.e("ApplicationInfo is null")
-                    return null
-                }
-            } catch (e: Exception) {
-                AppLogger.e("Error getting native library dir", e)
-                return null
-            }
-        }
+        fun getNativeLibraryDir(context: Context?): String? = NativeBridgeManager.getNativeLibraryDir(context)
 
         private fun getTproxyConf(prefs: Preferences): String {
             var tproxyConf = """misc:
