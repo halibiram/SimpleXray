@@ -34,12 +34,12 @@ index 0000000..b2c3d4e
 +	if ctx == nil {
 +		return nil, errors.New("invalid SSL context")
 +	}
-+	
++
 +	ssl := C.SSL_new(ctx)
 +	if ssl == nil {
 +		return nil, getBoringSSLError()
 +	}
-+	
++
 +	return &BoringSSLConn{
 +		ssl: ssl,
 +		ctx: ctx,
@@ -51,7 +51,7 @@ index 0000000..b2c3d4e
 +	if c.ssl == nil {
 +		return errors.New("SSL connection not initialized")
 +	}
-+	
++
 +	if C.SSL_do_handshake(c.ssl) != 1 {
 +		return getBoringSSLError()
 +	}
@@ -63,11 +63,11 @@ index 0000000..b2c3d4e
 +	if c.ssl == nil {
 +		return 0, errors.New("SSL connection not initialized")
 +	}
-+	
++
 +	if len(b) == 0 {
 +		return 0, nil
 +	}
-+	
++
 +	n := C.SSL_write(c.ssl, unsafe.Pointer(&b[0]), C.int(len(b)))
 +	if n <= 0 {
 +		errCode := C.SSL_get_error(c.ssl, n)
@@ -76,7 +76,7 @@ index 0000000..b2c3d4e
 +		}
 +		return 0, getBoringSSLError()
 +	}
-+	
++
 +	return int(n), nil
 +}
 +
@@ -85,11 +85,11 @@ index 0000000..b2c3d4e
 +	if c.ssl == nil {
 +		return 0, errors.New("SSL connection not initialized")
 +	}
-+	
++
 +	if len(b) == 0 {
 +		return 0, nil
 +	}
-+	
++
 +	n := C.SSL_read(c.ssl, unsafe.Pointer(&b[0]), C.int(len(b)))
 +	if n <= 0 {
 +		errCode := C.SSL_get_error(c.ssl, n)
@@ -101,7 +101,7 @@ index 0000000..b2c3d4e
 +		}
 +		return 0, getBoringSSLError()
 +	}
-+	
++
 +	return int(n), nil
 +}
 +
@@ -136,7 +136,7 @@ index 0000000..b2c3d4e
 +	if ctx == nil {
 +		return nil, getBoringSSLError()
 +	}
-+	
++
 +	// Set TLS 1.3
 +	if config != nil {
 +		if config.MinVersion >= 0x0304 { // TLS 1.3
@@ -152,7 +152,7 @@ index 0000000..b2c3d4e
 +			}
 +		}
 +	}
-+	
++
 +	return ctx, nil
 +}
 
