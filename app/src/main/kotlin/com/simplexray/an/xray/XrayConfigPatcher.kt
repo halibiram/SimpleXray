@@ -840,7 +840,7 @@ object XrayConfigPatcher {
         var hasSupportedMatchers = false
         val domainList = mutableListOf<String>()
         val ipList = mutableListOf<String>()
-        val portList = mutableListOf<Int>()
+        val portRanges = mutableListOf<Pair<Int, Int>>() // (start, end) pairs
         val networkList = mutableListOf<String>()
         val sourceList = mutableListOf<String>()
 
@@ -861,14 +861,7 @@ object XrayConfigPatcher {
                 is RoutingMatcher.PortMatcher -> {
                     // Collect port ranges for processing
                     matcher.ports.forEach { portRange ->
-                        if (portRange.start == portRange.end) {
-                            portList.add(portRange.start)
-                        } else {
-                            // For port ranges, we'll store as negative to indicate it's a range
-                            // We'll handle this separately when building the Xray rule
-                            portList.add(-portRange.start) // Negative indicates range start
-                            portList.add(portRange.end) // Positive indicates range end
-                        }
+                        portRanges.add(Pair(portRange.start, portRange.end))
                     }
                     hasSupportedMatchers = true
                 }
@@ -937,14 +930,21 @@ object XrayConfigPatcher {
             xrayRule.add("ip", ipArray)
         }
 
-        if (portList.isNotEmpty()) {
-            // Xray supports single port or port range as string "start:end"
-            // For multiple ports, we'll use the first port
-            // Note: Xray doesn't support multiple separate ports in a single rule
+        if (portRanges.isNotEmpty()) {
+            // Xray supports single port (integer) or port range (string "start:end")
+            // For multiple port ranges, we'll use the first one
+            // Note: Xray doesn't support multiple separate ports/ranges in a single rule
             // If multiple ports are needed, consider creating separate rules
-            xrayRule.addProperty("port", portList[0])
-            if (portList.size > 1) {
-                Log.d(TAG, "Multiple ports in rule ${rule.name}, using first port: ${portList[0]}")
+            val firstRange = portRanges[0]
+            if (firstRange.first == firstRange.second) {
+                // Single port
+                xrayRule.addProperty("port", firstRange.first)
+            } else {
+                // Port range - Xray uses string format "start:end"
+                xrayRule.addProperty("port", "${firstRange.first}:${firstRange.second}")
+            }
+            if (portRanges.size > 1) {
+                Log.d(TAG, "Multiple port ranges in rule ${rule.name}, using first: ${firstRange.first}${if (firstRange.first != firstRange.second) ":${firstRange.second}" else ""}")
             }
         }
 
