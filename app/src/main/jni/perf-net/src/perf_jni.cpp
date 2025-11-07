@@ -118,6 +118,8 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
 // Forward declaration for TLS session cleanup
 extern void perf_tls_session_cleanup();
+// Forward declaration for connection pool cleanup
+extern void cleanupConnectionPools();
 
 // Cleanup on JNI unload to prevent memory leaks
 void JNI_OnUnload(JavaVM* vm, void* reserved) {
@@ -126,6 +128,8 @@ void JNI_OnUnload(JavaVM* vm, void* reserved) {
     g_jvm = nullptr;
     // Cleanup TLS session cache
     perf_tls_session_cleanup();
-    LOGD("Performance module JNI unloaded");
+    // Cleanup connection pools to prevent socket leaks
+    cleanupConnectionPools();
+    LOGD("Performance module JNI unloaded and cleaned up");
 }
 

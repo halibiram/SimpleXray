@@ -22,6 +22,11 @@ class MemoryPool(private val bufferSize: Int, private val poolSize: Int = 16) {
             buffer.clear()
             buffer
         } else {
+            // Check pool exhaustion before allocating new buffer
+            val currentAllocated = allocated.get()
+            if (currentAllocated >= poolSize * 2) {
+                throw IllegalStateException("Memory pool exhausted: ${currentAllocated} buffers allocated (limit: ${poolSize * 2})")
+            }
             allocated.incrementAndGet()
             ByteBuffer.allocateDirect(bufferSize)
         }
@@ -31,11 +36,18 @@ class MemoryPool(private val bufferSize: Int, private val poolSize: Int = 16) {
      * Return buffer to pool
      */
     fun release(buffer: ByteBuffer) {
-        if (buffer.capacity() == bufferSize && pool.size < poolSize) {
-            buffer.clear()
-            pool.offer(buffer)
+        if (buffer.capacity() == bufferSize) {
+            if (pool.size < poolSize) {
+                buffer.clear()
+                pool.offer(buffer)
+            } else {
+                // Pool is full, buffer will be GC'd - decrement counter
+                allocated.decrementAndGet()
+            }
+        } else {
+            // Size mismatch, buffer will be GC'd - decrement counter
+            allocated.decrementAndGet()
         }
-        // If pool is full or buffer size mismatch, let GC handle it
     }
     
     /**

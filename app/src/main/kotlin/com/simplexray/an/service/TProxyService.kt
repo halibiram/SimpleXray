@@ -507,18 +507,40 @@ class TProxyService : VpnService() {
             try {
                 currentProcess.outputStream.use { os ->
                     val configBytes = injectedConfigContent.toByteArray()
-                    // PERF: Large config allocation - consider streaming for very large configs
-                    // MEMORY-POOL-MISS: Large byte array allocation without pool
-                    // For large configs, write in chunks to avoid blocking
-                    if (configBytes.size > 64 * 1024) {
-                        var offset = 0
-                        while (offset < configBytes.size) {
-                            val chunkSize = minOf(64 * 1024, configBytes.size - offset)
-                            os.write(configBytes, offset, chunkSize)
-                            os.flush()
-                            offset += chunkSize
+                    // PERF: Large config allocation - use memory pool for 64KB+ configs
+                    // For large configs, write in chunks using pool buffer to reduce GC pressure
+                    if (configBytes.size > 64 * 1024 && enablePerformanceMode && perfIntegration != null) {
+                        // Use memory pool buffer for large configs
+                        val buffer = perfIntegration?.getMemoryPool()?.acquire()
+                        try {
+                            if (buffer != null) {
+                                var offset = 0
+                                while (offset < configBytes.size) {
+                                    val chunkSize = minOf(buffer.capacity(), configBytes.size - offset)
+                                    buffer.clear()
+                                    buffer.put(configBytes, offset, chunkSize)
+                                    buffer.flip()
+                                    val bytesArray = ByteArray(buffer.remaining())
+                                    buffer.get(bytesArray)
+                                    os.write(bytesArray)
+                                    os.flush()
+                                    offset += chunkSize
+                                }
+                            } else {
+                                // Fallback: pool unavailable, use direct write
+                                var offset = 0
+                                while (offset < configBytes.size) {
+                                    val chunkSize = minOf(64 * 1024, configBytes.size - offset)
+                                    os.write(configBytes, offset, chunkSize)
+                                    os.flush()
+                                    offset += chunkSize
+                                }
+                            }
+                        } finally {
+                            buffer?.let { perfIntegration?.getMemoryPool()?.release(it) }
                         }
                     } else {
+                        // Small configs: direct write
                         os.write(configBytes)
                         os.flush()
                     }

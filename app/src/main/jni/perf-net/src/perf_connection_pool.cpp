@@ -181,21 +181,22 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeGetPooledSocket(
                 }
                 
                 // Set socket options for performance
+                // Note: Non-critical options (SO_REUSEADDR, TCP_NODELAY, SO_KEEPALIVE) are best-effort
+                // Socket will still function if these fail, but may have reduced performance
                 int opt = 1;
-                // BUG: setsockopt failures logged but not handled - socket may have wrong options
+                
+                // SO_REUSEADDR - non-critical, but log failure
                 if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-                    LOGE("Failed to set SO_REUSEADDR: %d", errno);
+                    LOGE("Failed to set SO_REUSEADDR: %d (non-critical, continuing)", errno);
                 }
-                // TODO: Add SO_REUSEPORT support for better connection distribution
+                
+                // TCP_NODELAY - non-critical, but important for latency
                 // PERF: TCP_NODELAY may not be optimal for all use cases - consider configurable
                 if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
-                    LOGE("Failed to set TCP_NODELAY: %d", errno);
+                    LOGE("Failed to set TCP_NODELAY: %d (non-critical, continuing)", errno);
                 }
-                // Socket creation failure is handled by returning -1
-                // The slot remains uninitialized (fd=-1) and will be retried on next allocation
-                // BUG: Socket created but not configured properly - may fail later
                 
-                // Enable TCP Fast Open if supported
+                // Enable TCP Fast Open if supported (non-critical)
                 #ifdef TCP_FASTOPEN
                 int tfo_opt = 1;
                 if (setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &tfo_opt, sizeof(tfo_opt)) == 0) {
@@ -203,10 +204,13 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeGetPooledSocket(
                 }
                 #endif
                 
-                // Set keep-alive for persistent connections
+                // Set keep-alive for persistent connections (non-critical)
                 if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) < 0) {
-                    LOGE("Failed to set SO_KEEPALIVE: %d", errno);
+                    LOGE("Failed to set SO_KEEPALIVE: %d (non-critical, continuing)", errno);
                 }
+                
+                // Socket is ready for use even if some options failed
+                // All options above are non-critical and socket will function without them
                 
                 pool->slots[i].fd = fd;
             }
@@ -568,4 +572,25 @@ Java_com_simplexray_an_performance_PerformanceManager_nativeDestroyConnectionPoo
 }
 
 } // extern "C"
+
+/**
+ * Cleanup function for JNI_OnUnload
+ * Closes all sockets in global pools to prevent leaks on app termination
+ */
+void cleanupConnectionPools() {
+    for (int pool_idx = 0; pool_idx < 3; pool_idx++) {
+        ConnectionPool* pool = &g_pools[pool_idx];
+        std::lock_guard<std::mutex> lock(pool->mutex);
+        
+        for (auto& slot : pool->slots) {
+            if (slot.fd >= 0) {
+                close(slot.fd);
+                slot.fd = -1;
+            }
+        }
+        pool->slots.clear();
+        pool->initialized = false;
+    }
+    LOGD("Connection pools cleaned up");
+}
 
