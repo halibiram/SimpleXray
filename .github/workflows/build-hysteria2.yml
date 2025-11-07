@@ -67,7 +67,7 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/apernet/hysteria.git
           cd hysteria
-          
+
           # Checkout version if specified
           HYSTERIA2_VERSION="${{ inputs.hysteria2_version || 'latest' }}"
           if [ "$HYSTERIA2_VERSION" != "latest" ]; then
@@ -75,10 +75,10 @@ jobs:
             git fetch --tags
             git checkout "$HYSTERIA2_VERSION" 2>/dev/null || echo "Version not found, using latest"
           fi
-          
+
           echo "Hysteria2 commit: $(git rev-parse HEAD)"
           echo "Hysteria2 version: $(git describe --tags --always || echo 'unknown')"
-          
+
           # Debug: Check repository structure
           echo "📁 Repository structure:"
           ls -la
@@ -92,25 +92,25 @@ jobs:
       - name: Build Hysteria2 for ${{ matrix.abi }}
         run: |
           cd hysteria
-          
+
           export GOOS=android
           export CGO_ENABLED=1
           export GOARCH=${{ matrix.goarch }}
           export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain }}-clang
           export CXX=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain }}-clang++
-          
+
           # Android API level
           ANDROID_API=24
-          
+
           # CGO flags
           export CGO_CFLAGS="--sysroot=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           export CGO_LDFLAGS="-L$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.goarch }}/$ANDROID_API -llog -landroid"
-          
+
           echo "Building for ${{ matrix.abi }}..."
           echo "  GOARCH: ${{ matrix.goarch }}"
           echo "  CC: $CC"
           echo "  Toolchain: ${{ matrix.toolchain }}"
-          
+
           # Determine build path - check multiple possible locations
           BUILD_PATH=""
           if [ -d "cmd/hysteria2" ]; then
@@ -128,20 +128,20 @@ jobs:
             find . -maxdepth 2 -type d | head -20
             exit 1
           fi
-          
+
           # Build
           go build -o hysteria2 \
             -trimpath \
             -buildvcs=false \
             -ldflags="-s -w" \
             $BUILD_PATH
-          
+
           # Verify binary
           if [ ! -f "hysteria2" ]; then
             echo "❌ Build failed - binary not found"
             exit 1
           fi
-          
+
           # Get binary size
           SIZE=$(stat -c%s hysteria2)
           SIZE_MB=$((SIZE / 1024 / 1024))
@@ -151,7 +151,7 @@ jobs:
         run: |
           mkdir -p app/src/main/jniLibs/${{ matrix.abi }}
           cp hysteria/hysteria2 app/src/main/jniLibs/${{ matrix.abi }}/libhysteria2.so
-          
+
           # Verify
           if [ -f "app/src/main/jniLibs/${{ matrix.abi }}/libhysteria2.so" ]; then
             echo "✅ Copied to jniLibs/${{ matrix.abi }}/libhysteria2.so"
@@ -182,7 +182,7 @@ jobs:
       - name: Verify Binaries
         run: |
           echo "📋 Verifying Hysteria2 binaries..."
-          
+
           for abi in arm64-v8a armeabi-v7a x86_64; do
             if [ -f "artifacts/hysteria2-$abi/libhysteria2.so" ]; then
               SIZE=$(stat -c%s "artifacts/hysteria2-$abi/libhysteria2.so")
@@ -195,8 +195,7 @@ jobs:
               echo "❌ $abi: Binary not found"
             fi
           done
-          
+
           echo ""
           echo "📦 Binary locations:"
           find artifacts -name "libhysteria2.so" -exec ls -lh {} \;
-

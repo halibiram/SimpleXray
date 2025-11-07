@@ -1252,7 +1252,14 @@ class TProxyService : VpnService() {
                         val shortIds = realitySettings?.getAsJsonArray("shortIds")
                         val shortId = shortIds?.get(0)?.asString ?: ""
                         val serverNames = realitySettings?.getAsJsonArray("serverNames")
-                        val serverName = serverNames?.get(0)?.asString ?: serverAddr
+                        val serverNameFromArray = serverNames?.get(0)?.asString ?: ""
+                        val dest = realitySettings?.get("dest")?.asString ?: ""
+                        // Extract SNI from serverNames, or fallback to dest (without port), or use serverAddr as last resort
+                        val serverName = when {
+                            serverNameFromArray.isNotBlank() -> serverNameFromArray
+                            dest.isNotBlank() -> dest.split(":").firstOrNull() ?: ""
+                            else -> serverAddr
+                        }
                         val users = server.getAsJsonArray("users")
                         val uuid = users?.get(0)?.asJsonObject?.get("id")?.asString
                         
