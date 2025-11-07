@@ -145,7 +145,37 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 return@withContext null
             }
 
-            val filename = "$name.json"
+            // Check if config has Reality outbound (for chain mode)
+            // If yes, add "(chain edition)" to filename (only on first import)
+            var finalName = name
+            if (!name.contains("(chain edition)", ignoreCase = true)) {
+                try {
+                    // Create temporary file to check for Reality config
+                    val tempFile = File(application.filesDir, "temp-check-${System.currentTimeMillis()}.json")
+                    try {
+                        tempFile.writeText(formattedContent)
+                        val hasReality = com.simplexray.an.chain.reality.RealityXrayIntegrator
+                            .extractRealityFromXrayConfig(tempFile.absolutePath) != null
+                        
+                        if (hasReality) {
+                            finalName = "$name (chain edition)"
+                            Log.d(TAG, "Config contains Reality outbound, adding '(chain edition)' to filename")
+                        }
+                    } finally {
+                        // Clean up temporary file
+                        try {
+                            tempFile.delete()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to delete temp file: ${e.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error checking for Reality config: ${e.message}")
+                    // Continue with original name if check fails
+                }
+            }
+
+            val filename = "$finalName.json"
             val newFile = File(application.filesDir, filename)
 
             try {

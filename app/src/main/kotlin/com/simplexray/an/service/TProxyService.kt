@@ -47,6 +47,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStreamReader
 import java.io.InterruptedIOException
+import java.nio.charset.StandardCharsets
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -545,14 +546,6 @@ class TProxyService : VpnService() {
                 return
             }
             
-            // Validate config ports before sending to xray-core
-            // BUG-FIX: Port 0 causes xray-core to exit immediately
-            if (!validateConfigPorts(injectedConfigContent)) {
-                AppLogger.e("Config contains invalid ports (0 or out of range). Xray-core will not start.")
-                stopXray()
-                return
-            }
-            
             // Write config with error handling
             // SEC: Config content written to process stdin - ensure no injection
             // TIMEOUT-MISS: No timeout on write - may block indefinitely
@@ -613,20 +606,16 @@ class TProxyService : VpnService() {
             // IO-BLOCK: BufferedReader.readLine() may block indefinitely
             // TIMEOUT-MISS: Timeout check only before read - readLine() itself has no timeout
             val inputStream = currentProcess.inputStream
-            InputStreamReader(inputStream).use { isr ->
-                BufferedReader(isr).use { reader ->
+            // Use larger buffer (128KB) to prevent output loss during high-volume logging
+            // Explicitly set UTF-8 encoding to ensure proper character handling
+            InputStreamReader(inputStream, StandardCharsets.UTF_8).use { isr ->
+                BufferedReader(isr, 131072).use { reader -> // 128KB buffer to prevent output loss
                     var line: String?
-                    AppLogger.d("Reading xray process output.")
-                    // Use a timeout mechanism for readLine() to prevent indefinite blocking
-                    // BUG: Timeout check happens before read, not during - readLine() can still block
-                    val timeoutMs = 30000L // 30 seconds timeout
-                    val startTime = System.currentTimeMillis()
+                    AppLogger.d("Reading xray process output (128KB buffer).")
+                    // Read xray process output continuously without timeout
+                    // Process output may pause for long periods, which is normal
+                    // Only break on actual EOF or interruption
                     while (true) {
-                        // Check timeout before reading
-                        if (System.currentTimeMillis() - startTime > timeoutMs) {
-                            AppLogger.w("Timeout reading xray process output")
-                            break
-                        }
                         // Try to read with timeout protection
                         try {
                             line = reader.readLine() ?: break
@@ -634,25 +623,42 @@ class TProxyService : VpnService() {
                             AppLogger.d("Reading interrupted")
                             break
                         } catch (e: java.io.IOException) {
-                            // Check if timeout occurred
-                            if (e.message?.contains("timeout", ignoreCase = true) == true ||
-                                e.message?.contains("timed out", ignoreCase = true) == true) {
-                                AppLogger.w("Timeout reading xray process output")
+                            // Only break on actual IO errors, not timeouts
+                            // Process may not output logs for extended periods, which is normal
+                            if (e.message?.contains("Stream closed", ignoreCase = true) == true ||
+                                e.message?.contains("Broken pipe", ignoreCase = true) == true) {
+                                AppLogger.d("Process output stream closed")
                                 break
                             }
-                            throw e
+                            // For other IO errors, log and break (process may have died)
+                            AppLogger.w("IO error reading process output: ${e.message}")
+                            break
                         }
-                        line?.let {
-                            logFileManager.appendLog(it)
-                            synchronized(logBroadcastBuffer) {
-                                // Prevent unbounded growth
-                                if (logBroadcastBuffer.size >= MAX_LOG_BUFFER_SIZE) {
-                                    logBroadcastBuffer.removeAt(0) // Remove oldest
+                        line?.let { logLine ->
+                            // Ensure log is saved even if broadcast fails
+                            try {
+                                logFileManager.appendLog(logLine)
+                            } catch (e: Exception) {
+                                // Log file write failed, but don't lose the output
+                                AppLogger.e("Failed to write log to file: ${e.message}", e)
+                                // Still try to broadcast even if file write failed
+                            }
+                            
+                            // Add to broadcast buffer with error handling
+                            try {
+                                synchronized(logBroadcastBuffer) {
+                                    // Prevent unbounded growth
+                                    if (logBroadcastBuffer.size >= MAX_LOG_BUFFER_SIZE) {
+                                        logBroadcastBuffer.removeAt(0) // Remove oldest
+                                    }
+                                    logBroadcastBuffer.add(logLine)
+                                    if (!handler.hasCallbacks(broadcastLogsRunnable)) {
+                                        handler.postDelayed(broadcastLogsRunnable, BROADCAST_DELAY_MS)
+                                    }
                                 }
-                                logBroadcastBuffer.add(it)
-                                if (!handler.hasCallbacks(broadcastLogsRunnable)) {
-                                    handler.postDelayed(broadcastLogsRunnable, BROADCAST_DELAY_MS)
-                                }
+                            } catch (e: Exception) {
+                                // Broadcast buffer update failed, but log is already saved to file
+                                AppLogger.w("Failed to add log to broadcast buffer: ${e.message}")
                             }
                         }
                     }
@@ -1008,40 +1014,6 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Validate config ports before sending to xray-core.
-     * Port 0 or out-of-range ports cause xray-core to exit immediately.
-     * 
-     * @param configContent JSON config content to validate
-     * @return true if all ports are valid (1-65535), false otherwise
-     */
-    private fun validateConfigPorts(configContent: String): Boolean {
-        return try {
-            val ports = ConfigUtils.extractPortsFromJson(configContent)
-            
-            // Check for port 0 (most common issue)
-            if (ports.contains(0)) {
-                AppLogger.e("Config contains invalid port 0. This will cause xray-core to exit.")
-                return false
-            }
-            
-            // Check for out-of-range ports
-            val invalidPorts = ports.filter { it < 1 || it > 65535 }
-            if (invalidPorts.isNotEmpty()) {
-                AppLogger.e("Config contains invalid ports: $invalidPorts (must be 1-65535)")
-                return false
-            }
-            
-            AppLogger.d("Config port validation passed. Found ${ports.size} valid ports.")
-            true
-        } catch (e: Exception) {
-            AppLogger.e("Failed to validate config ports: ${e.message}", e)
-            // On validation error, allow config to proceed (fail-safe)
-            // But log the error for debugging
-            false
-        }
-    }
-    
-    /**
      * Check if VPN connection is still active.
      * This helps detect if the VPN connection was lost when app goes to background.
      */
@@ -1078,9 +1050,6 @@ class TProxyService : VpnService() {
         }
         
         // Check if file descriptor is still valid
-        // BUG: FileDescriptor.valid() may not be reliable on all Android versions
-        // UPGRADE-RISK: FileDescriptor.valid() behavior may change in future Android versions
-        // TEST-GAP: File descriptor validation not tested across Android versions
         try {
             val isValid = fd.fileDescriptor.valid()
             if (!isValid) {
@@ -1088,12 +1057,10 @@ class TProxyService : VpnService() {
                 tunFd = null
                 if (Companion.isRunning()) {
                     AppLogger.d("TProxyService: Attempting to restore VPN connection")
-                    // BUG: Race condition - service may stop between check and launch
                     serviceScope.launch {
                         try {
                             startXray()
                         } catch (e: Exception) {
-                            // BUG: Exception swallowed - may hide critical errors
                             AppLogger.e("TProxyService: Failed to restore VPN connection", e)
                         }
                     }
@@ -1104,7 +1071,6 @@ class TProxyService : VpnService() {
         } catch (e: Exception) {
             AppLogger.w("TProxyService: Error checking VPN file descriptor", e)
             // Assume connection is still valid if we can't check
-            // BUG: Assumes valid on error - may miss connection loss
         }
         
         // Schedule next check

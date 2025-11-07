@@ -20,6 +20,8 @@ class CoreStatsClient(private val channel: ManagedChannel) : Closeable {
         runCatching {
             val request = SysStatsRequest.newBuilder().build()
             blockingStub.getSysStats(request)
+        }.onFailure { e ->
+            com.simplexray.an.common.AppLogger.w("CoreStatsClient.getSystemStats failed: ${e.javaClass.simpleName}: ${e.message}", e)
         }.getOrNull()
     }
 
@@ -41,6 +43,9 @@ class CoreStatsClient(private val channel: ManagedChannel) : Closeable {
             .build()
 
         runCatching { blockingStub.queryStats(request) }
+            .onFailure { e ->
+                com.simplexray.an.common.AppLogger.w("CoreStatsClient.getTraffic failed: ${e.javaClass.simpleName}: ${e.message}", e)
+            }
             .getOrNull()
             ?.statList
             ?.let { statList ->
@@ -137,6 +142,7 @@ class CoreStatsClient(private val channel: ManagedChannel) : Closeable {
         fun create(host: String, port: Int): CoreStatsClient {
             val channel = ManagedChannelBuilder.forAddress(host, port)
                 .usePlaintext()
+                .maxInboundMessageSize(4 * 1024 * 1024) // 4MB max message size
                 .build()
             return CoreStatsClient(channel)
         }

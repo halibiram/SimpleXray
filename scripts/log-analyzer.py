@@ -86,6 +86,7 @@ PATTERNS = {
     ],
 }
 
+
 class LogAnalyzer:
     def __init__(self, log_file: str):
         self.log_file = log_file
@@ -102,7 +103,7 @@ class LogAnalyzer:
             'crashes': 0,
             'connection_errors': 0,
         }
-        
+
     def parse_line(self, line: str) -> Optional[Dict]:
         """Parse a logcat line and extract timestamp, level, tag, and message."""
         # Logcat time format: MM-DD HH:MM:SS.mmm
@@ -110,10 +111,10 @@ class LogAnalyzer:
         match = re.match(time_pattern, line)
         if not match:
             return None
-            
+
         timestamp_str = match.group(1)
         rest = line[match.end():].strip()
-        
+
         # Extract level and tag: "D/TProxyService: message"
         level_tag_match = re.match(r'([VDIWEF])/([^:]+):\s*(.*)', rest)
         if level_tag_match:
@@ -124,7 +125,7 @@ class LogAnalyzer:
             level = 'V'
             tag = 'Unknown'
             message = rest
-            
+
         return {
             'timestamp': timestamp_str,
             'level': level,
@@ -132,7 +133,7 @@ class LogAnalyzer:
             'message': message,
             'raw': line,
         }
-    
+
     def analyze(self):
         """Analyze the log file."""
         try:
@@ -142,7 +143,7 @@ class LogAnalyzer:
                     parsed = self.parse_line(line.strip())
                     if not parsed:
                         continue
-                    
+
                     # Check all patterns
                     for category, patterns in PATTERNS.items():
                         for pattern in patterns:
@@ -171,19 +172,19 @@ class LogAnalyzer:
                                 elif category == 'connection_error':
                                     self.stats['connection_errors'] += 1
                                 break  # Only count once per line
-                    
+
         except FileNotFoundError:
             print(f"ERROR: File not found: {self.log_file}", file=sys.stderr)
             sys.exit(1)
         except Exception as e:
             print(f"ERROR: Failed to analyze log: {e}", file=sys.stderr)
             sys.exit(1)
-    
+
     def find_connect_disconnect_pairs(self):
         """Find connect → disconnect patterns."""
         connects = self.matches.get('connect', [])
         disconnects = self.matches.get('disconnect', [])
-        
+
         for connect in connects:
             # Find the next disconnect after this connect
             next_disconnect = None
@@ -191,9 +192,9 @@ class LogAnalyzer:
                 if disconnect['line'] > connect['line']:
                     next_disconnect = disconnect
                     break
-            
+
             self.connect_disconnect_pairs.append((connect, next_disconnect))
-    
+
     def print_summary(self):
         """Print a summary of findings."""
         print("=" * 70)
@@ -201,7 +202,7 @@ class LogAnalyzer:
         print("=" * 70)
         print(f"Total lines analyzed: {self.stats['total_lines']}")
         print()
-        
+
         print("Event Counts:")
         print(f"  Connects: {self.stats['connect_count']}")
         print(f"  Disconnects: {self.stats['disconnect_count']}")
@@ -212,71 +213,80 @@ class LogAnalyzer:
         print(f"  Crashes: {self.stats['crashes']}")
         print(f"  Connection Errors: {self.stats['connection_errors']}")
         print()
-        
+
         # Connect-Disconnect pairs
         self.find_connect_disconnect_pairs()
         if self.connect_disconnect_pairs:
-            print(f"Connect → Disconnect Patterns: {len(self.connect_disconnect_pairs)}")
-            unmatched_connects = sum(1 for _, d in self.connect_disconnect_pairs if d is None)
+            print(
+                f"Connect → Disconnect Patterns: {len(self.connect_disconnect_pairs)}")
+            unmatched_connects = sum(
+                1 for _, d in self.connect_disconnect_pairs if d is None)
             if unmatched_connects > 0:
-                print(f"  ⚠️  Unmatched connects (no disconnect found): {unmatched_connects}")
+                print(
+                    f"  ⚠️  Unmatched connects (no disconnect found): {unmatched_connects}")
             print()
-        
+
         # Critical issues
         critical = []
         if self.stats['fatal_signals'] > 0:
-            critical.append(f"Fatal signals detected: {self.stats['fatal_signals']}")
+            critical.append(
+                f"Fatal signals detected: {self.stats['fatal_signals']}")
         if self.stats['vpn_unexpected_stops'] > 0:
-            critical.append(f"VPN unexpected stops: {self.stats['vpn_unexpected_stops']}")
+            critical.append(
+                f"VPN unexpected stops: {self.stats['vpn_unexpected_stops']}")
         if self.stats['crashes'] > 0:
             critical.append(f"Crashes detected: {self.stats['crashes']}")
-        
+
         if critical:
             print("⚠️  Critical Issues:")
             for issue in critical:
                 print(f"  - {issue}")
             print()
-    
+
     def print_detailed(self):
         """Print detailed findings."""
         self.print_summary()
-        
+
         # Print fatal signals
         if self.matches.get('fatal_signal'):
             print("=" * 70)
             print("Fatal Signals:")
             print("=" * 70)
             for match in self.matches['fatal_signal']:
-                print(f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
+                print(
+                    f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
             print()
-        
+
         # Print VPN unexpected stops
         if self.matches.get('vpn_unexpected_stop'):
             print("=" * 70)
             print("VPN Unexpected Stops:")
             print("=" * 70)
             for match in self.matches['vpn_unexpected_stop']:
-                print(f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
+                print(
+                    f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
             print()
-        
+
         # Print crashes
         if self.matches.get('crash'):
             print("=" * 70)
             print("Crashes:")
             print("=" * 70)
             for match in self.matches['crash']:
-                print(f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
+                print(
+                    f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
             print()
-        
+
         # Print permission denied
         if self.matches.get('permission_denied'):
             print("=" * 70)
             print("Permission Denied Errors:")
             print("=" * 70)
             for match in self.matches['permission_denied']:
-                print(f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
+                print(
+                    f"Line {match['line']} [{match['timestamp']}] {match['level']}/{match['tag']}: {match['message']}")
             print()
-        
+
         # Print connect-disconnect pairs
         self.find_connect_disconnect_pairs()
         if self.connect_disconnect_pairs:
@@ -285,13 +295,15 @@ class LogAnalyzer:
             print("=" * 70)
             for i, (connect, disconnect) in enumerate(self.connect_disconnect_pairs, 1):
                 print(f"Pair {i}:")
-                print(f"  Connect:  Line {connect['line']} [{connect['timestamp']}] {connect['message']}")
+                print(
+                    f"  Connect:  Line {connect['line']} [{connect['timestamp']}] {connect['message']}")
                 if disconnect:
-                    print(f"  Disconnect: Line {disconnect['line']} [{disconnect['timestamp']}] {disconnect['message']}")
+                    print(
+                        f"  Disconnect: Line {disconnect['line']} [{disconnect['timestamp']}] {disconnect['message']}")
                 else:
                     print(f"  Disconnect: NOT FOUND (unmatched connect)")
                 print()
-    
+
     def to_json(self) -> Dict:
         """Export results as JSON."""
         self.find_connect_disconnect_pairs()
@@ -314,13 +326,14 @@ def main():
     parser = argparse.ArgumentParser(description="SimpleXray Log Analyzer")
     parser.add_argument('logfile', help='Log file to analyze')
     parser.add_argument('--json', action='store_true', help='Output as JSON')
-    parser.add_argument('--summary', action='store_true', help='Show only summary')
-    
+    parser.add_argument('--summary', action='store_true',
+                        help='Show only summary')
+
     args = parser.parse_args()
-    
+
     analyzer = LogAnalyzer(args.logfile)
     analyzer.analyze()
-    
+
     if args.json:
         print(json.dumps(analyzer.to_json(), indent=2))
     elif args.summary:
@@ -331,4 +344,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 

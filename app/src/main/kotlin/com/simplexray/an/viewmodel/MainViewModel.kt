@@ -20,6 +20,7 @@ import com.simplexray.an.BuildConfig
 import com.simplexray.an.R
 import com.simplexray.an.common.CoreStatsClient
 import com.simplexray.an.common.ROUTE_APP_LIST
+import com.xray.app.stats.command.SysStatsResponse
 import com.simplexray.an.common.ROUTE_CONFIG_EDIT
 import com.simplexray.an.common.ServiceStateChecker
 import com.simplexray.an.common.ThemeMode
@@ -31,6 +32,7 @@ import com.simplexray.an.common.error.toAppError
 import com.simplexray.an.data.source.FileManager
 import com.simplexray.an.prefs.Preferences
 import com.simplexray.an.service.TProxyService
+import com.simplexray.an.service.XrayProcessManager
 import com.simplexray.an.update.UpdateManager
 import com.simplexray.an.update.DownloadProgress
 import kotlinx.coroutines.CoroutineScope
@@ -77,6 +79,7 @@ class MainViewModel(application: Application) :
     val prefs: Preferences = Preferences(application)
     private val activityScope: CoroutineScope = viewModelScope
     private var coreStatsClient: CoreStatsClient? = null
+    private var currentStatsApiPort: Int = 0 // Track current port to detect changes
     private val coreStatsClientMutex = Mutex()
 
     private val fileManager: FileManager = FileManager(application, prefs)
@@ -436,19 +439,51 @@ class MainViewModel(application: Application) :
 
         _statsErrorState.value = null
         
+        // Validate API port before attempting connection
+        val apiPort = prefs.apiPort.takeIf { it > 0 } ?: XrayProcessManager.statsPort
+        if (apiPort <= 0) {
+            // API port not available yet, use cached stats if available
+            cachedStats?.let { _coreStatsState.value = it }
+            _statsErrorState.value = "Stats API port not available (Xray may not be running)"
+            return
+        }
+        
         try {
             // Use Mutex instead of synchronized for suspend functions
+            // Recreate client if port changed or client is null
             coreStatsClientMutex.withLock {
-                if (coreStatsClient == null) {
-                    coreStatsClient = CoreStatsClient.create("127.0.0.1", prefs.apiPort)
+                if (coreStatsClient == null || currentStatsApiPort != apiPort) {
+                    // Close old client if exists
+                    coreStatsClient?.close()
+                    // Create new client with current port
+                    coreStatsClient = CoreStatsClient.create("127.0.0.1", apiPort)
+                    currentStatsApiPort = apiPort
                 }
             }
 
-            val stats = coreStatsClientMutex.withLock { 
-                runCatching { coreStatsClient?.getSystemStats() }.getOrNull()
+            // Single attempt to get stats (retry mechanism removed)
+            var stats: SysStatsResponse? = null
+            var traffic: TrafficState? = null
+            var lastError: String? = null
+            
+            AppLogger.d("Attempting stats API connection (port: $apiPort)")
+            
+            stats = coreStatsClientMutex.withLock { 
+                runCatching { 
+                    coreStatsClient?.getSystemStats() 
+                }.onFailure { e ->
+                    lastError = e.message
+                    AppLogger.w("Failed to get system stats: ${e.javaClass.simpleName}: ${e.message}", e)
+                }.getOrNull()
             }
-            val traffic = coreStatsClientMutex.withLock { 
-                runCatching { coreStatsClient?.getTraffic() }.getOrNull()
+            
+            traffic = coreStatsClientMutex.withLock { 
+                runCatching { 
+                    coreStatsClient?.getTraffic() 
+                }.onFailure { e ->
+                    if (lastError == null) lastError = e.message
+                    AppLogger.w("Failed to get traffic stats: ${e.javaClass.simpleName}: ${e.message}", e)
+                }.getOrNull()
             }
 
             if (stats == null && traffic == null) {
@@ -456,10 +491,16 @@ class MainViewModel(application: Application) :
                 coreStatsClientMutex.withLock {
                     coreStatsClient?.close()
                     coreStatsClient = null
+                    currentStatsApiPort = 0 // Reset port tracking
                 }
                 // Use cached stats if available
                 cachedStats?.let { _coreStatsState.value = it }
-                _statsErrorState.value = "Failed to connect to stats API"
+                val errorMsg = if (lastError != null) {
+                    "Failed to connect to stats API (port: $apiPort). Error: $lastError"
+                } else {
+                    "Failed to connect to stats API (port: $apiPort). Xray may not be ready yet."
+                }
+                _statsErrorState.value = errorMsg
                 return
             }
 
@@ -484,8 +525,18 @@ class MainViewModel(application: Application) :
             _coreStatsState.value = newStats
             AppLogger.d("Core stats updated")
         } catch (e: Exception) {
-            AppLogger.e("Error updating core stats", e)
-            _statsErrorState.value = e.message ?: "Unknown error"
+            AppLogger.e("Error updating core stats: ${e.javaClass.simpleName}: ${e.message}", e)
+            // More detailed error message
+            val errorMsg = when {
+                e.message?.contains("UNAVAILABLE", ignoreCase = true) == true -> 
+                    "Stats API unavailable (port: $apiPort). Xray may not be ready yet."
+                e.message?.contains("DEADLINE_EXCEEDED", ignoreCase = true) == true -> 
+                    "Stats API timeout (port: $apiPort). Xray may be slow to respond."
+                e.message?.contains("Connection refused", ignoreCase = true) == true -> 
+                    "Stats API connection refused (port: $apiPort). Check if Xray is running."
+                else -> "Failed to connect to stats API (port: $apiPort). ${e.message ?: "Unknown error"}"
+            }
+            _statsErrorState.value = errorMsg
             // Use cached stats if available
             cachedStats?.let { _coreStatsState.value = it }
         }

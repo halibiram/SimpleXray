@@ -279,6 +279,79 @@ android {
             kotlin {
                 srcDirs 'src/main/kotlin', 'build/generated/source/proto/main/grpckt', 'build/generated/ksp/debug/kotlin', 'build/generated/ksp/release/kotlin'
             }
+            // Ensure jniLibs and assets are included for debug builds
+            jniLibs {
+                srcDirs 'src/main/jniLibs'
+            }
+            assets {
+                srcDirs 'src/main/assets'
+            }
+        }
+        debug {
+            // Debug build uses local files from jniLibs and assets
+            jniLibs {
+                srcDirs 'src/main/jniLibs'
+            }
+            assets {
+                srcDirs 'src/main/assets'
+            }
+        }
+    }
+}
+
+// Pre-build check for local debug files
+tasks.register("checkDebugFiles") {
+    doLast {
+        def isDebugBuild = gradle.startParameter.taskNames.any { 
+            it.contains("Debug") || it.contains("debug") 
+        }
+        
+        if (isDebugBuild) {
+            println("🔍 Checking local debug files...")
+            
+            // Check jniLibs
+            def jniLibsDir = file("src/main/jniLibs")
+            def hasJniLibs = jniLibsDir.exists() && jniLibsDir.listFiles()?.length > 0
+            
+            if (hasJniLibs) {
+                println("✅ Local jniLibs found: ${jniLibsDir.absolutePath}")
+                jniLibsDir.listFiles()?.each { abiDir ->
+                    if (abiDir.isDirectory()) {
+                        def xrayLib = new File(abiDir, "libxray.so")
+                        def hysteria2Lib = new File(abiDir, "libhysteria2.so")
+                        if (xrayLib.exists()) {
+                            println("   ✅ libxray.so found for ${abiDir.name} (${xrayLib.length()} bytes)")
+                        }
+                        if (hysteria2Lib.exists()) {
+                            println("   ✅ libhysteria2.so found for ${abiDir.name} (${hysteria2Lib.length()} bytes)")
+                        }
+                    }
+                }
+            } else {
+                println("⚠️  WARNING: Local jniLibs not found!")
+                println("   Run: ./scripts/download-debug-files.ps1 (Windows) or ./scripts/download-debug-files.sh (Linux/Mac)")
+                println("   Build will continue but may use fallback libraries.")
+            }
+            
+            // Check assets
+            def assetsDir = file("src/main/assets")
+            def geoipFile = new File(assetsDir, "geoip.dat")
+            def geositeFile = new File(assetsDir, "geosite.dat")
+            
+            if (geoipFile.exists() && geositeFile.exists()) {
+                println("✅ Local assets found:")
+                println("   ✅ geoip.dat (${geoipFile.length()} bytes)")
+                println("   ✅ geosite.dat (${geositeFile.length()} bytes)")
+            } else {
+                println("⚠️  WARNING: Local assets not found!")
+                if (!geoipFile.exists()) {
+                    println("   Missing: geoip.dat")
+                }
+                if (!geositeFile.exists()) {
+                    println("   Missing: geosite.dat")
+                }
+                println("   Run: ./scripts/download-debug-files.ps1 (Windows) or ./scripts/download-debug-files.sh (Linux/Mac)")
+            }
         }
     }
 }
@@ -311,12 +384,20 @@ tasks.register("checkBoringSSL") {
     }
 }
 
-// Run BoringSSL check before NDK build
+// Run checks before build
 tasks.matching { task ->
     task.name.startsWith("externalNativeBuild") && 
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
     task.dependsOn("checkBoringSSL")
+}
+
+// Run debug files check before debug builds
+tasks.matching { task ->
+    task.name.contains("Debug") && 
+    (task.name.contains("assemble") || task.name.contains("bundle"))
+}.configureEach { task ->
+    task.dependsOn("checkDebugFiles")
 }
 
 dependencies {

@@ -301,7 +301,7 @@ class Preferences(context: Context) {
         get() {
             val value = getPrefData(API_PORT).first
             val port = value?.toIntOrNull()
-            return port ?: 0
+            return port ?: 10085
         }
         set(port) {
             setValueInProvider(API_PORT, port.toString())

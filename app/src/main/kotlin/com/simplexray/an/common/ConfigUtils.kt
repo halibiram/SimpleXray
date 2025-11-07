@@ -54,8 +54,11 @@ object ConfigUtils {
         // 1. API section - enable StatsService
         val apiObject = JSONObject()
         apiObject.put("tag", "api")
+        apiObject.put("listen", "127.0.0.1:${prefs.apiPort}")
         val servicesArray = org.json.JSONArray()
         servicesArray.put("StatsService")
+        servicesArray.put("HandlerService")
+        servicesArray.put("LoggerService")
         apiObject.put("services", servicesArray)
         jsonObject.put("api", apiObject)
         
@@ -98,128 +101,6 @@ object ConfigUtils {
         policyObject.put("levels", levelsObject)
 
         jsonObject.put("policy", policyObject)
-
-        // 4. Inbounds - add dokodemo-door API listener
-        val inboundsArray = if (jsonObject.has("inbounds")) {
-            jsonObject.getJSONArray("inbounds")
-        } else {
-            org.json.JSONArray().also { jsonObject.put("inbounds", it) }
-        }
-        
-        // Remove any existing api-in inbounds first to prevent duplicates
-        val inboundsToRemove = mutableListOf<Int>()
-        for (i in 0 until inboundsArray.length()) {
-            val inbound = inboundsArray.getJSONObject(i)
-            val tag = inbound.optString("tag", "")
-            if (tag == "api-in") {
-                inboundsToRemove.add(i)
-            }
-        }
-        // Remove in reverse order to maintain indices
-        for (i in inboundsToRemove.reversed()) {
-            inboundsArray.remove(i)
-            Log.d(TAG, "Removed existing api-in inbound to prevent duplicate")
-        }
-        
-        // Check if API inbound already exists with correct settings
-        // Only check if apiPort is valid (1-65535)
-        var hasApiInbound = false
-        val apiPort = prefs.apiPort
-        if (apiPort > 0 && apiPort <= 65535) {
-            for (i in 0 until inboundsArray.length()) {
-                val inbound = inboundsArray.getJSONObject(i)
-                val protocol = inbound.optString("protocol", "")
-                val port = inbound.optInt("port", -1)
-                val tag = inbound.optString("tag", "")
-                if (protocol == "dokodemo-door" && port == apiPort && tag == "api-in") {
-                    hasApiInbound = true
-                    break
-                }
-            }
-        }
-        
-        if (!hasApiInbound) {
-            // Validate port before adding to config
-            val apiPort = prefs.apiPort
-            if (apiPort <= 0 || apiPort > 65535) {
-                Log.w(TAG, "Invalid API port: $apiPort (must be 1-65535), skipping API inbound injection")
-            } else {
-                val apiInbound = JSONObject().apply {
-                    put("listen", "127.0.0.1")
-                    put("port", apiPort)
-                    put("protocol", "dokodemo-door")
-                    put("tag", "api-in")
-                    put("settings", JSONObject().apply {
-                        put("address", "127.0.0.1")
-                    })
-                }
-                inboundsArray.put(apiInbound)
-                Log.d(TAG, "Added API inbound listener on port $apiPort")
-            }
-        }
-
-        // 5. Routing - route API inbound to API outbound
-        val routingObject = if (jsonObject.has("routing")) {
-            jsonObject.getJSONObject("routing")
-        } else {
-            JSONObject().also { jsonObject.put("routing", it) }
-        }
-        
-        val rulesArray = if (routingObject.has("rules")) {
-            routingObject.getJSONArray("rules")
-        } else {
-            org.json.JSONArray().also { routingObject.put("rules", it) }
-        }
-        
-        // Check if API routing rule already exists
-        var hasApiRule = false
-        for (i in 0 until rulesArray.length()) {
-            val rule = rulesArray.getJSONObject(i)
-            val outboundTag = rule.optString("outboundTag", "")
-            if (outboundTag == "api") {
-                hasApiRule = true
-                break
-            }
-        }
-        
-        if (!hasApiRule) {
-            val apiRule = JSONObject().apply {
-                put("type", "field")
-                put("inboundTag", org.json.JSONArray().apply {
-                    put("api-in")
-                })
-                put("outboundTag", "api")
-            }
-            rulesArray.put(apiRule)
-            Log.d(TAG, "Added API routing rule")
-        }
-
-        // 6. Outbounds - ensure API outbound exists (optional, for routing)
-        val outboundsArray = if (jsonObject.has("outbounds")) {
-            jsonObject.getJSONArray("outbounds")
-        } else {
-            org.json.JSONArray().also { jsonObject.put("outbounds", it) }
-        }
-        
-        var hasApiOutbound = false
-        for (i in 0 until outboundsArray.length()) {
-            val outbound = outboundsArray.getJSONObject(i)
-            val tag = outbound.optString("tag", "")
-            if (tag == "api") {
-                hasApiOutbound = true
-                break
-            }
-        }
-        
-        if (!hasApiOutbound) {
-            // Add a simple API outbound (required for routing)
-            val apiOutbound = JSONObject().apply {
-                put("protocol", "freedom")
-                put("tag", "api")
-            }
-            outboundsArray.put(apiOutbound)
-            Log.d(TAG, "Added API outbound")
-        }
 
         Log.d(TAG, "Stats service injected successfully with API port: ${prefs.apiPort}")
         return jsonObject.toString(2)

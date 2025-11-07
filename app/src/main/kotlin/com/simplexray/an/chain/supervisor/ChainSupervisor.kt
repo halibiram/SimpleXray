@@ -261,9 +261,22 @@ class ChainSupervisor(private val context: Context) {
                             )
                             
                             if (unifiedConfig != null) {
-                                val unifiedConfigFile = File(context.filesDir, "unified-chain-${System.currentTimeMillis()}.json")
-                                unifiedConfigFile.writeText(unifiedConfig)
-                                AppLogger.i("ChainSupervisor: Created unified Xray config with Reality integration")
+                                // Use fixed filename instead of creating new file each time
+                                // Only update if config has changed
+                                val unifiedConfigFile = File(context.filesDir, "unified-chain.json")
+                                val existingContent = if (unifiedConfigFile.exists()) {
+                                    unifiedConfigFile.readText()
+                                } else {
+                                    null
+                                }
+                                
+                                // Only write if config changed or file doesn't exist
+                                if (existingContent != unifiedConfig) {
+                                    unifiedConfigFile.writeText(unifiedConfig)
+                                    AppLogger.i("ChainSupervisor: Created/updated unified Xray config with Reality integration")
+                                } else {
+                                    AppLogger.d("ChainSupervisor: Unified config unchanged, using existing file")
+                                }
                                 unifiedConfigFile.name // Return relative path
                             } else {
                                 AppLogger.w("ChainSupervisor: Failed to build unified config, using original")

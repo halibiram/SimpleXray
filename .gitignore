@@ -52,3 +52,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache
+
+# Debug artifacts (downloaded from CI builds)
+.debug-artifacts/

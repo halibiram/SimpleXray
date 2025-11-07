@@ -396,20 +396,52 @@ object Hysteria2 {
                 return false
             }
             
-            // Make executable
-            bin.setExecutable(true, false)
+            // Validate binary path to prevent command injection
+            val nativeLibDir = ctx.applicationInfo.nativeLibraryDir ?: ""
+            if (!bin.canonicalPath.startsWith(ctx.filesDir.canonicalPath) &&
+                !bin.canonicalPath.startsWith(nativeLibDir)) {
+                AppLogger.e("Hysteria2: Binary path outside allowed directories: ${bin.absolutePath}")
+                return false
+            }
+            
+            // Validate that bin file is actually executable
+            if (!bin.canExecute()) {
+                AppLogger.e("Hysteria2: Binary file is not executable: ${bin.absolutePath}")
+                return false
+            }
             
             // Launch process
             val pb = ProcessBuilder(
                 bin.absolutePath,
                 "-config", configFile.absolutePath
             )
+            
+            // Set environment variables (similar to XrayCoreLauncher)
+            val filesDir = ctx.filesDir
+            val cacheDir = ctx.cacheDir
+            val environment = pb.environment()
+            
+            // Restrict filesystem access to prevent SELinux denials
+            environment["HOME"] = filesDir.path
+            environment["TMPDIR"] = cacheDir.path
+            environment["TMP"] = cacheDir.path
+            // Remove test-related environment variables
+            environment.remove("BORINGSSL_TEST_DATA_ROOT")
+            environment.remove("TEST_DATA_ROOT")
+            environment.remove("TEST_DIR")
+            environment.remove("GO_TEST_DIR")
+            
+            // Set working directory
+            pb.directory(filesDir)
             pb.redirectErrorStream(true)
+            
             val proc = pb.start()
             processRef.set(proc)
             
             // Start log monitoring
             startLogMonitoring(proc)
+            
+            AppLogger.d("Hysteria2: Process launched successfully (PID: ${try { proc.javaClass.getMethod("pid").invoke(proc) } catch (e: Exception) { "unknown" }})")
             
             // Process launched successfully
             true
@@ -421,35 +453,120 @@ object Hysteria2 {
     
     /**
      * Find Hysteria2 binary in native libs or assets
+     * Similar to XrayCoreLauncher.copyExecutable() for SELinux compliance
      */
     private fun findHysteria2Binary(ctx: Context): File? {
-        // Try native libs first
-        val nativeLibDir = ctx.applicationInfo.nativeLibraryDir
-        if (nativeLibDir != null) {
-            val libFile = File(nativeLibDir, "libhysteria2.so")
-            if (libFile.exists()) {
-                // Copy to filesDir and make executable
+        AppLogger.d("Hysteria2: Searching for binary...")
+        // Validate nativeLibraryDir path to prevent path traversal
+        val libDir = ctx.applicationInfo.nativeLibraryDir ?: run {
+            AppLogger.e("Hysteria2: nativeLibraryDir is null")
+            return null
+        }
+        val libDirFile = File(libDir)
+        if (!libDirFile.exists() || !libDirFile.isDirectory) {
+            AppLogger.e("Hysteria2: Invalid native library directory: $libDir")
+            return null
+        }
+        
+        AppLogger.d("Hysteria2: Checking native library directory: $libDir")
+        val src = File(libDir, "libhysteria2.so")
+        if (!src.exists()) {
+            AppLogger.w("Hysteria2: libhysteria2.so not found at ${src.absolutePath}")
+            // Try assets as fallback
+            return try {
+                val assets = ctx.assets
                 val binFile = File(ctx.filesDir, "hysteria2")
-                libFile.copyTo(binFile, overwrite = true)
+                assets.open("hysteria2").use { input ->
+                    binFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
                 binFile.setExecutable(true, false)
-                return binFile
+                if (binFile.canExecute()) {
+                    AppLogger.d("Hysteria2: Binary found in assets: ${binFile.absolutePath}")
+                    binFile
+                } else {
+                    AppLogger.e("Hysteria2: Binary from assets is not executable")
+                    binFile.delete()
+                    null
+                }
+            } catch (e: Exception) {
+                AppLogger.d("Hysteria2: Binary not found in assets: ${e.message}")
+                null
             }
         }
         
-        // Try assets
-        return try {
-            val assets = ctx.assets
-            val binFile = File(ctx.filesDir, "hysteria2")
-            assets.open("hysteria2").use { input ->
-                binFile.outputStream().use { output ->
-                    input.copyTo(output)
+        // Android 14+ (API 34+) SELinux fix: Use native library directly if executable
+        // Native library directory has app_file_exec context which allows execution
+        val androidVersion = android.os.Build.VERSION.SDK_INT
+        AppLogger.d("Hysteria2: Android version: $androidVersion, file size: ${src.length()} bytes")
+        if (androidVersion >= 34) {
+            if (src.canExecute()) {
+                AppLogger.i("Hysteria2: Using native library directly (Android $androidVersion SELinux compliance): ${src.absolutePath}")
+                return src
+            } else {
+                AppLogger.w("Hysteria2: Native library not executable, falling back to copy method")
+            }
+        }
+        
+        // SELinux fix: Copy to filesDir with hysteria2_copy name to avoid setattr denial
+        val dst = File(ctx.filesDir, "hysteria2_copy")
+        try {
+            // Copy file and verify success by comparing sizes
+            val srcSize = src.length()
+            if (srcSize <= 0) {
+                AppLogger.e("Hysteria2: Source file is empty or invalid: $srcSize bytes")
+                return null
+            }
+            
+            // Copy file in chunks for better error handling
+            src.inputStream().use { ins ->
+                dst.outputStream().use { outs ->
+                    val buffer = ByteArray(8192)
+                    var totalCopied = 0L
+                    var bytesRead: Int
+                    while (ins.read(buffer).also { bytesRead = it } != -1) {
+                        outs.write(buffer, 0, bytesRead)
+                        totalCopied += bytesRead
+                    }
+                    if (totalCopied != srcSize) {
+                        throw java.io.IOException("Copy incomplete: expected $srcSize bytes, copied $totalCopied")
+                    }
                 }
             }
-            binFile.setExecutable(true, false)
-            binFile
-        } catch (e: Exception) {
-            AppLogger.d("Hysteria2: Binary not found in assets")
-            null
+            
+            // Verify copy was successful - size check
+            if (dst.length() != srcSize) {
+                AppLogger.e("Hysteria2: File copy verification failed: source size=$srcSize, dest size=${dst.length()}")
+                dst.delete()
+                return null
+            }
+            
+            // Set executable permission only after successful copy and verification
+            if (!dst.setExecutable(true)) {
+                AppLogger.e("Hysteria2: Failed to set executable permission on ${dst.absolutePath}")
+                dst.delete()
+                return null
+            }
+            if (!dst.canExecute()) {
+                AppLogger.e("Hysteria2: Failed to set executable permission on ${dst.absolutePath}")
+                dst.delete()
+                return null
+            }
+            AppLogger.d("Hysteria2: Successfully copied binary: ${dst.absolutePath} (${srcSize} bytes)")
+            return dst
+        } catch (e: java.io.IOException) {
+            AppLogger.e("Hysteria2: IO error copying executable", e)
+            dst.delete()
+            return null
+        } catch (e: SecurityException) {
+            AppLogger.e("Hysteria2: Security error copying executable", e)
+            dst.delete()
+            return null
+        } catch (t: Throwable) {
+            AppLogger.e("Hysteria2: Unexpected error copying executable", t)
+            dst.delete()
+            return null
         }
     }
     
