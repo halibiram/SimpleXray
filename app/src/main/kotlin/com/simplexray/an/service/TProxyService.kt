@@ -545,6 +545,14 @@ class TProxyService : VpnService() {
                 return
             }
             
+            // Validate config ports before sending to xray-core
+            // BUG-FIX: Port 0 causes xray-core to exit immediately
+            if (!validateConfigPorts(injectedConfigContent)) {
+                AppLogger.e("Config contains invalid ports (0 or out of range). Xray-core will not start.")
+                stopXray()
+                return
+            }
+            
             // Write config with error handling
             // SEC: Config content written to process stdin - ensure no injection
             // TIMEOUT-MISS: No timeout on write - may block indefinitely
@@ -996,6 +1004,40 @@ class TProxyService : VpnService() {
             // If we can't verify, assume it's safe (process may have exited)
             AppLogger.w("Could not verify process name for PID $pid: ${e.message}")
             true // Allow kill attempt if verification fails
+        }
+    }
+    
+    /**
+     * Validate config ports before sending to xray-core.
+     * Port 0 or out-of-range ports cause xray-core to exit immediately.
+     * 
+     * @param configContent JSON config content to validate
+     * @return true if all ports are valid (1-65535), false otherwise
+     */
+    private fun validateConfigPorts(configContent: String): Boolean {
+        return try {
+            val ports = ConfigUtils.extractPortsFromJson(configContent)
+            
+            // Check for port 0 (most common issue)
+            if (ports.contains(0)) {
+                AppLogger.e("Config contains invalid port 0. This will cause xray-core to exit.")
+                return false
+            }
+            
+            // Check for out-of-range ports
+            val invalidPorts = ports.filter { it < 1 || it > 65535 }
+            if (invalidPorts.isNotEmpty()) {
+                AppLogger.e("Config contains invalid ports: $invalidPorts (must be 1-65535)")
+                return false
+            }
+            
+            AppLogger.d("Config port validation passed. Found ${ports.size} valid ports.")
+            true
+        } catch (e: Exception) {
+            AppLogger.e("Failed to validate config ports: ${e.message}", e)
+            // On validation error, allow config to proceed (fail-safe)
+            // But log the error for debugging
+            false
         }
     }
     
