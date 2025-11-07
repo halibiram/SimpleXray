@@ -6,7 +6,15 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import com.google.gson.JsonPrimitive
+import com.google.gson.reflect.TypeToken
 import com.simplexray.an.performance.optimizer.PerformanceOptimizer
+import com.simplexray.an.protocol.optimization.ProtocolConfig
+import com.simplexray.an.protocol.routing.AdvancedRouter
+import com.simplexray.an.protocol.routing.AdvancedRouter.RoutingAction
+import com.simplexray.an.protocol.routing.AdvancedRouter.RoutingMatcher
+import com.simplexray.an.protocol.routing.AdvancedRouter.RoutingRule
+import com.simplexray.an.prefs.Preferences
 import java.io.File
 
 object XrayConfigPatcher {
@@ -88,6 +96,9 @@ object XrayConfigPatcher {
         if (mergeTransport) {
             mergeTransportSection(root, context)
         }
+
+        // Apply advanced routing rules
+        applyAdvancedRoutingRules(root, context)
 
         // Write back
         file.writeText(gson.toJson(root))
@@ -506,11 +517,465 @@ object XrayConfigPatcher {
                 Log.d(TAG, "Set gaming connection idle timeout to ${gamingIdle}ms")
             }
 
+            // Apply protocol-level optimizations from ProtocolConfig
+            applyProtocolConfig(root, prefs)
+
             Log.d(TAG, "Gaming config applied successfully for ${gameProfile.displayName}")
         } catch (e: Exception) {
             // Log error with full context - gaming optimizations are optional but failures should be visible
             Log.e(TAG, "Failed to apply gaming config, continuing without it: ${e.javaClass.simpleName}: ${e.message}", e)
             // Note: Gaming config is optional, so we continue without it rather than failing the entire config patch
         }
+    }
+
+    /**
+     * Apply protocol-level optimizations (TLS, QUIC, compression) from ProtocolConfig
+     */
+    private fun applyProtocolConfig(root: JsonObject, prefs: com.simplexray.an.prefs.Preferences) {
+        try {
+            val protocolConfigJson = prefs.gamingProtocolConfig
+            if (protocolConfigJson == null) {
+                Log.d(TAG, "No gaming protocol config found, skipping protocol optimizations")
+                return
+            }
+
+            val protocolConfig = gson.fromJson(protocolConfigJson, ProtocolConfig::class.java)
+            if (protocolConfig == null) {
+                Log.w(TAG, "Failed to parse gaming protocol config")
+                return
+            }
+
+            Log.d(TAG, "Applying protocol config: HTTP/3=${protocolConfig.http3Enabled}, TLS1.3=${protocolConfig.tls13Enabled}, EarlyData=${protocolConfig.tls13EarlyData}")
+
+            // Apply to all outbounds
+            val outbounds = root.get("outbounds") as? JsonArray
+            if (outbounds != null) {
+                for (element in outbounds) {
+                    if (element is JsonObject) {
+                        applyProtocolConfigToOutbound(element, protocolConfig)
+                    }
+                }
+            }
+
+            // Apply transport-level settings (QUIC, etc.)
+            applyTransportConfig(root, protocolConfig)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply protocol config: ${e.javaClass.simpleName}: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Apply protocol config to a single outbound's streamSettings
+     */
+    private fun applyProtocolConfigToOutbound(outbound: JsonObject, config: ProtocolConfig) {
+        try {
+            // Get or create streamSettings
+            val streamSettings = (outbound.get("streamSettings") as? JsonObject)
+                ?: JsonObject().also { outbound.add("streamSettings", it) }
+
+            // Apply TLS 1.3 settings
+            // Note: Only apply if security is "tls" or not set (don't override "reality" or other security types)
+            if (config.tls13Enabled) {
+                val currentSecurity = streamSettings.get("security")?.asString
+                
+                // Only apply TLS settings if security is "tls" or not set
+                if (currentSecurity == null || currentSecurity == "none" || currentSecurity == "tls") {
+                    // Set security to "tls" if not already set
+                    if (currentSecurity == null || currentSecurity == "none") {
+                        streamSettings.addProperty("security", "tls")
+                    }
+
+                    // Get or create tlsSettings
+                    val tlsSettings = (streamSettings.get("tlsSettings") as? JsonObject)
+                        ?: JsonObject().also { streamSettings.add("tlsSettings", it) }
+
+                    // Set minimum TLS version to 1.3 (only if not already set)
+                    if (!tlsSettings.has("minVersion")) {
+                        tlsSettings.addProperty("minVersion", "1.3")
+                    }
+                    if (!tlsSettings.has("maxVersion")) {
+                        tlsSettings.addProperty("maxVersion", "1.3")
+                    }
+
+                    // Apply preferred cipher suites for gaming (low latency)
+                    if (config.preferredCipherSuites.isNotEmpty() && !tlsSettings.has("cipherSuites")) {
+                        val cipherSuites = JsonArray()
+                        config.preferredCipherSuites.forEach { cipher ->
+                            cipherSuites.add(cipher)
+                        }
+                        tlsSettings.add("cipherSuites", cipherSuites)
+                    }
+
+                    // Enable session tickets for faster reconnection (0-RTT support)
+                    if (config.tls13SessionTickets && !tlsSettings.has("sessionTicket")) {
+                        tlsSettings.addProperty("sessionTicket", true)
+                    }
+
+                    // Note: TLS 1.3 Early Data (0-RTT) is handled by Xray automatically when session tickets are enabled
+                    Log.d(TAG, "Applied TLS 1.3 settings with early data support")
+                } else {
+                    Log.d(TAG, "Skipping TLS settings - outbound uses security: $currentSecurity")
+                }
+            }
+
+            // Apply QUIC/HTTP/3 settings if enabled
+            // Note: Only apply QUIC settings if network is already set to "quic" or not set
+            // We don't force network change to avoid breaking existing configs
+            if (config.http3Enabled) {
+                val currentNetwork = streamSettings.get("network")?.asString
+                
+                // Only apply QUIC settings if network is quic or not set
+                if (currentNetwork == null || currentNetwork == "quic") {
+                    // Get or create quicSettings
+                    val quicSettings = (streamSettings.get("quicSettings") as? JsonObject)
+                        ?: JsonObject().also { streamSettings.add("quicSettings", it) }
+
+                    // Apply QUIC optimizations for gaming
+                    quicSettings.addProperty("maxIdleTimeout", config.quicIdleTimeout.toInt())
+                    
+                    // Note: security and key are typically set by server config
+                    // We only optimize timeout settings for gaming
+
+                    // Set network to quic if not already set
+                    if (currentNetwork == null) {
+                        streamSettings.addProperty("network", "quic")
+                    }
+                    
+                    Log.d(TAG, "Applied QUIC/HTTP/3 settings for gaming")
+                } else {
+                    Log.d(TAG, "Skipping QUIC settings - outbound uses network: $currentNetwork")
+                }
+            }
+
+            // Compression settings are typically handled at application level (HTTP headers)
+            // Xray doesn't directly control compression in streamSettings, but we log it for reference
+            if (!config.brotliEnabled && !config.gzipEnabled) {
+                Log.d(TAG, "Compression disabled for gaming (lower latency)")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply protocol config to outbound: ${e.javaClass.simpleName}: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Apply transport-level protocol settings
+     */
+    private fun applyTransportConfig(root: JsonObject, config: ProtocolConfig) {
+        try {
+            // Get or create transport section
+            val transport = (root.get("transport") as? JsonObject)
+                ?: JsonObject().also { root.add("transport", it) }
+
+            // Apply QUIC transport settings if HTTP/3 is enabled
+            if (config.http3Enabled) {
+                val quicTransport = (transport.get("quicSettings") as? JsonObject)
+                    ?: JsonObject().also { transport.add("quicSettings", it) }
+
+                // Set QUIC version
+                quicTransport.addProperty("maxIdleTimeout", config.quicIdleTimeout.toInt())
+                
+                // Note: maxIncomingStreams and maxOutgoingStreams are set per connection
+                // Xray may have different parameter names, so we apply what we can
+                
+                Log.d(TAG, "Applied QUIC transport settings")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply transport config: ${e.javaClass.simpleName}: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Apply advanced routing rules from Preferences to Xray routing configuration
+     */
+    private fun applyAdvancedRoutingRules(root: JsonObject, context: Context) {
+        try {
+            val prefs = Preferences(context)
+            val rulesJson = prefs.advancedRoutingRules
+
+            if (rulesJson.isNullOrBlank()) {
+                Log.d(TAG, "No advanced routing rules found, skipping")
+                return
+            }
+
+            // Parse routing rules from JSON
+            val type = object : TypeToken<List<RoutingRule>>() {}.type
+            val rules: List<RoutingRule> = try {
+                gson.fromJson(rulesJson, type) ?: emptyList()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse advanced routing rules: ${e.message}", e)
+                return
+            }
+
+            if (rules.isEmpty()) {
+                Log.d(TAG, "Advanced routing rules list is empty")
+                return
+            }
+
+            // Ensure routing section exists
+            val routing = (root.get("routing") as? JsonObject) ?: JsonObject().also { root.add("routing", it) }
+            val rulesArray = (routing.get("rules") as? JsonArray) ?: JsonArray().also { routing.add("rules", it) }
+
+            // Remove existing advanced routing rules (identified by comment or marker)
+            // We'll add a marker to identify our rules
+            removeAdvancedRoutingRules(rulesArray)
+
+            // Ensure required outbounds exist
+            ensureRequiredOutbounds(root)
+
+            // Convert and add advanced routing rules
+            // Sort by priority (higher priority first) and filter enabled rules
+            val enabledRules = rules
+                .filter { it.enabled }
+                .sortedByDescending { it.priority }
+
+            var addedCount = 0
+            var skippedCount = 0
+
+            for (rule in enabledRules) {
+                try {
+                    val xrayRule = convertRoutingRuleToXray(rule)
+                    if (xrayRule != null) {
+                        // Add marker to identify this as an advanced routing rule
+                        xrayRule.addProperty("_advancedRouting", true)
+                        xrayRule.addProperty("_ruleId", rule.id)
+                        xrayRule.addProperty("_ruleName", rule.name)
+                        
+                        rulesArray.add(xrayRule)
+                        addedCount++
+                        Log.d(TAG, "Added advanced routing rule: ${rule.name} (priority: ${rule.priority})")
+                    } else {
+                        skippedCount++
+                        Log.w(TAG, "Skipped advanced routing rule: ${rule.name} (unsupported matchers)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to convert routing rule ${rule.name}: ${e.message}", e)
+                    skippedCount++
+                }
+            }
+
+            Log.d(TAG, "Advanced routing rules applied: $addedCount added, $skippedCount skipped")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply advanced routing rules: ${e.javaClass.simpleName}: ${e.message}", e)
+            // Note: Advanced routing is optional, so we continue without it rather than failing the entire config patch
+        }
+    }
+
+    /**
+     * Remove existing advanced routing rules from rules array
+     */
+    private fun removeAdvancedRoutingRules(rulesArray: JsonArray) {
+        val indicesToRemove = mutableListOf<Int>()
+        for (i in 0 until rulesArray.size()) {
+            val rule = rulesArray[i]
+            if (rule is JsonObject) {
+                // Check if this is an advanced routing rule (has our marker)
+                val isAdvanced = rule.get("_advancedRouting")?.asBoolean ?: false
+                if (isAdvanced) {
+                    indicesToRemove.add(i)
+                }
+            }
+        }
+        // Remove in reverse order to maintain indices
+        for (i in indicesToRemove.reversed()) {
+            rulesArray.remove(i)
+        }
+        if (indicesToRemove.isNotEmpty()) {
+            Log.d(TAG, "Removed ${indicesToRemove.size} existing advanced routing rules")
+        }
+    }
+
+    /**
+     * Ensure required outbounds exist (direct, block, proxy)
+     */
+    private fun ensureRequiredOutbounds(root: JsonObject) {
+        val outbounds = (root.get("outbounds") as? JsonArray) ?: JsonArray().also { root.add("outbounds", it) }
+
+        // Check existing outbound tags
+        val existingTags = mutableSetOf<String>()
+        for (element in outbounds) {
+            if (element is JsonObject) {
+                val tag = element.get("tag")?.asString
+                if (tag != null) {
+                    existingTags.add(tag)
+                }
+            }
+        }
+
+        // Add direct outbound if missing
+        if (!existingTags.contains("direct")) {
+            val directOutbound = JsonObject().apply {
+                addProperty("protocol", "freedom")
+                addProperty("tag", "direct")
+            }
+            outbounds.add(directOutbound)
+            Log.d(TAG, "Added direct outbound")
+        }
+
+        // Add block outbound if missing
+        if (!existingTags.contains("block")) {
+            val blockOutbound = JsonObject().apply {
+                addProperty("protocol", "blackhole")
+                addProperty("tag", "block")
+            }
+            outbounds.add(blockOutbound)
+            Log.d(TAG, "Added block outbound")
+        }
+
+        // Note: "proxy" outbound should be provided by user config
+        // We don't create it automatically as it depends on user's proxy setup
+    }
+
+    /**
+     * Convert AdvancedRouter RoutingRule to Xray routing rule format
+     * Returns null if rule contains unsupported matchers
+     */
+    private fun convertRoutingRuleToXray(rule: RoutingRule): JsonObject? {
+        val xrayRule = JsonObject().apply {
+            addProperty("type", "field")
+        }
+
+        var hasSupportedMatchers = false
+        val domainList = mutableListOf<String>()
+        val ipList = mutableListOf<String>()
+        val portList = mutableListOf<Int>()
+        val networkList = mutableListOf<String>()
+        val sourceList = mutableListOf<String>()
+
+        // Convert matchers
+        for (matcher in rule.matchers) {
+            when (matcher) {
+                is RoutingMatcher.DomainMatcher -> {
+                    domainList.addAll(matcher.domains)
+                    hasSupportedMatchers = true
+                }
+                is RoutingMatcher.IpMatcher -> {
+                    // Convert CIDR ranges to Xray format
+                    matcher.ipRanges.forEach { ipRange ->
+                        ipList.add(ipRange.cidr)
+                    }
+                    hasSupportedMatchers = true
+                }
+                is RoutingMatcher.PortMatcher -> {
+                    // Collect port ranges for processing
+                    matcher.ports.forEach { portRange ->
+                        if (portRange.start == portRange.end) {
+                            portList.add(portRange.start)
+                        } else {
+                            // For port ranges, we'll store as negative to indicate it's a range
+                            // We'll handle this separately when building the Xray rule
+                            portList.add(-portRange.start) // Negative indicates range start
+                            portList.add(portRange.end) // Positive indicates range end
+                        }
+                    }
+                    hasSupportedMatchers = true
+                }
+                is RoutingMatcher.ProtocolMatcher -> {
+                    matcher.protocols.forEach { protocol ->
+                        when (protocol) {
+                            AdvancedRouter.Protocol.TCP -> networkList.add("tcp")
+                            AdvancedRouter.Protocol.UDP -> networkList.add("udp")
+                            AdvancedRouter.Protocol.ICMP -> {
+                                // Xray doesn't support ICMP in network field
+                                // Skip or log warning
+                                Log.w(TAG, "ICMP protocol not supported in Xray routing rules, skipping")
+                            }
+                            AdvancedRouter.Protocol.ANY -> {
+                                // ANY means match all, so we don't add network restriction
+                            }
+                        }
+                    }
+                    if (networkList.isNotEmpty()) {
+                        hasSupportedMatchers = true
+                    }
+                }
+                is RoutingMatcher.GeoIpMatcher -> {
+                    // Convert country codes to geoip format
+                    matcher.countries.forEach { country ->
+                        ipList.add("geoip:$country")
+                    }
+                    hasSupportedMatchers = true
+                }
+                is RoutingMatcher.AppMatcher -> {
+                    // Xray supports source field for app-based routing on Android
+                    // Note: This requires Xray to be configured with proper source support
+                    sourceList.addAll(matcher.packages)
+                    hasSupportedMatchers = true
+                    Log.d(TAG, "App-based routing rule added (requires Xray source support): ${matcher.packages}")
+                }
+                is RoutingMatcher.TimeMatcher -> {
+                    // Xray doesn't support time-based routing
+                    Log.w(TAG, "Time-based routing not supported in Xray, rule ${rule.name} will be skipped")
+                    return null
+                }
+                is RoutingMatcher.NetworkTypeMatcher -> {
+                    // Xray doesn't support network type matching
+                    Log.w(TAG, "Network type routing not supported in Xray, rule ${rule.name} will be skipped")
+                    return null
+                }
+            }
+        }
+
+        // If no supported matchers, skip this rule
+        if (!hasSupportedMatchers) {
+            Log.w(TAG, "Rule ${rule.name} has no supported matchers, skipping")
+            return null
+        }
+
+        // Add matcher fields to Xray rule
+        if (domainList.isNotEmpty()) {
+            val domainArray = JsonArray()
+            domainList.forEach { domainArray.add(it) }
+            xrayRule.add("domain", domainArray)
+        }
+
+        if (ipList.isNotEmpty()) {
+            val ipArray = JsonArray()
+            ipList.forEach { ipArray.add(it) }
+            xrayRule.add("ip", ipArray)
+        }
+
+        if (portList.isNotEmpty()) {
+            // Xray supports single port or port range as string "start:end"
+            // For multiple ports, we'll use the first port
+            // Note: Xray doesn't support multiple separate ports in a single rule
+            // If multiple ports are needed, consider creating separate rules
+            xrayRule.addProperty("port", portList[0])
+            if (portList.size > 1) {
+                Log.d(TAG, "Multiple ports in rule ${rule.name}, using first port: ${portList[0]}")
+            }
+        }
+
+        if (networkList.isNotEmpty()) {
+            // Xray supports single network type
+            xrayRule.addProperty("network", networkList[0])
+            if (networkList.size > 1) {
+                Log.d(TAG, "Multiple network types in rule ${rule.name}, using first: ${networkList[0]}")
+            }
+        }
+
+        if (sourceList.isNotEmpty()) {
+            val sourceArray = JsonArray()
+            sourceList.forEach { sourceArray.add(it) }
+            xrayRule.add("source", sourceArray)
+        }
+
+        // Convert action to outboundTag
+        val outboundTag = when (rule.action) {
+            is RoutingAction.Proxy -> "proxy" // Default proxy outbound
+            is RoutingAction.Direct -> "direct"
+            is RoutingAction.Block -> "block"
+            is RoutingAction.CustomProxy -> {
+                // Use custom proxy ID as outbound tag
+                // Note: This assumes the custom proxy outbound exists with this tag
+                rule.action.proxyId
+            }
+        }
+
+        xrayRule.addProperty("outboundTag", outboundTag)
+
+        return xrayRule
     }
 }

@@ -11,6 +11,7 @@ import com.simplexray.an.protocol.gaming.GamingOptimizer
 import com.simplexray.an.protocol.gaming.GamingOptimizer.GameProfile
 import com.simplexray.an.protocol.optimization.ProtocolConfig
 import com.simplexray.an.xray.XrayConfigPatcher
+import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,7 @@ class GamingViewModel(application: Application) : AndroidViewModel(application) 
     private val prefs: Preferences = Preferences(application)
     private val gamingOptimizer = GamingOptimizer()
     private val performanceOptimizer = PerformanceOptimizer(application)
+    private val gson = Gson()
 
     private val _selectedProfile = MutableStateFlow<GameProfile?>(null)
     val selectedProfile: StateFlow<GameProfile?> = _selectedProfile.asStateFlow()
@@ -116,8 +118,8 @@ class GamingViewModel(application: Application) : AndroidViewModel(application) 
     private fun applyGameOptimizations(profile: GameProfile) {
         viewModelScope.launch {
             try {
-                // 1. Set performance profile to Ultimate mode for maximum performance
-                performanceOptimizer.setProfile(PerformanceProfile.Ultimate)
+                // 1. Set performance profile to Gaming mode for low latency optimization
+                performanceOptimizer.setProfile(PerformanceProfile.Gaming)
                 
                 // 2. Apply gaming-specific protocol optimizations
                 val baseConfig = ProtocolConfig.forGaming()
@@ -146,14 +148,18 @@ class GamingViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Store protocol configuration (currently just ensures it's applied via performance profile)
-     * The protocol config optimizations are applied through the Gaming performance profile
+     * Store protocol configuration in preferences for use by XrayConfigPatcher
+     * This ensures protocol-level optimizations (TLS, QUIC, compression) are applied to Xray config
      */
     private fun storeProtocolConfig(config: ProtocolConfig) {
-        // Protocol config optimizations are automatically applied when:
-        // 1. Performance profile is set to Gaming (done above)
-        // 2. XrayConfigPatcher applies the performance config
-        // The GamingOptimizer provides game-specific tuning on top of the base Gaming profile
+        try {
+            // Serialize ProtocolConfig to JSON and store in preferences
+            val configJson = gson.toJson(config)
+            prefs.gamingProtocolConfig = configJson
+            Log.d(TAG, "Stored gaming protocol config: HTTP/3=${config.http3Enabled}, TLS1.3=${config.tls13Enabled}, EarlyData=${config.tls13EarlyData}, Compression=${config.brotliEnabled || config.gzipEnabled}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to store protocol config", e)
+        }
     }
 
     fun getAllGameProfiles(): List<GameProfile> {

@@ -320,6 +320,12 @@ class Preferences(context: Context) {
             setValueInProvider(GAMING_OPTIMIZATION_ENABLED, enable)
         }
 
+    var gamingProtocolConfig: String?
+        get() = getPrefData(GAMING_PROTOCOL_CONFIG).first
+        set(value) {
+            setValueInProvider(GAMING_PROTOCOL_CONFIG, value)
+        }
+
     // Streaming Optimization Settings
     var streamingPlatformConfigs: String?
         get() = getPrefData(STREAMING_PLATFORM_CONFIGS).first
@@ -533,6 +539,7 @@ class Preferences(context: Context) {
         const val ADVANCED_ROUTING_RULES: String = "AdvancedRoutingRules"
         const val SELECTED_GAME_PROFILE: String = "SelectedGameProfile"
         const val GAMING_OPTIMIZATION_ENABLED: String = "GamingOptimizationEnabled"
+        const val GAMING_PROTOCOL_CONFIG: String = "GamingProtocolConfig"
         const val STREAMING_PLATFORM_CONFIGS: String = "StreamingPlatformConfigs"
         const val STREAMING_OPTIMIZATION_ENABLED: String = "StreamingOptimizationEnabled"
         const val SELECTED_STREAMING_PLATFORM: String = "SelectedStreamingPlatform"

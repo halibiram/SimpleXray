@@ -58,14 +58,36 @@ fun SettingsScreen(vm: TrafficViewModel = viewModel()) {
             value = onlineKey,
             onValueChange = { onlineKey = it.trim() },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Online IP Stat Name (for topology)") }
+            label = { Text("Online IP Stat Name (for topology)") },
+            placeholder = { Text("user>>ip") },
+            supportingText = {
+                Text(
+                    text = if (onlineKey.isBlank()) {
+                        "Required for topology graph. Must match the stats name in your Xray config (e.g., 'user>>ip')."
+                    } else {
+                        "This stat name will be used to fetch topology data from Xray core."
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = onlineBytesKey,
             onValueChange = { onlineBytesKey = it.trim() },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Online IP Bytes Stat Name (edge weight)") }
+            label = { Text("Online IP Bytes Stat Name (edge weight)") },
+            placeholder = { Text("user>>ipbytes (optional)") },
+            supportingText = {
+                Text(
+                    text = if (onlineBytesKey.isBlank()) {
+                        "Optional. Used to calculate connection weights/thickness in the topology graph."
+                    } else {
+                        "This stat name will be used to fetch bandwidth data for edge weights."
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(

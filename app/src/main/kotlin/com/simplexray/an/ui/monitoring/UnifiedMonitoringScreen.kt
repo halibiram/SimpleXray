@@ -85,11 +85,19 @@ fun UnifiedMonitoringScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            "Real-time traffic visualization from Xray core",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (topology.nodes.isEmpty() && topology.connections.isEmpty()) {
+                            Text(
+                                "Configure 'Online IP Stat Name' in Settings to enable topology visualization",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            Text(
+                                "Real-time traffic visualization from Xray core",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

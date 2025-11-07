@@ -1,7 +1,5 @@
 package com.simplexray.an.ui.visualization
 
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,16 +11,12 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -200,135 +194,6 @@ private fun MonitoringStatusCard(
     }
 }
 
-@Composable
-private fun NetworkTopologyGraph(
-    topology: NetworkTopology,
-    modifier: Modifier = Modifier
-) {
-    val density = LocalDensity.current
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse"
-    )
-
-    Canvas(modifier = modifier) {
-        val canvasWidth = size.width
-        val canvasHeight = size.height
-
-        // Draw connections first (so they appear behind nodes)
-        topology.connections.forEach { connection ->
-            val fromNode = topology.nodes.find { it.id == connection.fromNodeId }
-            val toNode = topology.nodes.find { it.id == connection.toNodeId }
-
-            if (fromNode != null && toNode != null) {
-                val connectionColor = when (connection.status) {
-                    NetworkConnection.ConnectionStatus.ESTABLISHED -> Color(0xFF4CAF50)
-                    NetworkConnection.ConnectionStatus.CONNECTING -> Color(0xFFFFC107)
-                    NetworkConnection.ConnectionStatus.DISCONNECTED -> Color(0xFF9E9E9E)
-                    NetworkConnection.ConnectionStatus.ERROR -> Color(0xFFF44336)
-                }
-
-                // Animated connection line
-                drawLine(
-                    color = connectionColor.copy(alpha = pulseAlpha),
-                    start = fromNode.position,
-                    end = toNode.position,
-                    strokeWidth = 3f,
-                    cap = StrokeCap.Round,
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f))
-                )
-
-                // Latency label in the middle
-                val midPoint = Offset(
-                    (fromNode.position.x + toNode.position.x) / 2,
-                    (fromNode.position.y + toNode.position.y) / 2 - 20
-                )
-                drawCircle(
-                    color = Color.White,
-                    radius = 20f,
-                    center = midPoint
-                )
-                drawCircle(
-                    color = connectionColor,
-                    radius = 18f,
-                    center = midPoint,
-                    style = Stroke(width = 2f)
-                )
-            }
-        }
-
-        // Draw nodes
-        topology.nodes.forEach { node ->
-            val nodeColor = when (node.status) {
-                NetworkNode.NodeStatus.ACTIVE -> Color(0xFF2196F3)
-                NetworkNode.NodeStatus.INACTIVE -> Color(0xFF9E9E9E)
-                NetworkNode.NodeStatus.WARNING -> Color(0xFFFFC107)
-                NetworkNode.NodeStatus.ERROR -> Color(0xFFF44336)
-            }
-
-            // Outer circle (glow effect)
-            drawCircle(
-                color = nodeColor.copy(alpha = 0.3f),
-                radius = 50f,
-                center = node.position
-            )
-
-            // Main circle
-            drawCircle(
-                color = Color.White,
-                radius = 40f,
-                center = node.position
-            )
-
-            // Border
-            drawCircle(
-                color = nodeColor,
-                radius = 38f,
-                center = node.position,
-                style = Stroke(width = 3f)
-            )
-
-            // Inner circle
-            drawCircle(
-                color = nodeColor.copy(alpha = 0.2f),
-                radius = 30f,
-                center = node.position
-            )
-        }
-    }
-
-    // Node labels (overlay)
-    Box(modifier = modifier) {
-        topology.nodes.forEach { node ->
-            Column(
-                modifier = Modifier
-                    .offset(
-                        x = with(density) { (node.position.x - 50f).toDp() },
-                        y = with(density) { (node.position.y + 50f).toDp() }
-                    )
-                    .width(100.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = node.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = node.type.name,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun ConnectionDetailsCard(connections: List<NetworkConnection>) {

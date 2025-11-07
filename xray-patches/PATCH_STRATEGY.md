@@ -62,3 +62,4 @@ perf-net modülündeki BoringSSL'i kullan, Xray-core vanilla:
 - Her yeni Xray-core versiyonunda patch'ler güncellenmeli
 - CGO bridge karmaşık bir implementasyon gerektirir
 
+
