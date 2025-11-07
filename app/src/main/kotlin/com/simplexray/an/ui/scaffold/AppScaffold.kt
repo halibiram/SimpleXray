@@ -414,7 +414,7 @@ private fun LogActions(
                 }
             }
         )
-        Divider()
+        HorizontalDivider()
         LogViewModel.LogLevel.values().forEach { level ->
             DropdownMenuItem(
                 text = { Text(level.name) },
@@ -433,7 +433,7 @@ private fun LogActions(
                 }
             )
         }
-        Divider()
+        HorizontalDivider()
         DropdownMenuItem(
             text = { Text(stringResource(R.string.export)) },
             onClick = {

@@ -132,7 +132,7 @@ class App : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         // Cleanup resources when system requests memory trimming
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
             cleanupResources()
         }
     }

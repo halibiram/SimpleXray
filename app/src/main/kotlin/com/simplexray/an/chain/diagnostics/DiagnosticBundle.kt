@@ -115,8 +115,8 @@ class DiagnosticBundle(private val context: Context) {
             "deviceModel" to Build.MODEL,
             "deviceManufacturer" to Build.MANUFACTURER,
             "abi" to Build.SUPPORTED_ABIS.joinToString(", "),
-            "cpuAbi" to Build.CPU_ABI,
-            "cpuAbi2" to (Build.CPU_ABI2 ?: "N/A")
+            "cpuAbi" to Build.SUPPORTED_ABIS.getOrNull(0) ?: "N/A",
+            "cpuAbi2" to (Build.SUPPORTED_ABIS.getOrNull(1) ?: "N/A")
         )
     }
 }

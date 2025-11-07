@@ -78,10 +78,11 @@ static void extractParams(JNIEnv* env, jobject params, PepperPacingParams* out) 
     }
     
     // Get mode
-    jfieldID modeField = env->GetFieldID(paramsClass, "mode", "Lcom/simplexray/an/chain/pepper/PepperShaper\$PepperMode;");
+    jfieldID modeField = env->GetFieldID(paramsClass, "mode", "Lcom/simplexray/an/chain/pepper/PepperShaper$PepperMode;");
     if (modeField) {
-        jobject modeObj = env->GetObjectField(params, modeField);
         // Mode is enum, we'll use default for now
+        // Note: modeObj is not used, so we don't retrieve it
+        (void)env->GetObjectField(params, modeField);
     }
     
     // Get maxBurstBytes
@@ -256,7 +257,7 @@ Java_com_simplexray_an_chain_pepper_PepperShaper_nativeShutdown(JNIEnv *env, jcl
 }
 
 // Cleanup on JNI unload to prevent memory leaks
-JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* reserved) {
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* /*vm*/, void* reserved) {
     (void)reserved;
     LOGD("PepperShaper JNI unloading - cleaning up handles");
     

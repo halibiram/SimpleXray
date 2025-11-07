@@ -210,6 +210,20 @@ jobs:
 
           echo "✅ BoringSSL build complete for ${{ matrix.abi }}"
 
+          # Save build log for analysis
+          {
+            echo "=== BoringSSL Build Log for ${{ matrix.abi }} ==="
+            echo "Build started at: $(date)"
+            echo "ABI: ${{ matrix.abi }}"
+            echo "Toolchain: ${{ matrix.toolchain }}"
+            echo ""
+            echo "=== CMake Configuration ==="
+            cmake "${CMAKE_ARGS[@]}" 2>&1 || true
+            echo ""
+            echo "=== Build Output ==="
+            ninja crypto ssl 2>&1 || ninja -j$(nproc) 2>&1 || true
+          } > ../boringssl-build-${{ matrix.abi }}.log 2>&1 || true
+
           # Immediately check for libraries in standard locations
           echo "🔍 Checking for built libraries..."
           if [ -f "crypto/libcrypto.a" ] && [ -f "ssl/libssl.a" ]; then
@@ -368,6 +382,23 @@ jobs:
           echo "✅ Both artifacts found:"
           ls -lh "$CRYPTO_LIB" "$SSL_LIB"
 
+      - name: Check BoringSSL Build Logs
+        continue-on-error: true
+        run: |
+          echo "🔍 Analyzing BoringSSL build logs for ${{ matrix.abi }}..."
+          BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+          BUILD_DIR="$BORINGSSL_DIR/build_${{ matrix.abi }}"
+          LOG_FILE="boringssl-build-${{ matrix.abi }}.log"
+
+          if [ -f "$LOG_FILE" ]; then
+            ./scripts/build-log-checker.sh "$LOG_FILE"
+          elif [ -f "$BUILD_DIR/../$LOG_FILE" ]; then
+            ./scripts/build-log-checker.sh "$BUILD_DIR/../$LOG_FILE"
+          else
+            echo "⚠️  Build log file not found, skipping analysis"
+            echo "Searched for: $LOG_FILE and $BUILD_DIR/../$LOG_FILE"
+          fi
+
       - name: Upload BoringSSL Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -491,7 +522,7 @@ jobs:
           cd Xray-core
           echo "ℹ️  Patches are optional - BoringSSL is linked via CGO flags"
           echo "ℹ️  If patches fail, build continues with vanilla Xray-core + BoringSSL linking"
-          
+
           if [ -d "../xray-patches" ]; then
             PATCH_COUNT=0
             SUCCESS_COUNT=0
@@ -544,7 +575,7 @@ jobs:
             echo "ℹ️  No patches directory found - this is OK"
             echo "ℹ️  BoringSSL will be linked via CGO flags in the build step"
           fi
-          
+
           echo "✅ Patch step complete - proceeding to build with BoringSSL linking"
 
       - name: Build Xray-core with BoringSSL
@@ -605,13 +636,13 @@ jobs:
           # Android system library paths (NDK r28c: liblog.so is in usr/lib/$NDK_ARCH/$ANDROID_API/)
           # Use multiple -L flags for fallback support
           ANDROID_LIB_DIR="$NDK_SYSROOT/usr/lib/$NDK_ARCH/$ANDROID_API"
-          
+
           # Set LIBRARY_PATH environment variable (most reliable method)
           export LIBRARY_PATH="$ANDROID_LIB_DIR:$LIBRARY_PATH"
 
           # CGO flags with absolute sysroot paths (required for NDK r28c)
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
-          
+
           # CGO_LDFLAGS: Hybrid static/dynamic linking
           # -Wl,-Bstatic: Switch to static linking mode (only for BoringSSL)
           # -lcrypto -lssl: BoringSSL libraries (static .a files)
@@ -644,16 +675,16 @@ jobs:
           echo "   NDK Arch: $NDK_ARCH"
           echo "   Android Lib Dir: $ANDROID_LIB_DIR"
           echo "   LIBRARY_PATH: $LIBRARY_PATH"
-          
+
           echo "📋 CGO Configuration:"
           echo "   CGO_CFLAGS: $CGO_CFLAGS"
           echo "   CGO_LDFLAGS: $CGO_LDFLAGS"
-          
+
           echo "🔗 BoringSSL Libraries:"
           echo "   Crypto: $BORINGSSL_CRYPTO"
           echo "   SSL: $BORINGSSL_SSL"
           echo "   Include: $BORINGSSL_INCLUDE"
-          
+
           # Verify Android system libraries exist
           if [ -f "$ANDROID_LIB_DIR/liblog.so" ] || [ -f "$ANDROID_LIB_DIR/liblog.a" ]; then
             echo "✅ liblog found in $ANDROID_LIB_DIR"
@@ -663,14 +694,19 @@ jobs:
           fi
 
           echo "🔨 Building Xray-core with BoringSSL for ${{ matrix.abi }}..."
-          
+
+          # Save build log
           go build \
             -o libxray.so \
             -trimpath \
             -buildvcs=false \
             -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
             -v \
-            ./main
+            ./main 2>&1 | tee ../xray-build-${{ matrix.abi }}.log || {
+            BUILD_EXIT=$?
+            echo "Build failed with exit code: $BUILD_EXIT" >> ../xray-build-${{ matrix.abi }}.log
+            exit $BUILD_EXIT
+          }
 
           # Strip binary
           $STRIP --strip-all libxray.so
@@ -685,6 +721,16 @@ jobs:
           # Move to output directory
           mkdir -p ../xray-output/${{ matrix.abi }}
           mv libxray.so ../xray-output/${{ matrix.abi }}/libxray.so
+
+      - name: Check Xray Build Logs
+        continue-on-error: true
+        run: |
+          echo "🔍 Analyzing Xray-core build logs for ${{ matrix.abi }}..."
+          if [ -f "xray-build-${{ matrix.abi }}.log" ]; then
+            ./scripts/build-log-checker.sh "xray-build-${{ matrix.abi }}.log"
+          else
+            echo "⚠️  Build log file not found, skipping analysis"
+          fi
 
       - name: Upload Xray Artifacts
         uses: actions/upload-artifact@v4

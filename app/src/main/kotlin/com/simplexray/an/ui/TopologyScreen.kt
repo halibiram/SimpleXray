@@ -588,7 +588,7 @@ fun TopologyScreen(
                         
                         if (asnInfo != null) {
                             Spacer(Modifier.height(8.dp))
-                            androidx.compose.material3.Divider()
+                            androidx.compose.material3.HorizontalDivider()
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 "ASN: ${asnInfo.asn}",
@@ -612,7 +612,7 @@ fun TopologyScreen(
                         
                         if (isCdn) {
                             Spacer(Modifier.height(8.dp))
-                            androidx.compose.material3.Divider()
+                            androidx.compose.material3.HorizontalDivider()
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 "✓ CDN Matched",

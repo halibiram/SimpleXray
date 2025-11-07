@@ -305,7 +305,7 @@ fun ProfileItemCard(
                                 onExpandedChange()
                             }
                         )
-                        Divider()
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                             leadingIcon = {

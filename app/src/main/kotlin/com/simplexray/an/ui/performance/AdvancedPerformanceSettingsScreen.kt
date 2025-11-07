@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
+import androidx.compose.ui.input.pointer.MenuAnchorType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -166,7 +167,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 modifier = Modifier
-                                    .menuAnchor()
+                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
                                     .width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = threadPoolExpanded) }
                             )
@@ -208,7 +209,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 modifier = Modifier
-                                    .menuAnchor()
+                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
                                     .width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = memoryPoolExpanded) }
                             )
@@ -246,7 +247,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 modifier = Modifier
-                                    .menuAnchor()
+                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
                                     .width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = socketBufferExpanded) }
                             )
@@ -288,7 +289,7 @@ fun AdvancedPerformanceSettingsScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 modifier = Modifier
-                                    .menuAnchor()
+                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
                                     .width(100.dp),
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = connectionPoolExpanded) }
                             )

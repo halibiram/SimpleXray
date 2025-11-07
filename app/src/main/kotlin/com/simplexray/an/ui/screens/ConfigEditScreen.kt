@@ -18,11 +18,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Info
@@ -147,21 +147,21 @@ fun ConfigEditScreen(
             // Undo
             IconButton(onClick = { viewModel.undo() }) {
                 Icon(
-                    Icons.Default.Undo,
+                    Icons.AutoMirrored.Filled.Undo,
                     contentDescription = "Undo"
                 )
             }
             // Redo
             IconButton(onClick = { viewModel.redo() }) {
                 Icon(
-                    Icons.Default.Redo,
+                    Icons.AutoMirrored.Filled.Redo,
                     contentDescription = "Redo"
                 )
             }
             // Format
             IconButton(onClick = { viewModel.formatJson() }) {
                 Icon(
-                    Icons.Default.FormatAlignLeft,
+                    Icons.AutoMirrored.Filled.FormatAlignLeft,
                     contentDescription = "Format JSON"
                 )
             }
