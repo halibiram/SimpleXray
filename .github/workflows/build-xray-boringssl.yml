@@ -570,7 +570,7 @@ jobs:
           cd Xray-core
           echo "ℹ️  Patches are optional - BoringSSL is linked via CGO flags"
           echo "ℹ️  If patches fail, build continues with vanilla Xray-core + BoringSSL linking"
-          
+
           # Get current Xray-core version for patch compatibility check
           XRAY_CURRENT_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
           echo "📌 Xray-core version: $XRAY_CURRENT_VERSION"

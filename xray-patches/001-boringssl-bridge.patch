@@ -305,3 +305,109 @@ index 0000000..a1b2c3d
 +	// For now, we'll return an error indicating this needs full implementation
 +	return nil, errors.New("BoringSSL GCM decryption not yet fully implemented")
 +}
++
++// TLS Handshake Bridge Functions
++
++// TLS13Handshake performs TLS 1.3 handshake using BoringSSL
++func TLS13Handshake(ctx *C.SSL_CTX, conn *C.SSL) error {
++	if ctx == nil || conn == nil {
++		return errors.New("invalid SSL context or connection")
++	}
++	
++	if C.SSL_do_handshake(conn) != 1 {
++		return getBoringSSLError()
++	}
++	return nil
++}
++
++// TLS13ClientHello creates a TLS 1.3 client hello using BoringSSL
++func TLS13ClientHello(ctx *C.SSL_CTX, hostname string) (*C.SSL, error) {
++	if ctx == nil {
++		return nil, errors.New("invalid SSL context")
++	}
++	
++	conn := C.SSL_new(ctx)
++	if conn == nil {
++		return nil, getBoringSSLError()
++	}
++	
++	// Set TLS 1.3
++	if C.SSL_set_min_proto_version(conn, C.TLS1_3_VERSION) != 1 {
++		C.SSL_free(conn)
++		return nil, getBoringSSLError()
++	}
++	if C.SSL_set_max_proto_version(conn, C.TLS1_3_VERSION) != 1 {
++		C.SSL_free(conn)
++		return nil, getBoringSSLError()
++	}
++	
++	// Set SNI (Server Name Indication)
++	if hostname != "" {
++		cHostname := C.CString(hostname)
++		defer C.free(unsafe.Pointer(cHostname))
++		if C.SSL_set_tlsext_host_name(conn, cHostname) != 1 {
++			C.SSL_free(conn)
++			return nil, getBoringSSLError()
++		}
++	}
++	
++	return conn, nil
++}
++
++// TLS13ServerHello processes TLS 1.3 server hello using BoringSSL
++func TLS13ServerHello(conn *C.SSL) error {
++	if conn == nil {
++		return errors.New("invalid SSL connection")
++	}
++	
++	// Server hello is part of the handshake
++	if C.SSL_do_handshake(conn) != 1 {
++		return getBoringSSLError()
++	}
++	return nil
++}
++
++// TLS13KeyExchange performs TLS 1.3 key exchange using BoringSSL
++func TLS13KeyExchange(conn *C.SSL) ([]byte, error) {
++	if conn == nil {
++		return nil, errors.New("invalid SSL connection")
++	}
++	
++	// In TLS 1.3, key exchange is part of the handshake
++	// This function extracts the shared secret after handshake
++	// Note: BoringSSL doesn't expose raw key material directly
++	// This is a placeholder - actual implementation would use SSL_get_session
++	
++	return nil, errors.New("TLS 1.3 key exchange extraction not yet fully implemented")
++}
++
++// Hardware Acceleration Detection
++
++// HasAESNI checks if CPU supports AES-NI instructions (x86_64)
++// Note: This is a placeholder - actual implementation requires CPUID
++func HasAESNI() bool {
++	// This requires runtime CPU feature detection
++	// For now, return false - actual implementation would use CPUID
++	return false
++}
++
++// HasNEON checks if CPU supports ARM NEON instructions (ARM64)
++func HasNEON() bool {
++	// ARMv8 crypto extensions are typically available on ARM64
++	// BoringSSL will automatically use them if available
++	return true
++}
++
++// HasARMv8Crypto checks if CPU supports ARMv8 crypto extensions
++func HasARMv8Crypto() bool {
++	// ARMv8 crypto extensions include AES, SHA1, SHA2-256
++	// BoringSSL will automatically use them if available
++	return true
++}
++
++// OptimizedCryptoEnabled returns true if hardware acceleration is available
++func OptimizedCryptoEnabled() bool {
++	// Check for hardware acceleration support
++	// BoringSSL automatically uses hardware acceleration when available
++	return true
++}

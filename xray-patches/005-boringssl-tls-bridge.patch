@@ -1,0 +1,158 @@
+diff --git a/crypto/tls/boringssl_tls_bridge.go b/crypto/tls/boringssl_tls_bridge.go
+new file mode 100644
+index 0000000..b2c3d4e
+--- /dev/null
++++ b/crypto/tls/boringssl_tls_bridge.go
+@@ -0,0 +1,150 @@
++//go:build cgo
++// +build cgo
++
++package tls
++
++/*
++#cgo CFLAGS: -I${SRCDIR}/../../boringssl/include
++#cgo LDFLAGS: -L${SRCDIR}/../../boringssl/lib -lcrypto -lssl
++#include <openssl/ssl.h>
++#include <openssl/err.h>
++#include <stdlib.h>
++*/
++import "C"
++import (
++	"crypto"
++	"errors"
++	"unsafe"
++)
++
++// BoringSSLConn wraps BoringSSL SSL connection
++type BoringSSLConn struct {
++	ssl *C.SSL
++	ctx *C.SSL_CTX
++}
++
++// NewBoringSSLConn creates a new BoringSSL TLS connection
++func NewBoringSSLConn(ctx *C.SSL_CTX) (*BoringSSLConn, error) {
++	if ctx == nil {
++		return nil, errors.New("invalid SSL context")
++	}
++	
++	ssl := C.SSL_new(ctx)
++	if ssl == nil {
++		return nil, getBoringSSLError()
++	}
++	
++	return &BoringSSLConn{
++		ssl: ssl,
++		ctx: ctx,
++	}, nil
++}
++
++// Handshake performs TLS handshake using BoringSSL
++func (c *BoringSSLConn) Handshake() error {
++	if c.ssl == nil {
++		return errors.New("SSL connection not initialized")
++	}
++	
++	if C.SSL_do_handshake(c.ssl) != 1 {
++		return getBoringSSLError()
++	}
++	return nil
++}
++
++// Write encrypts and writes data using BoringSSL
++func (c *BoringSSLConn) Write(b []byte) (int, error) {
++	if c.ssl == nil {
++		return 0, errors.New("SSL connection not initialized")
++	}
++	
++	if len(b) == 0 {
++		return 0, nil
++	}
++	
++	n := C.SSL_write(c.ssl, unsafe.Pointer(&b[0]), C.int(len(b)))
++	if n <= 0 {
++		errCode := C.SSL_get_error(c.ssl, n)
++		if errCode == C.SSL_ERROR_WANT_READ || errCode == C.SSL_ERROR_WANT_WRITE {
++			return 0, errors.New("SSL write would block")
++		}
++		return 0, getBoringSSLError()
++	}
++	
++	return int(n), nil
++}
++
++// Read decrypts and reads data using BoringSSL
++func (c *BoringSSLConn) Read(b []byte) (int, error) {
++	if c.ssl == nil {
++		return 0, errors.New("SSL connection not initialized")
++	}
++	
++	if len(b) == 0 {
++		return 0, nil
++	}
++	
++	n := C.SSL_read(c.ssl, unsafe.Pointer(&b[0]), C.int(len(b)))
++	if n <= 0 {
++		errCode := C.SSL_get_error(c.ssl, n)
++		if errCode == C.SSL_ERROR_ZERO_RETURN {
++			return 0, errors.New("SSL connection closed")
++		}
++		if errCode == C.SSL_ERROR_WANT_READ || errCode == C.SSL_ERROR_WANT_WRITE {
++			return 0, errors.New("SSL read would block")
++		}
++		return 0, getBoringSSLError()
++	}
++	
++	return int(n), nil
++}
++
++// Close closes the BoringSSL connection
++func (c *BoringSSLConn) Close() error {
++	if c.ssl != nil {
++		C.SSL_free(c.ssl)
++		c.ssl = nil
++	}
++	return nil
++}
++
++// getBoringSSLError retrieves the last BoringSSL error
++func getBoringSSLError() error {
++	var buf [256]C.char
++	C.ERR_error_string_n(C.ERR_get_error(), &buf[0], C.size_t(len(buf)))
++	return errors.New(C.GoString(&buf[0]))
++}
++
++// BoringSSLConfig configures BoringSSL TLS settings
++type BoringSSLConfig struct {
++	MinVersion uint16
++	MaxVersion uint16
++	CipherSuites []uint16
++	ServerName string
++}
++
++// NewBoringSSLContext creates a new BoringSSL SSL context
++func NewBoringSSLContext(config *BoringSSLConfig) (*C.SSL_CTX, error) {
++	method := C.TLS_method()
++	ctx := C.SSL_CTX_new(method)
++	if ctx == nil {
++		return nil, getBoringSSLError()
++	}
++	
++	// Set TLS 1.3
++	if config != nil {
++		if config.MinVersion >= 0x0304 { // TLS 1.3
++			if C.SSL_CTX_set_min_proto_version(ctx, C.TLS1_3_VERSION) != 1 {
++				C.SSL_CTX_free(ctx)
++				return nil, getBoringSSLError()
++			}
++		}
++		if config.MaxVersion >= 0x0304 {
++			if C.SSL_CTX_set_max_proto_version(ctx, C.TLS1_3_VERSION) != 1 {
++				C.SSL_CTX_free(ctx)
++				return nil, getBoringSSLError()
++			}
++		}
++	}
++	
++	return ctx, nil
++}
+

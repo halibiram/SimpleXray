@@ -9,14 +9,14 @@ on:
         default: "v25.10.15"
   pull_request:
     paths:
-      - 'xray-patches/**'
-      - '.github/workflows/test-boringssl-patches.yml'
+      - "xray-patches/**"
+      - ".github/workflows/test-boringssl-patches.yml"
 
 jobs:
   test-patches:
     name: Test Patches
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,14 +26,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.3'
+          go-version: "1.25.3"
           cache: false
 
       - name: Clone Xray-core
         run: |
           XRAY_VERSION="${{ inputs.xray_version || 'v25.10.15' }}"
           echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
-          
+
           git clone --depth=1 https://github.com/XTLS/Xray-core.git
           cd Xray-core
           if [ -n "$XRAY_VERSION" ] && [ "$XRAY_VERSION" != "latest" ]; then
@@ -47,11 +47,11 @@ jobs:
         run: |
           cd Xray-core
           echo "🧪 Testing patch application..."
-          
+
           PATCH_COUNT=0
           SUCCESS_COUNT=0
           FAILED_COUNT=0
-          
+
           if [ -d "../xray-patches" ]; then
             for patch in $(ls -1 ../xray-patches/*.patch 2>/dev/null | sort); do
               if [ -f "$patch" ]; then
@@ -101,7 +101,7 @@ jobs:
       - name: Verify Patch Format
         run: |
           echo "🔍 Verifying patch file formats..."
-          
+
           if [ -d "xray-patches" ]; then
             for patch in xray-patches/*.patch; do
               if [ -f "$patch" ]; then
@@ -128,4 +128,3 @@ jobs:
               fi
             done
           fi
-
