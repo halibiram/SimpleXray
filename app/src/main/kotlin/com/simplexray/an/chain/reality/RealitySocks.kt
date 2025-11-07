@@ -92,23 +92,41 @@ object RealitySocks {
             AppLogger.d("RealitySocks: Config written to ${configFile.absolutePath}")
             
             // Start Xray-core with this config (with timeout protection)
-            val started = kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeout(30000) { // 30 second timeout
-                    XrayCoreLauncher.start(
-                        context = ctx,
-                        configFile = configFile,
-                        maxRetries = 3,
-                        retryDelayMs = 2000,
-                        onLogLine = { line ->
-                            // Parse Xray logs for metrics (with rate limiting)
-                            parseXrayLog(line)
-                        }
-                    )
+            val started = try {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeout(30000) { // 30 second timeout
+                        XrayCoreLauncher.start(
+                            context = ctx,
+                            configFile = configFile,
+                            maxRetries = 3,
+                            retryDelayMs = 2000,
+                            onLogLine = { line ->
+                                // Parse Xray logs for metrics (with rate limiting)
+                                parseXrayLog(line)
+                            }
+                        )
+                    }
                 }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                AppLogger.e("RealitySocks: Xray startup timed out after 30 seconds", e)
+                val errorDetails = getXrayErrorDetails(ctx)
+                val errorMessage = if (errorDetails != null) {
+                    "Xray-core startup timed out: $errorDetails"
+                } else {
+                    "Xray-core startup timed out after 30 seconds. Process may be stuck."
+                }
+                return Result.failure(Exception(errorMessage))
             }
             
             if (!started) {
-                return Result.failure(Exception("Failed to start Xray-core for Reality SOCKS"))
+                // Try to get more detailed error information from Xray log
+                val errorDetails = getXrayErrorDetails(ctx)
+                val errorMessage = if (errorDetails != null) {
+                    "Failed to start Xray-core for Reality SOCKS: $errorDetails"
+                } else {
+                    "Failed to start Xray-core for Reality SOCKS. Check logs for details."
+                }
+                return Result.failure(Exception(errorMessage))
             }
             
             // Wait a bit for Xray to start (non-blocking)
@@ -118,7 +136,14 @@ object RealitySocks {
             
             // Verify Xray is running
             if (!XrayCoreLauncher.isRunning()) {
-                return Result.failure(Exception("Xray-core failed to start"))
+                // Try to get error details from log
+                val errorDetails = getXrayErrorDetails(ctx)
+                val errorMessage = if (errorDetails != null) {
+                    "Xray-core failed to start: $errorDetails"
+                } else {
+                    "Xray-core process died after startup. Check logs for details."
+                }
+                return Result.failure(Exception(errorMessage))
             }
             
             _status.value = _status.value.copy(
@@ -310,6 +335,74 @@ object RealitySocks {
         monitoringJob?.cancel()
         monitoringScope.coroutineContext.cancel()
         AppLogger.d("RealitySocks: Shutdown complete")
+    }
+    
+    /**
+     * Extract error details from Xray log file
+     * Returns a user-friendly error message or null if no details found
+     */
+    private fun getXrayErrorDetails(context: Context): String? {
+        return try {
+            val logFile = File(context.filesDir, "xray.log")
+            if (!logFile.exists() || logFile.length() == 0L) {
+                return null
+            }
+            
+            // Read last 1000 characters of log file for recent errors
+            val logContent = logFile.inputStream().bufferedReader().use { reader ->
+                val fileSize = logFile.length()
+                val readSize = minOf(1000L, fileSize)
+                if (fileSize > readSize) {
+                    reader.skip(fileSize - readSize)
+                }
+                reader.readText()
+            }
+            
+            // Sanitize sensitive data
+            val sanitized = AppLogger.sanitize(logContent)
+            
+            // Extract error patterns from Xray logs
+            val errorPatterns = listOf(
+                Regex("(?i)error[\\s:]+(.{0,200})", RegexOption.MULTILINE),
+                Regex("(?i)failed[\\s:]+(.{0,200})", RegexOption.MULTILINE),
+                Regex("(?i)invalid[\\s:]+(.{0,200})", RegexOption.MULTILINE),
+                Regex("(?i)cannot[\\s:]+(.{0,200})", RegexOption.MULTILINE),
+                Regex("(?i)denied[\\s:]+(.{0,200})", RegexOption.MULTILINE),
+                Regex("(?i)permission[\\s:]+(.{0,200})", RegexOption.MULTILINE)
+            )
+            
+            // Find the most relevant error message
+            for (pattern in errorPatterns) {
+                val match = pattern.find(sanitized)
+                if (match != null) {
+                    val errorMsg = match.groupValues.getOrNull(1)?.trim()
+                    if (!errorMsg.isNullOrBlank()) {
+                        // Truncate if too long
+                        return if (errorMsg.length > 150) {
+                            errorMsg.take(150) + "..."
+                        } else {
+                            errorMsg
+                        }
+                    }
+                }
+            }
+            
+            // If no specific pattern found, return last few lines
+            val lines = sanitized.lines().filter { it.isNotBlank() }
+            if (lines.isNotEmpty()) {
+                val lastLine = lines.last()
+                if (lastLine.length > 150) {
+                    lastLine.take(150) + "..."
+                } else {
+                    lastLine
+                }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            AppLogger.w("RealitySocks: Failed to read Xray error log: ${e.message}", e)
+            null
+        }
     }
 }
 

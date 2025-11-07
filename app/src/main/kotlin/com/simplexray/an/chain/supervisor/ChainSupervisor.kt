@@ -158,32 +158,69 @@ class ChainSupervisor(private val context: Context) {
                 // Try multiple sources: Hysteria2, RealitySocks, or TUN interface
                 val pepperResult = try {
                     var attached = false
+                    var errorMessage: String? = null
+                    
+                    // Verify PepperShaper is initialized
+                    try {
+                        PepperShaper.getStats() // This will throw if not initialized
+                    } catch (e: Exception) {
+                        AppLogger.w("ChainSupervisor: PepperShaper not initialized: ${e.message}")
+                        errorMessage = "PepperShaper not initialized"
+                    }
                     
                     // Try 1: Get FDs from Hysteria2 if running
                     if (config.hysteria2Config != null && Hysteria2.isRunning()) {
+                        AppLogger.d("ChainSupervisor: Attempting to get FDs from Hysteria2")
                         val hysteria2Fds = Hysteria2.getSocketFds()
                         if (hysteria2Fds != null) {
+                            AppLogger.d("ChainSupervisor: Got FDs from Hysteria2: ${hysteria2Fds.first}/${hysteria2Fds.second}")
                             val handle = PepperShaper.attach(
                                 fdPair = hysteria2Fds,
                                 mode = PepperShaper.SocketMode.TCP,
                                 params = config.pepperParams
                             )
-                            if (handle != null) {
+                            if (handle != null && handle > 0) {
                                 pepperHandle = handle
                                 attached = true
-                                AppLogger.i("ChainSupervisor: PepperShaper attached to Hysteria2 sockets")
+                                AppLogger.i("ChainSupervisor: PepperShaper attached to Hysteria2 sockets (handle=$handle)")
+                            } else {
+                                AppLogger.w("ChainSupervisor: PepperShaper.attach returned invalid handle: $handle")
+                                errorMessage = "Failed to attach to Hysteria2 sockets"
                             }
+                        } else {
+                            AppLogger.w("ChainSupervisor: Could not extract FDs from Hysteria2 process")
+                            errorMessage = "Hysteria2 FDs not available"
+                        }
+                    } else {
+                        if (config.hysteria2Config == null) {
+                            AppLogger.w("ChainSupervisor: Hysteria2 not configured, cannot attach PepperShaper")
+                            errorMessage = "Hysteria2 not configured"
+                        } else if (!Hysteria2.isRunning()) {
+                            AppLogger.w("ChainSupervisor: Hysteria2 not running, cannot attach PepperShaper")
+                            errorMessage = "Hysteria2 not running"
                         }
                     }
                     
-                    // Try 2: If Hysteria2 FDs not available, try to attach at TUN level
-                    // Note: This requires TUN FD to be passed from TProxyService
-                    // For now, we mark PepperShaper as configured but not attached
+                    // Try 2: If Hysteria2 FDs not available, check if we can use alternative approach
+                    // For now, if PepperShaper is initialized, mark it as available even without attachment
+                    // This allows the chain to work, and PepperShaper can be attached later if FDs become available
                     if (!attached) {
-                        AppLogger.w("ChainSupervisor: PepperShaper configured but socket FDs not available")
-                        AppLogger.w("ChainSupervisor: PepperShaper will be inactive (chain will work without it)")
-                        // Don't fail chain startup - PepperShaper is optional
-                        Result.success(Unit)
+                        // Check if PepperShaper native library is loaded and working
+                        val isPepperAvailable = try {
+                            PepperShaper.getStats()
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
+                        
+                        if (isPepperAvailable) {
+                            AppLogger.i("ChainSupervisor: PepperShaper initialized and available (FD attachment pending)")
+                            // Mark as success - PepperShaper is ready, just waiting for FDs
+                            Result.success(Unit)
+                        } else {
+                            AppLogger.w("ChainSupervisor: PepperShaper not available: $errorMessage")
+                            Result.success(Unit) // Still success - chain works without PepperShaper
+                        }
                     } else {
                         Result.success(Unit)
                     }
@@ -194,8 +231,18 @@ class ChainSupervisor(private val context: Context) {
                     Result.success(Unit)
                 }
                 
-                updateLayerStatus("pepper", pepperResult.isSuccess, 
-                    if (pepperHandle != null) null else "FDs not available (optional)")
+                // Update status: success if attached, or if PepperShaper is at least initialized
+                val isPepperReady = pepperHandle != null || try {
+                    PepperShaper.getStats()
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+                
+                updateLayerStatus("pepper", pepperResult.isSuccess && isPepperReady, 
+                    if (pepperHandle != null) null 
+                    else if (isPepperReady) "Initialized (FD attachment pending)" 
+                    else "FDs not available (optional)")
             }
             
             // 4. Start Xray-core if configured
@@ -511,4 +558,5 @@ class ChainSupervisor(private val context: Context) {
         AppLogger.d("ChainSupervisor: Shutdown complete")
     }
 }
+
 

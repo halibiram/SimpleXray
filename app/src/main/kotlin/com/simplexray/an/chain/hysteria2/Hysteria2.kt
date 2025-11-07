@@ -298,21 +298,78 @@ object Hysteria2 {
     /**
      * Get socket file descriptors for PepperShaper attachment
      * 
-     * Note: This is a placeholder - actual FD extraction requires:
-     * 1. Hysteria2 binary to expose FDs via API
-     * 2. Or process inspection to find socket FDs
+     * Attempts to extract socket FDs from the running Hysteria2 process
+     * by inspecting /proc/PID/fd/ directory.
      * 
-     * For now, returns null to indicate FDs not available
+     * @return Pair of (readFd, writeFd) or null if not available
      */
     fun getSocketFds(): Pair<Int, Int>? {
-        // TODO: Implement actual FD extraction from Hysteria2 process
-        // Options:
-        // 1. Hysteria2 exposes FDs via API (if available)
-        // 2. Process inspection via /proc/PID/fd/
-        // 3. JNI bridge from Hysteria2 Go code
+        val proc = processRef.get() ?: return null
         
-        // For now, return null - PepperShaper will gracefully skip
-        return null
+        if (!proc.isAlive) {
+            AppLogger.d("Hysteria2: Process not alive, cannot get FDs")
+            return null
+        }
+        
+        return try {
+            // Get process PID
+            val pid = proc.javaClass.getMethod("pid").invoke(proc) as? Long
+                ?: return null
+            
+            if (pid <= 0 || pid > Int.MAX_VALUE) {
+                AppLogger.w("Hysteria2: Invalid PID: $pid")
+                return null
+            }
+            
+            // Inspect /proc/PID/fd/ for socket files
+            val fdDir = File("/proc/$pid/fd")
+            if (!fdDir.exists() || !fdDir.canRead()) {
+                AppLogger.w("Hysteria2: Cannot access /proc/$pid/fd (may require root or SELinux issue)")
+                return null
+            }
+            
+            // Find socket FDs by checking symlink targets
+            val socketFds = mutableListOf<Int>()
+            fdDir.listFiles()?.forEach { fdFile ->
+                try {
+                    val fdNum = fdFile.name.toIntOrNull() ?: return@forEach
+                    val target = fdFile.canonicalPath
+                    
+                    // Check if it's a socket (target contains "socket")
+                    if (target.contains("socket", ignoreCase = true)) {
+                        socketFds.add(fdNum)
+                        AppLogger.d("Hysteria2: Found socket FD: $fdNum -> $target")
+                    }
+                } catch (e: Exception) {
+                    // Ignore individual FD errors
+                }
+            }
+            
+            // Return first two socket FDs found (read, write)
+            if (socketFds.size >= 2) {
+                val readFd = socketFds[0]
+                val writeFd = socketFds[1]
+                AppLogger.i("Hysteria2: Extracted socket FDs: read=$readFd, write=$writeFd")
+                Pair(readFd, writeFd)
+            } else if (socketFds.size == 1) {
+                // If only one socket found, use it for both (some protocols use same FD)
+                val fd = socketFds[0]
+                AppLogger.i("Hysteria2: Single socket FD found, using for both: $fd")
+                Pair(fd, fd)
+            } else {
+                AppLogger.w("Hysteria2: No socket FDs found in process")
+                null
+            }
+        } catch (e: NoSuchMethodException) {
+            AppLogger.w("Hysteria2: PID method not available on this Android version", e)
+            null
+        } catch (e: SecurityException) {
+            AppLogger.w("Hysteria2: Security exception accessing process FDs: ${e.message}", e)
+            null
+        } catch (e: Exception) {
+            AppLogger.w("Hysteria2: Error extracting socket FDs: ${e.javaClass.simpleName}: ${e.message}", e)
+            null
+        }
     }
     
     /**
