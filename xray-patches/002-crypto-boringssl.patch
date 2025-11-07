@@ -1,5 +1,4 @@
 diff --git a/crypto/cipher/gcm.go b/crypto/cipher/gcm.go
-index 0000000..1111111 100644
 --- a/crypto/cipher/gcm.go
 +++ b/crypto/cipher/gcm.go
 @@ -1,3 +1,5 @@

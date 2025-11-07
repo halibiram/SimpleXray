@@ -1,5 +1,4 @@
 diff --git a/crypto/tls/conn.go b/crypto/tls/conn.go
-index 0000000..1111111 100644
 --- a/crypto/tls/conn.go
 +++ b/crypto/tls/conn.go
 @@ -1,3 +1,5 @@
