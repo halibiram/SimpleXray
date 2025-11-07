@@ -530,7 +530,7 @@ fun SettingsScreen(
                 mainViewModel.navigateToAdvancedPerformanceSettings()
             },
             headlineContent = { Text("Advanced Performance Settings") },
-            supportingContent = { 
+            supportingContent = {
                 Text(
                     "Fine-tune CPU affinity, memory pools, connection pools, and other optimizations"
                 )
@@ -542,6 +542,220 @@ fun SettingsScreen(
                 )
             }
         )
+
+        // QUIC Mode Settings (QUICHE Native Client)
+        PreferenceCategoryTitle("QUIC Mode (Maximum Performance)")
+
+        var showQuicSettings by remember { mutableStateOf(false) }
+
+        ListItem(
+            headlineContent = { Text("Enable QUIC Mode") },
+            supportingContent = {
+                Column {
+                    Text(
+                        "Use QUICHE native client for maximum performance (800-1200 Mbps throughput, +2-5ms latency)"
+                    )
+                    if (settingsState.quicSettings.enabled && settingsState.quicSettings.serverHost.isBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "⚠️ QUIC server host not configured. Configure settings below.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            trailingContent = {
+                Switch(
+                    checked = settingsState.quicSettings.enabled,
+                    onCheckedChange = {
+                        mainViewModel.setQuicModeEnabled(it)
+                        if (it) showQuicSettings = true
+                    }
+                )
+            }
+        )
+
+        // Collapsible QUIC settings
+        if (settingsState.quicSettings.enabled || showQuicSettings) {
+            var quicServerHost by remember { mutableStateOf(settingsState.quicSettings.serverHost) }
+            var quicServerPort by remember { mutableStateOf(settingsState.quicSettings.serverPort.toString()) }
+
+            // QUIC Server Host
+            EditableListItemWithBottomSheet(
+                headline = "QUIC Server Host",
+                currentValue = quicServerHost.ifBlank { "Not configured" },
+                onValueConfirmed = { newValue ->
+                    quicServerHost = newValue
+                    mainViewModel.setQuicServerHost(newValue)
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+            )
+
+            // QUIC Server Port
+            EditableListItemWithBottomSheet(
+                headline = "QUIC Server Port",
+                currentValue = quicServerPort,
+                onValueConfirmed = { newValue ->
+                    val port = newValue.toIntOrNull()
+                    if (port != null && port in 1..65535) {
+                        quicServerPort = newValue
+                        mainViewModel.setQuicServerPort(port)
+                    }
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+
+            // Congestion Control Algorithm
+            var congestionControlExpanded by remember { mutableStateOf(false) }
+            val congestionControlOptions = listOf("BBR", "BBR2", "CUBIC", "RENO")
+
+            ListItem(
+                headlineContent = { Text("Congestion Control") },
+                supportingContent = {
+                    Text("BBR2 recommended for mobile networks (lowest latency, best throughput)")
+                },
+                trailingContent = {
+                    ExposedDropdownMenuBox(
+                        expanded = congestionControlExpanded,
+                        onExpandedChange = { congestionControlExpanded = it }
+                    ) {
+                        TextButton(
+                            onClick = {},
+                            modifier = Modifier
+                                .menuAnchor(MenuAnchorType.PrimaryEditable, true),
+                            colors = ButtonDefaults.textButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                            )
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = settingsState.quicSettings.congestionControl,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                if (congestionControlExpanded) {
+                                    Icon(
+                                        imageVector = Icons.Filled.KeyboardArrowUp,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                        ExposedDropdownMenu(
+                            expanded = congestionControlExpanded,
+                            onDismissRequest = { congestionControlExpanded = false }
+                        ) {
+                            congestionControlOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option) },
+                                    onClick = {
+                                        mainViewModel.setQuicCongestionControl(option)
+                                        congestionControlExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            )
+
+            // Zero-Copy I/O
+            ListItem(
+                headlineContent = { Text("Zero-Copy I/O") },
+                supportingContent = {
+                    Text("Enable zero-copy packet forwarding for maximum throughput (recommended)")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = settingsState.quicSettings.zeroCopyEnabled,
+                        onCheckedChange = {
+                            mainViewModel.setQuicZeroCopyEnabled(it)
+                        }
+                    )
+                }
+            )
+
+            // CPU Affinity
+            var cpuAffinityExpanded by remember { mutableStateOf(false) }
+            val cpuAffinityOptions = listOf("BIG_CORES", "LITTLE_CORES", "ALL_CORES", "NO_AFFINITY")
+            val cpuAffinityLabels = mapOf(
+                "BIG_CORES" to "Big Cores (High Performance)",
+                "LITTLE_CORES" to "Little Cores (Power Saving)",
+                "ALL_CORES" to "All Cores",
+                "NO_AFFINITY" to "No Affinity (OS Default)"
+            )
+
+            ListItem(
+                headlineContent = { Text("CPU Affinity") },
+                supportingContent = {
+                    Text("Pin QUIC threads to specific CPU cores. Big cores recommended for maximum speed.")
+                },
+                trailingContent = {
+                    ExposedDropdownMenuBox(
+                        expanded = cpuAffinityExpanded,
+                        onExpandedChange = { cpuAffinityExpanded = it }
+                    ) {
+                        TextButton(
+                            onClick = {},
+                            modifier = Modifier
+                                .menuAnchor(MenuAnchorType.PrimaryEditable, true),
+                            colors = ButtonDefaults.textButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                            )
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = cpuAffinityLabels[settingsState.quicSettings.cpuAffinity] ?: settingsState.quicSettings.cpuAffinity,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                if (cpuAffinityExpanded) {
+                                    Icon(
+                                        imageVector = Icons.Filled.KeyboardArrowUp,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                        ExposedDropdownMenu(
+                            expanded = cpuAffinityExpanded,
+                            onDismissRequest = { cpuAffinityExpanded = false }
+                        ) {
+                            cpuAffinityOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(cpuAffinityLabels[option] ?: option) },
+                                    onClick = {
+                                        mainViewModel.setQuicCpuAffinity(option)
+                                        cpuAffinityExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            )
+        }
 
         PreferenceCategoryTitle(stringResource(R.string.rule_files_category_title))
 

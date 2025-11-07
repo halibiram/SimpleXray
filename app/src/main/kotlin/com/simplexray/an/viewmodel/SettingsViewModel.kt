@@ -58,7 +58,15 @@ class SettingsViewModel(
                 isGeositeCustom = prefs.customGeositeImported
             ),
             connectivityTestTarget = InputFieldState(prefs.connectivityTestTarget),
-            connectivityTestTimeout = InputFieldState(prefs.connectivityTestTimeout.toString())
+            connectivityTestTimeout = InputFieldState(prefs.connectivityTestTimeout.toString()),
+            quicSettings = QuicSettings(
+                enabled = prefs.enableQuicMode,
+                serverHost = prefs.quicServerHost ?: "",
+                serverPort = prefs.quicServerPort,
+                congestionControl = prefs.quicCongestionControl,
+                zeroCopyEnabled = prefs.quicZeroCopyEnabled,
+                cpuAffinity = prefs.quicCpuAffinity
+            )
         )
     )
     val settingsState: StateFlow<SettingsState> = _settingsState.asStateFlow()
@@ -96,7 +104,15 @@ class SettingsViewModel(
                 isGeositeCustom = prefs.customGeositeImported
             ),
             connectivityTestTarget = InputFieldState(prefs.connectivityTestTarget),
-            connectivityTestTimeout = InputFieldState(prefs.connectivityTestTimeout.toString())
+            connectivityTestTimeout = InputFieldState(prefs.connectivityTestTimeout.toString()),
+            quicSettings = QuicSettings(
+                enabled = prefs.enableQuicMode,
+                serverHost = prefs.quicServerHost ?: "",
+                serverPort = prefs.quicServerPort,
+                congestionControl = prefs.quicCongestionControl,
+                zeroCopyEnabled = prefs.quicZeroCopyEnabled,
+                cpuAffinity = prefs.quicCpuAffinity
+            )
         )
     }
     
@@ -300,7 +316,56 @@ class SettingsViewModel(
         )
         AppLogger.d("Performance mode ${if (enabled) "enabled" else "disabled"}")
     }
-    
+
+    // QUIC Mode Settings
+    fun setQuicModeEnabled(enabled: Boolean) {
+        prefs.enableQuicMode = enabled
+        _settingsState.value = _settingsState.value.copy(
+            quicSettings = _settingsState.value.quicSettings.copy(enabled = enabled)
+        )
+        AppLogger.d("QUIC mode ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    fun setQuicServerHost(host: String) {
+        prefs.quicServerHost = host
+        _settingsState.value = _settingsState.value.copy(
+            quicSettings = _settingsState.value.quicSettings.copy(serverHost = host)
+        )
+        AppLogger.d("QUIC server host set to: $host")
+    }
+
+    fun setQuicServerPort(port: Int) {
+        prefs.quicServerPort = port
+        _settingsState.value = _settingsState.value.copy(
+            quicSettings = _settingsState.value.quicSettings.copy(serverPort = port)
+        )
+        AppLogger.d("QUIC server port set to: $port")
+    }
+
+    fun setQuicCongestionControl(algorithm: String) {
+        prefs.quicCongestionControl = algorithm
+        _settingsState.value = _settingsState.value.copy(
+            quicSettings = _settingsState.value.quicSettings.copy(congestionControl = algorithm)
+        )
+        AppLogger.d("QUIC congestion control set to: $algorithm")
+    }
+
+    fun setQuicZeroCopyEnabled(enabled: Boolean) {
+        prefs.quicZeroCopyEnabled = enabled
+        _settingsState.value = _settingsState.value.copy(
+            quicSettings = _settingsState.value.quicSettings.copy(zeroCopyEnabled = enabled)
+        )
+        AppLogger.d("QUIC zero-copy ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    fun setQuicCpuAffinity(affinity: String) {
+        prefs.quicCpuAffinity = affinity
+        _settingsState.value = _settingsState.value.copy(
+            quicSettings = _settingsState.value.quicSettings.copy(cpuAffinity = affinity)
+        )
+        AppLogger.d("QUIC CPU affinity set to: $affinity")
+    }
+
     fun setTheme(mode: ThemeMode) {
         prefs.theme = mode
         _settingsState.value = _settingsState.value.copy(

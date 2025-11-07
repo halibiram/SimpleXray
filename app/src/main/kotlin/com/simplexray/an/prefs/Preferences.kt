@@ -401,7 +401,44 @@ class Preferences(context: Context) {
         set(value) {
             setValueInProvider(ENABLE_PERFORMANCE_MODE, value)
         }
-    
+
+    // QUIC Mode Settings (QUICHE Native Client)
+    var enableQuicMode: Boolean
+        get() = getBooleanPref(ENABLE_QUIC_MODE, false)
+        set(value) {
+            setValueInProvider(ENABLE_QUIC_MODE, value)
+        }
+
+    var quicServerHost: String?
+        get() = getPrefData(QUIC_SERVER_HOST).first
+        set(value) {
+            setValueInProvider(QUIC_SERVER_HOST, value)
+        }
+
+    var quicServerPort: Int
+        get() = getPrefData(QUIC_SERVER_PORT).first?.toIntOrNull() ?: 443
+        set(value) {
+            setValueInProvider(QUIC_SERVER_PORT, value.toString())
+        }
+
+    var quicCongestionControl: String
+        get() = getPrefData(QUIC_CONGESTION_CONTROL).first ?: "BBR2"
+        set(value) {
+            setValueInProvider(QUIC_CONGESTION_CONTROL, value)
+        }
+
+    var quicZeroCopyEnabled: Boolean
+        get() = getBooleanPref(QUIC_ZERO_COPY_ENABLED, true)
+        set(value) {
+            setValueInProvider(QUIC_ZERO_COPY_ENABLED, value)
+        }
+
+    var quicCpuAffinity: String
+        get() = getPrefData(QUIC_CPU_AFFINITY).first ?: "BIG_CORES"
+        set(value) {
+            setValueInProvider(QUIC_CPU_AFFINITY, value)
+        }
+
     // Advanced Performance Settings
     var cpuAffinityEnabled: Boolean
         get() = getBooleanPref(CPU_AFFINITY_ENABLED, true)
@@ -565,6 +602,12 @@ class Preferences(context: Context) {
         const val PERFORMANCE_PROFILE: String = "PerformanceProfile"
         const val AUTO_TUNE_ENABLED: String = "AutoTuneEnabled"
         const val ENABLE_PERFORMANCE_MODE: String = "EnablePerformanceMode"
+        const val ENABLE_QUIC_MODE: String = "EnableQuicMode"
+        const val QUIC_SERVER_HOST: String = "QuicServerHost"
+        const val QUIC_SERVER_PORT: String = "QuicServerPort"
+        const val QUIC_CONGESTION_CONTROL: String = "QuicCongestionControl"
+        const val QUIC_ZERO_COPY_ENABLED: String = "QuicZeroCopyEnabled"
+        const val QUIC_CPU_AFFINITY: String = "QuicCpuAffinity"
         const val MERGE_INBOUNDS: String = "MergeInbounds"
         const val MERGE_OUTBOUNDS: String = "MergeOutbounds"
         const val MERGE_TRANSPORT: String = "MergeTransport"

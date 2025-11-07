@@ -18,6 +18,15 @@ data class SwitchStates(
     val enablePerformanceMode: Boolean = false
 )
 
+data class QuicSettings(
+    val enabled: Boolean = false,
+    val serverHost: String = "",
+    val serverPort: Int = 443,
+    val congestionControl: String = "BBR2",
+    val zeroCopyEnabled: Boolean = true,
+    val cpuAffinity: String = "BIG_CORES"
+)
+
 data class InfoStates(
     val appVersion: String,
     val kernelVersion: String,
@@ -40,5 +49,6 @@ data class SettingsState(
     val info: InfoStates,
     val files: FileStates,
     val connectivityTestTarget: InputFieldState,
-    val connectivityTestTimeout: InputFieldState
+    val connectivityTestTimeout: InputFieldState,
+    val quicSettings: QuicSettings = QuicSettings()
 ) 
