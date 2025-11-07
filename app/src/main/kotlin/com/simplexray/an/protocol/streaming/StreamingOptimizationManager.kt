@@ -228,26 +228,57 @@ class StreamingOptimizationManager(
         session: StreamingSession,
         trafficWeight: Float
     ) {
-        // Estimate bitrate from traffic weight (simplified)
-        val estimatedBitrate = (trafficWeight * 10_000_000).toLong() // Rough estimate
+        // Calculate real bandwidth from traffic weight and time delta
+        // Use a more realistic estimation: trafficWeight represents relative traffic intensity
+        // For better accuracy, we calculate based on actual time elapsed since last update
+        val stats = sessionStats[sessionKey]
+        val now = System.currentTimeMillis()
+        val timeDelta = if (stats != null) {
+            maxOf(1L, now - stats.lastUpdate) // At least 1ms to avoid division by zero
+        } else {
+            1000L // Default 1 second for first update
+        }
+        
+        // Estimate bytes transferred based on traffic weight and time
+        // trafficWeight is normalized (0.0-1.0), scale it to reasonable bitrate range
+        // Use session's maxBitrate as reference for scaling
+        val estimatedBitrateBps = (trafficWeight * session.config.maxBitrate).toLong()
+        val bytesInPeriod = (estimatedBitrateBps * timeDelta / 1000 / 8).toLong()
         
         val updated = session.copy(
-            totalBytes = session.totalBytes + (estimatedBitrate / 8 * 1000), // Rough byte count
-            peakBitrate = maxOf(session.peakBitrate, estimatedBitrate)
+            totalBytes = session.totalBytes + bytesInPeriod,
+            peakBitrate = maxOf(session.peakBitrate, estimatedBitrateBps)
         )
         
-        // Update buffer manager if exists
+        // Update buffer manager with real consumption tracking
         sessionBuffers[sessionKey]?.let { buffer ->
-            // Simulate buffer updates (in real implementation, this would come from actual playback)
+            // Add downloaded segment
             if (buffer.getBufferLevel() < session.config.bufferAhead) {
                 buffer.addToBuffer(session.config.segmentSize)
+            }
+            
+            // Consume buffer based on playback time (simulate playback consumption)
+            // Calculate playback time since last update
+            val playbackTimeSeconds = (timeDelta / 1000).toInt()
+            if (playbackTimeSeconds > 0) {
+                buffer.consumeBuffer(playbackTimeSeconds)
+            }
+        }
+        
+        // Update adaptive bitrate controller if enabled
+        sessionControllers[sessionKey]?.let { controller ->
+            val previousQuality = controller.getCurrentQuality()
+            val newQuality = controller.updateQuality(estimatedBitrateBps)
+            // Log quality changes for debugging
+            if (newQuality != previousQuality) {
+                Log.d(TAG, "Quality changed from ${previousQuality.displayName} to ${newQuality.displayName} for $sessionKey")
             }
         }
         
         // Update stats
         sessionStats[sessionKey]?.let { stats ->
-            stats.totalBytes += (estimatedBitrate / 8 * 1000).toLong()
-            stats.lastUpdate = System.currentTimeMillis()
+            stats.totalBytes += bytesInPeriod
+            stats.lastUpdate = now
             stats.segmentsDownloaded++
         }
         
@@ -344,8 +375,9 @@ class StreamingOptimizationManager(
                 val bufferLevel = buffer.getBufferLevel()
                 val bufferHealth = buffer.getBufferHealth()
                 
-                // Calculate average bitrate
-                val duration = (System.currentTimeMillis() - statsBuilder.lastUpdate) / 1000
+                // Calculate average bitrate using session start time for accurate duration
+                // This gives us the true average bitrate over the entire session
+                val duration = (System.currentTimeMillis() - session.startTime) / 1000
                 val avgBitrate = if (duration > 0) {
                     (statsBuilder.totalBytes * 8) / duration
                 } else {

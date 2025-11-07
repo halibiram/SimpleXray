@@ -230,8 +230,15 @@ class StreamingOptimizer {
         private fun upgradeQuality(current: StreamQuality): StreamQuality {
             val qualities = StreamQuality.entries
             val currentIndex = qualities.indexOf(current)
+            // Skip AUTO when upgrading (consistent with downgrade logic)
             return if (currentIndex < qualities.size - 1) {
-                qualities[currentIndex + 1]
+                val nextQuality = qualities[currentIndex + 1]
+                // If next quality is AUTO, skip to the one after
+                if (nextQuality == StreamQuality.AUTO && currentIndex + 2 < qualities.size) {
+                    qualities[currentIndex + 2]
+                } else {
+                    nextQuality
+                }
             } else {
                 current
             }

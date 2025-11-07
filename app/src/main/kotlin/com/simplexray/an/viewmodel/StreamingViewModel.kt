@@ -100,7 +100,7 @@ class StreamingViewModel(application: Application) : AndroidViewModel(applicatio
                 if (stats.isNotEmpty()) {
                     _streamingStats.value = stats
                 }
-                delay(2000) // Update stats every 2 seconds
+                delay(5000) // Update stats every 5 seconds (reduced polling frequency)
             }
         }
         
