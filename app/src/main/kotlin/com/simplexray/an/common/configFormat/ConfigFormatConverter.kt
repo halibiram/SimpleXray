@@ -9,7 +9,9 @@ interface ConfigFormatConverter {
     companion object {
         val knownImplementations = listOf(
             SimpleXrayFormatConverter(),
-            VlessLinkConverter(),
+            XuiHysteria2Converter(), // x-ui Hysteria2 format
+            XuiVlessConverter(), // x-ui VLESS format (check first for x-ui specific params)
+            VlessLinkConverter(), // Generic VLESS link format
         )
 
         fun convertOrNull(context: Context, content: String): Result<DetectedConfig>? {

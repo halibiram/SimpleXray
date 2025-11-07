@@ -185,39 +185,63 @@ class VlessLinkConverter : ConfigFormatConverter {
             
             // Security settings (TLS/Reality)
             if (security == "tls" || security == "reality") {
-                appendLine(",")
-                appendLine("        \"securitySettings\": {")
                 if (security == "reality") {
-                    val pbk = queryParams["pbk"]
-                    val sid = queryParams["sid"]
-                    val fp = queryParams["fp"] ?: "chrome"
-                    val spx = queryParams["spx"]
+                    // x-ui Reality format: pbk, sid, fp, spx, dest, xver
+                    val pbk = queryParams["pbk"] ?: queryParams["publicKey"]
+                    val sid = queryParams["sid"] ?: queryParams["shortId"]
+                    val fp = queryParams["fp"] ?: queryParams["fingerprint"] ?: "chrome"
+                    val spx = queryParams["spx"] ?: queryParams["serverName"] ?: sni
+                    val dest = queryParams["dest"] ?: queryParams["serverNames"]?.split(",")?.firstOrNull()
+                    val xver = queryParams["xver"] ?: "0"
                     
-                    appendLine("          \"reality\": {")
-                    appendLine("            \"show\": false,")
-                    if (!pbk.isNullOrBlank()) {
-                        appendLine("            \"publicKey\": \"$pbk\",")
+                    appendLine(",")
+                    appendLine("        \"realitySettings\": {")
+                    appendLine("          \"show\": false")
+                    
+                    if (!dest.isNullOrBlank()) {
+                        appendLine(",")
+                        appendLine("          \"dest\": \"$dest\"")
                     }
-                    if (!sid.isNullOrBlank()) {
-                        appendLine("            \"shortId\": \"$sid\",")
+                    
+                    if (!xver.isNullOrBlank() && xver != "0") {
+                        appendLine(",")
+                        appendLine("          \"xver\": $xver")
                     }
-                    appendLine("            \"fingerprint\": \"$fp\"")
+                    
                     if (!spx.isNullOrBlank()) {
                         appendLine(",")
-                        appendLine("            \"serverName\": \"$spx\"")
+                        appendLine("          \"serverNames\": [\"$spx\"]")
                     }
-                    appendLine("          }")
+                    
+                    if (!pbk.isNullOrBlank()) {
+                        appendLine(",")
+                        appendLine("          \"publicKey\": \"$pbk\"")
+                    }
+                    
+                    if (!sid.isNullOrBlank()) {
+                        appendLine(",")
+                        appendLine("          \"shortIds\": [\"$sid\"]")
+                    }
+                    
+                    appendLine(",")
+                    appendLine("          \"minClientVer\": \"\",")
+                    appendLine("          \"maxClientVer\": \"\",")
+                    appendLine("          \"maxTimeDiff\": 0")
+                    appendLine("        },")
+                    appendLine("        \"fingerprint\": \"$fp\"")
                 } else {
                     // TLS
-                    appendLine("          \"tls\": {")
+                    appendLine(",")
+                    appendLine("        \"tlsSettings\": {")
                     if (!sni.isNullOrBlank()) {
-                        appendLine("            \"serverName\": \"$sni\",")
+                        appendLine("          \"serverName\": \"$sni\"")
+                    } else {
+                        appendLine("          \"serverName\": \"\"")
                     }
-                    val fp = queryParams["fp"] ?: "chrome"
-                    appendLine("            \"fingerprint\": \"$fp\"")
-                    appendLine("          }")
+                    val fp = queryParams["fp"] ?: queryParams["fingerprint"] ?: "chrome"
+                    appendLine("        },")
+                    appendLine("        \"fingerprint\": \"$fp\"")
                 }
-                appendLine("        }")
             }
             
             appendLine("      }")

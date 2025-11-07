@@ -1,6 +1,6 @@
 {
   "log": {
-    "logLevel": "info"
+    "loglevel": "warning"
   },
   "dns": {
     "servers": [
@@ -43,6 +43,44 @@
   ],
   "outbounds": [
     {
+      "protocol": "vless",
+      "tag": "proxy",
+      "settings": {
+        "vnext": [
+          {
+            "address": "your-server.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "your-uuid-here",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.microsoft.com:443",
+          "xver": 0,
+          "serverNames": [
+            "www.microsoft.com"
+          ],
+          "publicKey": "your-public-key-here",
+          "shortIds": [
+            "your-short-id-here"
+          ],
+          "minClientVer": "",
+          "maxClientVer": "",
+          "maxTimeDiff": 0
+        },
+        "fingerprint": "chrome"
+      }
+    },
+    {
       "protocol": "freedom",
       "tag": "direct"
     },
@@ -59,16 +97,19 @@
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       {
+        "type": "field",
         "outboundTag": "dns-out",
         "port": 53
       },
       {
+        "type": "field",
         "domain": [
           "geosite:ads"
         ],
         "outboundTag": "block"
       },
       {
+        "type": "field",
         "domain": [
           "geosite:gfw",
           "googleapis.cn"
@@ -76,6 +117,7 @@
         "outboundTag": "proxy"
       },
       {
+        "type": "field",
         "ip": [
           "geoip:cn",
           "geoip:private"

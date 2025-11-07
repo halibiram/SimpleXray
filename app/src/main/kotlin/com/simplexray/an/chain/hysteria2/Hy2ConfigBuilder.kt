@@ -42,6 +42,27 @@ object Hy2ConfigBuilder {
         // ALPN
         root.addProperty("alpn", config.alpn)
         
+        // SNI (Server Name Indication)
+        if (!config.sni.isNullOrBlank()) {
+            root.addProperty("sni", config.sni)
+        }
+        
+        // Insecure (skip certificate verification)
+        if (config.insecure) {
+            root.addProperty("insecure", true)
+        }
+        
+        // Obfuscation (x-ui obfs support)
+        if (!config.obfs.isNullOrBlank() && config.obfs == "xplus") {
+            val obfs = JsonObject().apply {
+                addProperty("type", "xplus")
+                if (!config.obfsPassword.isNullOrBlank()) {
+                    addProperty("password", config.obfsPassword)
+                }
+            }
+            root.add("obfs", obfs)
+        }
+        
         // SOCKS5 proxy (upstream chaining)
         if (config.upstreamSocksAddr != null) {
             val socks5 = JsonObject().apply {
