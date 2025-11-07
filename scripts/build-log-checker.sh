@@ -82,8 +82,9 @@ echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━
 # Warning'leri analiz et
 echo -e "${BLUE}📊 Warning Analizi...${NC}"
 for pattern in "${WARNING_PATTERNS[@]}"; do
-    COUNT=$(echo "$LOG_CONTENT" | grep -iE "$pattern" | wc -l || echo "0")
-    if [ "$COUNT" -gt 0 ]; then
+    COUNT=$(echo "$LOG_CONTENT" | grep -iE "$pattern" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+    COUNT=${COUNT:-0}
+    if [ "$COUNT" -gt 0 ] 2>/dev/null; then
         WARNING_COUNTS["$pattern"]=$COUNT
         # İlk birkaç örneği kaydet
         EXAMPLES=$(echo "$LOG_CONTENT" | grep -iE "$pattern" | head -3 | tr '\n' '; ')
@@ -94,8 +95,9 @@ done
 # Error'ları analiz et
 echo -e "${BLUE}📊 Error Analizi...${NC}"
 for pattern in "${ERROR_PATTERNS[@]}"; do
-    COUNT=$(echo "$LOG_CONTENT" | grep -iE "$pattern" | wc -l || echo "0")
-    if [ "$COUNT" -gt 0 ]; then
+    COUNT=$(echo "$LOG_CONTENT" | grep -iE "$pattern" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+    COUNT=${COUNT:-0}
+    if [ "$COUNT" -gt 0 ] 2>/dev/null; then
         ERROR_COUNTS["$pattern"]=$COUNT
         # İlk birkaç örneği kaydet
         EXAMPLES=$(echo "$LOG_CONTENT" | grep -iE "$pattern" | head -3 | tr '\n' '; ')
@@ -157,49 +159,55 @@ echo -e "${CYAN}${BOLD}🔍 Özel Kontroller${NC}"
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 
 # C++ escape sequence warning
-ESCAPE_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "unknown escape sequence" | wc -l || echo "0")
-if [ "$ESCAPE_WARNINGS" -gt 0 ]; then
+ESCAPE_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "unknown escape sequence" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+ESCAPE_WARNINGS=${ESCAPE_WARNINGS:-0}
+if [ "$ESCAPE_WARNINGS" -gt 0 ] 2>/dev/null; then
     echo -e "${YELLOW}⚠️  C++ Escape Sequence Warning: $ESCAPE_WARNINGS${NC}"
     echo "$LOG_CONTENT" | grep -iE "unknown escape sequence" | head -3 | sed 's/^/    /'
     echo ""
 fi
 
 # Unused parameter warning
-UNUSED_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "unused.*parameter" | wc -l || echo "0")
-if [ "$UNUSED_WARNINGS" -gt 0 ]; then
+UNUSED_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "unused.*parameter" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+UNUSED_WARNINGS=${UNUSED_WARNINGS:-0}
+if [ "$UNUSED_WARNINGS" -gt 0 ] 2>/dev/null; then
     echo -e "${YELLOW}⚠️  Unused Parameter Warning: $UNUSED_WARNINGS${NC}"
     echo "$LOG_CONTENT" | grep -iE "unused.*parameter" | head -3 | sed 's/^/    /'
     echo ""
 fi
 
 # Format specifier warning
-FORMAT_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "format.*specifier|format.*warning" | wc -l || echo "0")
-if [ "$FORMAT_WARNINGS" -gt 0 ]; then
+FORMAT_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "format.*specifier|format.*warning" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+FORMAT_WARNINGS=${FORMAT_WARNINGS:-0}
+if [ "$FORMAT_WARNINGS" -gt 0 ] 2>/dev/null; then
     echo -e "${YELLOW}⚠️  Format Specifier Warning: $FORMAT_WARNINGS${NC}"
     echo "$LOG_CONTENT" | grep -iE "format.*specifier|format.*warning" | head -3 | sed 's/^/    /'
     echo ""
 fi
 
 # Deprecation warning
-DEPRECATION_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "deprecated|Deprecated" | wc -l || echo "0")
-if [ "$DEPRECATION_WARNINGS" -gt 0 ]; then
+DEPRECATION_WARNINGS=$(echo "$LOG_CONTENT" | grep -iE "deprecated|Deprecated" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+DEPRECATION_WARNINGS=${DEPRECATION_WARNINGS:-0}
+if [ "$DEPRECATION_WARNINGS" -gt 0 ] 2>/dev/null; then
     echo -e "${YELLOW}⚠️  Deprecation Warning: $DEPRECATION_WARNINGS${NC}"
     echo "$LOG_CONTENT" | grep -iE "deprecated|Deprecated" | head -3 | sed 's/^/    /'
     echo ""
 fi
 
 # Build başarı kontrolü
-BUILD_SUCCESS=$(echo "$LOG_CONTENT" | grep -iE "Build.*success|✅.*build|build.*complete" | wc -l || echo "0")
-BUILD_FAILED=$(echo "$LOG_CONTENT" | grep -iE "Build.*failed|❌.*build|build.*error" | wc -l || echo "0")
+BUILD_SUCCESS=$(echo "$LOG_CONTENT" | grep -iE "Build.*success|✅.*build|build.*complete" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+BUILD_SUCCESS=${BUILD_SUCCESS:-0}
+BUILD_FAILED=$(echo "$LOG_CONTENT" | grep -iE "Build.*failed|❌.*build|build.*error" | wc -l 2>/dev/null | tr -d ' \n' || echo "0")
+BUILD_FAILED=${BUILD_FAILED:-0}
 
 echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${CYAN}${BOLD}📋 Build Durumu${NC}"
 echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 
-if [ "$BUILD_FAILED" -gt 0 ] || [ "$TOTAL_ERRORS" -gt 0 ]; then
+if [ "$BUILD_FAILED" -gt 0 ] 2>/dev/null || [ "$TOTAL_ERRORS" -gt 0 ] 2>/dev/null; then
     echo -e "${RED}${BOLD}❌ Build Başarısız!${NC}\n"
     EXIT_CODE=1
-elif [ "$BUILD_SUCCESS" -gt 0 ]; then
+elif [ "$BUILD_SUCCESS" -gt 0 ] 2>/dev/null; then
     echo -e "${GREEN}${BOLD}✅ Build Başarılı${NC}\n"
     if [ "$TOTAL_WARNINGS" -gt 0 ]; then
         echo -e "${YELLOW}⚠️  Ancak $TOTAL_WARNINGS warning bulundu${NC}\n"
