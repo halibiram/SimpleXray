@@ -13,6 +13,11 @@ class Preferences(context: Context) {
     private val contentResolver: ContentResolver
     private val gson: Gson
     private val context1: Context = context.applicationContext
+    
+    // Cache for configFilesOrder to reduce ContentProvider IPC overhead
+    private var cachedConfigFilesOrder: List<String>? = null
+    private var cacheTimestamp: Long = 0
+    private val CACHE_VALIDITY_MS = 1000L // 1 second cache validity
 
     init {
         this.contentResolver = context1.contentResolver
@@ -237,8 +242,14 @@ class Preferences(context: Context) {
 
     var configFilesOrder: List<String>
         get() {
+            val now = System.currentTimeMillis()
+            // Return cached value if still valid
+            if (cachedConfigFilesOrder != null && (now - cacheTimestamp) < CACHE_VALIDITY_MS) {
+                return cachedConfigFilesOrder!!
+            }
+            
             val jsonList = getPrefData(CONFIG_FILES_ORDER).first
-            return jsonList?.let {
+            val result = jsonList?.let {
                 try {
                     val type = object : TypeToken<List<String>>() {}.type
                     gson.fromJson(it, type)
@@ -247,10 +258,18 @@ class Preferences(context: Context) {
                     emptyList()
                 }
             } ?: emptyList()
+            
+            // Update cache
+            cachedConfigFilesOrder = result
+            cacheTimestamp = now
+            return result
         }
         set(order) {
             val jsonList = gson.toJson(order)
             setValueInProvider(CONFIG_FILES_ORDER, jsonList)
+            // Update cache immediately to avoid stale data
+            cachedConfigFilesOrder = order
+            cacheTimestamp = System.currentTimeMillis()
         }
 
     var connectivityTestTarget: String

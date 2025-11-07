@@ -479,11 +479,17 @@ class MainViewModel(application: Application) :
     }
 
     suspend fun createConfigFile(): String? {
+        AppLogger.d("MainViewModel: Creating new config file...")
         val filePath = fileManager.createConfigFile(getApplication<Application>().assets)
         if (filePath == null) {
+            AppLogger.e("MainViewModel: Failed to create config file")
             _uiEvent.trySend(MainViewUiEvent.ShowSnackbar(getApplication<Application>().getString(R.string.create_config_failed)))
         } else {
+            AppLogger.d("MainViewModel: Config file created successfully: $filePath, refreshing list...")
+            // Small delay to ensure preferences are synced before refreshing
+            kotlinx.coroutines.delay(50)
             refreshConfigFileList()
+            AppLogger.d("MainViewModel: Config file list refreshed")
         }
         return filePath
     }

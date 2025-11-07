@@ -15,6 +15,7 @@ import com.simplexray.an.common.FilenameValidator
 import com.simplexray.an.common.configFormat.ConfigFormatConverter
 import com.simplexray.an.prefs.Preferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONException
 import java.io.ByteArrayOutputStream
@@ -94,6 +95,8 @@ class FileManager(private val application: Application, private val prefs: Prefe
             // TODO: Add file existence check before creation
             val newFile = File(application.filesDir, filename)
             try {
+                Log.d(TAG, "Creating config file: $filename")
+                
                 val fileContent: String
                 if (prefs.useTemplate) {
                     assets.open("template").use { assetInputStream ->
@@ -105,19 +108,57 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 } else {
                     fileContent = "{}"
                 }
-                FileOutputStream(newFile).use { fileOutputStream ->
+                
+                // Write file with explicit flush to ensure data is persisted
+                newFile.outputStream().use { fileOutputStream ->
                     fileOutputStream.write(fileContent.toByteArray())
+                    fileOutputStream.flush()
                 }
+                
+                // Verify file was created and is readable
+                if (!newFile.exists()) {
+                    Log.e(TAG, "Config file was not created: ${newFile.absolutePath}")
+                    return@withContext null
+                }
+                
+                if (!newFile.canRead()) {
+                    Log.e(TAG, "Config file is not readable: ${newFile.absolutePath}")
+                    return@withContext null
+                }
+                
+                Log.d(TAG, "Config file created successfully: ${newFile.absolutePath}, exists: ${newFile.exists()}, size: ${newFile.length()}")
                 
                 // Add to configFilesOrder if not already present
                 val currentOrder = prefs.configFilesOrder.toMutableList()
+                Log.d(TAG, "Current configFilesOrder before update: $currentOrder")
+                
                 if (!currentOrder.contains(filename)) {
                     currentOrder.add(filename)
                     prefs.configFilesOrder = currentOrder
                     Log.d(TAG, "Added $filename to configFilesOrder")
+                    
+                    // Wait for ContentProvider IPC to complete and verify
+                    delay(100)
+                    val verifiedOrder = prefs.configFilesOrder
+                    if (!verifiedOrder.contains(filename)) {
+                        Log.e(TAG, "Failed to add $filename to configFilesOrder, retrying...")
+                        // Retry once
+                        prefs.configFilesOrder = currentOrder
+                        delay(100)
+                        val retryVerifiedOrder = prefs.configFilesOrder
+                        if (!retryVerifiedOrder.contains(filename)) {
+                            Log.e(TAG, "Failed to add $filename to configFilesOrder after retry")
+                        } else {
+                            Log.d(TAG, "Successfully added $filename to configFilesOrder after retry")
+                        }
+                    } else {
+                        Log.d(TAG, "Verified: $filename is in configFilesOrder: $verifiedOrder")
+                    }
+                } else {
+                    Log.d(TAG, "$filename already exists in configFilesOrder")
                 }
                 
-                Log.d(TAG, "Created new config file: ${newFile.absolutePath}")
+                Log.d(TAG, "Final configFilesOrder: ${prefs.configFilesOrder}")
                 newFile.absolutePath
             } catch (e: IOException) {
                 Log.e(TAG, "Error creating new config file", e)
@@ -184,18 +225,58 @@ class FileManager(private val application: Application, private val prefs: Prefe
             }
 
             try {
-                FileOutputStream(newFile).use { fileOutputStream ->
+                Log.d(TAG, "Importing config from content to file: $safeFilename")
+                
+                // Write file with explicit flush to ensure data is persisted
+                newFile.outputStream().use { fileOutputStream ->
                     fileOutputStream.write(formattedContent.toByteArray(StandardCharsets.UTF_8))
+                    fileOutputStream.flush()
                 }
+                
+                // Verify file was created and is readable
+                if (!newFile.exists()) {
+                    Log.e(TAG, "Imported config file was not created: ${newFile.absolutePath}")
+                    return@withContext null
+                }
+                
+                if (!newFile.canRead()) {
+                    Log.e(TAG, "Imported config file is not readable: ${newFile.absolutePath}")
+                    return@withContext null
+                }
+                
+                Log.d(TAG, "Imported config file created successfully: ${newFile.absolutePath}, exists: ${newFile.exists()}, size: ${newFile.length()}")
                 
                 // Add to configFilesOrder if not already present
                 val currentOrder = prefs.configFilesOrder.toMutableList()
+                Log.d(TAG, "Current configFilesOrder before update: $currentOrder")
+                
                 if (!currentOrder.contains(safeFilename)) {
                     currentOrder.add(safeFilename)
                     prefs.configFilesOrder = currentOrder
                     Log.d(TAG, "Added $safeFilename to configFilesOrder")
+                    
+                    // Wait for ContentProvider IPC to complete and verify
+                    delay(100)
+                    val verifiedOrder = prefs.configFilesOrder
+                    if (!verifiedOrder.contains(safeFilename)) {
+                        Log.e(TAG, "Failed to add $safeFilename to configFilesOrder, retrying...")
+                        // Retry once
+                        prefs.configFilesOrder = currentOrder
+                        delay(100)
+                        val retryVerifiedOrder = prefs.configFilesOrder
+                        if (!retryVerifiedOrder.contains(safeFilename)) {
+                            Log.e(TAG, "Failed to add $safeFilename to configFilesOrder after retry")
+                        } else {
+                            Log.d(TAG, "Successfully added $safeFilename to configFilesOrder after retry")
+                        }
+                    } else {
+                        Log.d(TAG, "Verified: $safeFilename is in configFilesOrder: $verifiedOrder")
+                    }
+                } else {
+                    Log.d(TAG, "$safeFilename already exists in configFilesOrder")
                 }
                 
+                Log.d(TAG, "Final configFilesOrder: ${prefs.configFilesOrder}")
                 Log.d(
                     TAG,
                     "Successfully imported config from content to: ${newFile.absolutePath}"
