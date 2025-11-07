@@ -373,10 +373,6 @@ private fun TrafficChartCard(chartModelProducer: CartesianChartModelProducer) {
                 chart = rememberCartesianChart(
                     rememberLineCartesianLayer(),
                     rememberLineCartesianLayer(),
-                    rememberLineCartesianLayer(),
-                    rememberLineCartesianLayer(),
-                    rememberLineCartesianLayer(),
-                    rememberLineCartesianLayer(),
                     startAxis = rememberStartAxis(label = rememberAxisLabelComponent()),
                     bottomAxis = rememberBottomAxis(label = rememberAxisLabelComponent())
                 ),

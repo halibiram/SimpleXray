@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 /**
  * ViewModel for traffic monitoring UI.
@@ -33,7 +34,7 @@ class TrafficViewModel(application: Application) : AndroidViewModel(application)
     
     // Prefer XrayStatsObserver when apiPort is available, otherwise use TrafficObserver
     private val trafficObserver: TrafficObserver
-    private val xrayObserver: XrayStatsObserver?
+    private var xrayObserver: XrayStatsObserver?
 
     private val _uiState = MutableStateFlow(TrafficUiState())
     val uiState: StateFlow<TrafficUiState> = _uiState.asStateFlow()
@@ -62,8 +63,48 @@ class TrafficViewModel(application: Application) : AndroidViewModel(application)
         // Observe real-time traffic
         observeRealTimeTraffic()
 
+        // Monitor apiPort changes and restart XrayStatsObserver if needed
+        monitorApiPortChanges()
+
         // Load today's statistics
         loadTodayStats()
+    }
+
+    /**
+     * Monitor apiPort changes and restart XrayStatsObserver when port changes.
+     * Checks every 2 seconds for port changes.
+     */
+    private fun monitorApiPortChanges() {
+        viewModelScope.launch {
+            var lastPort = prefs.apiPort
+            while (true) {
+                delay(2000) // Check every 2 seconds
+                val currentPort = prefs.apiPort
+                
+                if (currentPort != lastPort) {
+                    // Port changed - restart observer
+                    if (currentPort > 0) {
+                        // New port is valid - create/restart observer
+                        if (xrayObserver == null) {
+                            // Create new observer
+                            xrayObserver = XrayStatsObserver(application, viewModelScope).also { it.start() }
+                            // Stop TrafficObserver since we're using XrayStatsObserver now
+                            trafficObserver.stop()
+                        } else {
+                            // Restart existing observer with new port
+                            xrayObserver?.restart()
+                        }
+                    } else {
+                        // Port is now invalid - stop XrayStatsObserver and use TrafficObserver
+                        xrayObserver?.stop()
+                        xrayObserver = null
+                        // Start TrafficObserver if not already running
+                        trafficObserver.start()
+                    }
+                    lastPort = currentPort
+                }
+            }
+        }
     }
 
     /**
@@ -195,6 +236,7 @@ class TrafficViewModel(application: Application) : AndroidViewModel(application)
      */
     fun resetSession() {
         trafficObserver.reset()
+        xrayObserver?.reset()
         burstHistory.clear()
         _uiState.update { state ->
             state.copy(

@@ -73,6 +73,18 @@ class XrayStatsObserver(
         client = null // Cleanup client reference
     }
 
+    /**
+     * Reset all traffic stats (useful for session-based tracking).
+     * Clears history and current snapshot.
+     */
+    fun reset() {
+        previousRaw = null
+        _currentSnapshot.value = TrafficSnapshot()
+        _history.value = emptyList()
+        lastLatencyProbe = 0L
+        Log.i(TAG, "XrayStatsObserver stats reset")
+    }
+
     suspend fun collectNow(): TrafficSnapshot = withContext(Dispatchers.IO) {
         val raw = client?.fetch() ?: return@withContext TrafficSnapshot()
         val now = System.currentTimeMillis()

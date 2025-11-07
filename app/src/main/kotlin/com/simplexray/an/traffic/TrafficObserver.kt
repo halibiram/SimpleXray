@@ -2,6 +2,7 @@ package com.simplexray.an.traffic
 
 import android.content.Context
 import android.util.Log
+import com.simplexray.an.domain.model.TrafficSnapshot
 import com.simplexray.an.service.XrayProcessManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
