@@ -25,14 +25,17 @@ The build workflow (`build-xray-boringssl.yml`) configures:
   - Allows fallback to Go crypto when CGO is disabled
 
 - **003-tls-boringssl.patch** - Build tag for crypto/tls when CGO is disabled
+
   - Adds `//go:build !cgo` to `crypto/tls/conn.go`
   - Allows fallback to Go TLS when CGO is disabled
 
 - **004-x509-boringssl.patch** - Build tag for crypto/x509 when CGO is disabled
+
   - Adds `//go:build !cgo` to `crypto/x509/verify.go`
   - Allows fallback to Go X.509 when CGO is disabled
 
 - **005-boringssl-tls-bridge.patch** - TLS connection bridge using BoringSSL
+
   - Adds `crypto/tls/boringssl_tls_bridge.go` with BoringSSL TLS wrapper
   - Implements `BoringSSLConn` type for TLS connections
   - Provides TLS 1.3 handshake, read, write operations
