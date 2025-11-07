@@ -120,6 +120,74 @@ jobs:
           mkdir -p ../app/src/main/jniLibs/x86
           mv xray ../app/src/main/jniLibs/x86/libxray.so
 
+      - name: Setup Rust for QUICHE
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Cache Rust Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src/main/jni/quiche-client/third_party/quiche/target
+          key: ${{ runner.os }}-cargo-quiche-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-quiche-
+
+      - name: Install cargo-ndk
+        run: |
+          cargo install cargo-ndk || echo "cargo-ndk already installed"
+
+      - name: Build QUICHE Libraries
+        run: |
+          # NDK should be available from Xray-core build step
+          if [ -z "$(ls -d android-ndk-* 2>/dev/null)" ]; then
+            echo "NDK not found, downloading..."
+            wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+            unzip -q android-ndk.zip
+            rm android-ndk.zip
+          fi
+          NDK_HOME=$(realpath android-ndk-*)
+          export ANDROID_NDK_HOME=$NDK_HOME
+
+          echo "🚀 Building QUICHE for Android..."
+
+          cd app/src/main/jni/quiche-client/third_party/quiche
+
+          # Build for arm64-v8a (primary target)
+          echo "Building QUICHE for arm64-v8a..."
+          RUSTFLAGS="-C opt-level=3 -C lto=fat -C codegen-units=1" \
+          cargo ndk \
+            --target aarch64-linux-android \
+            --platform 29 \
+            build \
+            --release \
+            --manifest-path quiche/Cargo.toml \
+            --features ffi,qlog
+
+          # Build for x86_64 (emulator support)
+          echo "Building QUICHE for x86_64..."
+          RUSTFLAGS="-C opt-level=3 -C lto=fat -C codegen-units=1" \
+          cargo ndk \
+            --target x86_64-linux-android \
+            --platform 29 \
+            build \
+            --release \
+            --manifest-path quiche/Cargo.toml \
+            --features ffi,qlog
+
+          # Copy libraries
+          mkdir -p ../../libs/arm64-v8a
+          mkdir -p ../../libs/x86_64
+          cp target/aarch64-linux-android/release/libquiche.a ../../libs/arm64-v8a/
+          cp target/x86_64-linux-android/release/libquiche.a ../../libs/x86_64/
+
+          cd ../../../../../..
+
+          echo "✅ QUICHE libraries built successfully"
+
       - name: Build BoringSSL from Submodule
         run: |
           # NDK should already be available from Xray-core build step
@@ -201,6 +269,99 @@ jobs:
 
           cd ../../../../..
           echo "✅ BoringSSL build complete"
+
+      - name: Build BoringSSL for QUICHE
+        run: |
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "🔒 Building BoringSSL for QUICHE..."
+
+          BORINGSSL_DIR="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl"
+
+          if [ ! -d "$BORINGSSL_DIR" ]; then
+            echo "❌ BoringSSL not found in QUICHE deps"
+            exit 1
+          fi
+
+          cd "$BORINGSSL_DIR"
+
+          # Build for arm64-v8a
+          echo "Building BoringSSL for arm64-v8a (QUICHE)..."
+          mkdir -p build_arm64
+          cd build_arm64
+
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-Ofast -march=armv8-a+crypto" \
+            -DCMAKE_CXX_FLAGS="-Ofast -march=armv8-a+crypto" \
+            -GNinja
+
+          ninja
+
+          cd ..
+
+          # Build for x86_64
+          echo "Building BoringSSL for x86_64 (QUICHE)..."
+          mkdir -p build_x86_64
+          cd build_x86_64
+
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=x86_64 \
+            -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O3" \
+            -DCMAKE_CXX_FLAGS="-O3" \
+            -GNinja
+
+          ninja
+
+          cd ../../../../../../../../../..
+
+          echo "✅ BoringSSL for QUICHE built successfully"
+
+      - name: Build QUICHE Native Client
+        run: |
+          NDK_HOME=$(realpath android-ndk-*)
+          export ANDROID_NDK_HOME=$NDK_HOME
+
+          echo "🔨 Building QUICHE native client..."
+
+          cd app/src/main/jni/quiche-client
+
+          # Build for arm64-v8a
+          $NDK_HOME/ndk-build \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            APP_ABI=arm64-v8a \
+            APP_PLATFORM=android-29 \
+            -j$(nproc)
+
+          # Build for x86_64
+          $NDK_HOME/ndk-build \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            APP_ABI=x86_64 \
+            APP_PLATFORM=android-29 \
+            -j$(nproc)
+
+          cd ../../../../..
+
+          # Copy libraries to jniLibs
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          mkdir -p app/src/main/jniLibs/x86_64
+
+          if [ -f "app/src/main/libs/arm64-v8a/libquiche-client.so" ]; then
+            cp app/src/main/libs/arm64-v8a/libquiche-client.so app/src/main/jniLibs/arm64-v8a/
+          fi
+
+          if [ -f "app/src/main/libs/x86_64/libquiche-client.so" ]; then
+            cp app/src/main/libs/x86_64/libquiche-client.so app/src/main/jniLibs/x86_64/
+          fi
+
+          echo "✅ QUICHE native client built successfully"
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew

@@ -1,0 +1,313 @@
+name: Build QUICHE Native Client
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      build_abis:
+        description: "Comma-separated ABIs to build"
+        required: false
+        default: "arm64-v8a,x86_64"
+  push:
+    paths:
+      - 'app/src/main/jni/quiche-client/**'
+      - '.github/workflows/build-quiche.yml'
+  pull_request:
+    paths:
+      - 'app/src/main/jni/quiche-client/**'
+
+jobs:
+  build-quiche-library:
+    name: Build QUICHE (${{ matrix.abi }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+        include:
+          - abi: arm64-v8a
+            rust_target: aarch64-linux-android
+            ndk_platform: 29
+          - abi: x86_64
+            rust_target: x86_64-linux-android
+            ndk_platform: 29
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Initialize QUICHE Submodule
+        run: |
+          echo "🔄 Initializing QUICHE submodule..."
+          git submodule sync
+          git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche
+
+          # Verify QUICHE is cloned
+          if [ ! -f "app/src/main/jni/quiche-client/third_party/quiche/Cargo.toml" ]; then
+            echo "❌ QUICHE submodule not initialized properly"
+            exit 1
+          fi
+
+          echo "✅ QUICHE submodule initialized"
+
+      - name: Setup NDK
+        run: |
+          echo "📦 Downloading Android NDK..."
+          wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q android-ndk.zip
+          rm android-ndk.zip
+
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+          echo "✅ NDK installed at $NDK_HOME"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src/main/jni/quiche-client/third_party/quiche/target
+          key: ${{ runner.os }}-cargo-${{ matrix.abi }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.abi }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-ndk
+        run: |
+          echo "📦 Installing cargo-ndk..."
+          cargo install cargo-ndk || true
+          cargo ndk --version
+
+      - name: Build QUICHE
+        env:
+          ANDROID_NDK_HOME: ${{ env.NDK_HOME }}
+          RUSTFLAGS: >-
+            -C opt-level=3
+            -C lto=fat
+            -C codegen-units=1
+            -C target-cpu=native
+            -C panic=abort
+            -C overflow-checks=off
+            -C debug-assertions=off
+        run: |
+          echo "🚀 Building QUICHE for ${{ matrix.abi }}..."
+          echo "Rust target: ${{ matrix.rust_target }}"
+          echo "NDK platform: ${{ matrix.ndk_platform }}"
+
+          cd app/src/main/jni/quiche-client/third_party/quiche
+
+          # Build with cargo-ndk
+          cargo ndk \
+            --target ${{ matrix.rust_target }} \
+            --platform ${{ matrix.ndk_platform }} \
+            build \
+            --release \
+            --manifest-path quiche/Cargo.toml \
+            --features ffi,qlog
+
+          echo "✅ QUICHE built successfully"
+
+      - name: Copy Libraries
+        run: |
+          echo "📦 Copying QUICHE libraries..."
+
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          OUTPUT_DIR="app/src/main/jni/quiche-client/libs/${{ matrix.abi }}"
+
+          mkdir -p "$OUTPUT_DIR"
+
+          # Copy static library
+          cp "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.a" "$OUTPUT_DIR/"
+
+          # Copy shared library if exists
+          if [ -f "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.so" ]; then
+            cp "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.so" "$OUTPUT_DIR/"
+          fi
+
+          ls -lh "$OUTPUT_DIR"
+          echo "✅ Libraries copied to $OUTPUT_DIR"
+
+      - name: Upload QUICHE Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiche-${{ matrix.abi }}
+          path: app/src/main/jni/quiche-client/libs/${{ matrix.abi }}/
+          retention-days: 7
+
+  build-native-client:
+    name: Build Native Client (${{ matrix.abi }})
+    needs: build-quiche-library
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup NDK
+        run: |
+          wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q android-ndk.zip
+          rm android-ndk.zip
+
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+
+      - name: Download QUICHE Libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: quiche-${{ matrix.abi }}
+          path: app/src/main/jni/quiche-client/libs/${{ matrix.abi }}/
+
+      - name: Build BoringSSL for QUICHE
+        run: |
+          echo "🔒 Building BoringSSL for QUICHE..."
+
+          BORINGSSL_DIR="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl"
+
+          if [ ! -d "$BORINGSSL_DIR" ]; then
+            echo "❌ BoringSSL not found in QUICHE deps"
+            exit 1
+          fi
+
+          cd "$BORINGSSL_DIR"
+          mkdir -p build
+          cd build
+
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-Ofast -march=armv8-a+crypto" \
+            -DCMAKE_CXX_FLAGS="-Ofast -march=armv8-a+crypto" \
+            -GNinja \
+            ..
+
+          ninja
+
+          echo "✅ BoringSSL built"
+
+      - name: Build Native Client
+        run: |
+          echo "🔨 Building QUICHE native client..."
+
+          cd app/src/main/jni/quiche-client
+
+          $NDK_HOME/ndk-build \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            APP_ABI=${{ matrix.abi }} \
+            APP_PLATFORM=android-29 \
+            NDK_ALL_ABIS=${{ matrix.abi }} \
+            -j$(nproc)
+
+          echo "✅ Native client built"
+
+      - name: Upload Native Client
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiche-client-${{ matrix.abi }}
+          path: app/src/main/libs/${{ matrix.abi }}/
+          retention-days: 7
+
+  build-apk:
+    name: Build APK with QUICHE
+    needs: build-native-client
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Download QUICHE Client Libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: quiche-client-*
+          path: app/src/main/jniLibs/
+          merge-multiple: true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+          cache-read-only: false
+
+      - name: Build Debug APK
+        run: |
+          echo "🔨 Building APK with QUICHE..."
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+          echo "✅ APK built successfully"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplexray-quiche-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+  test-crypto-performance:
+    name: Test Crypto Performance
+    needs: build-native-client
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Native Client
+        uses: actions/download-artifact@v4
+        with:
+          name: quiche-client-arm64-v8a
+          path: libs/
+
+      - name: Check Hardware Capabilities
+        run: |
+          echo "🔍 Checking crypto capabilities..."
+
+          # This would need actual ARM hardware or emulator
+          # For now, just verify libraries exist
+
+          if [ -f "libs/libquiche-client.so" ]; then
+            echo "✅ Native client library found"
+            file libs/libquiche-client.so
+          else
+            echo "❌ Native client library not found"
+            exit 1
+          fi
+
+      - name: Library Info
+        run: |
+          echo "📊 Library information:"
+          ls -lh libs/
+
+          if command -v readelf &> /dev/null; then
+            echo "🔍 Symbols in library:"
+            readelf -s libs/libquiche-client.so | grep -E "(quiche|crypto)" | head -20 || true
+          fi
