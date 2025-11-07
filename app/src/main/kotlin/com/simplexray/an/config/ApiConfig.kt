@@ -31,7 +31,7 @@ object ApiConfig {
     fun getHost(context: Context): String = prefs(context).getString(KEY_HOST, "127.0.0.1") ?: "127.0.0.1"
     fun getPort(context: Context): Int = prefs(context).getInt(KEY_PORT, 10085)
     fun isMock(context: Context): Boolean = prefs(context).getBoolean(KEY_MOCK, false)
-    fun getOnlineKey(context: Context): String = prefs(context).getString(KEY_ONLINE, "") ?: ""
+    fun getOnlineKey(context: Context): String = prefs(context).getString(KEY_ONLINE, "inbound>>>api>>>traffic>>>uplink") ?: "inbound>>>api>>>traffic>>>uplink"
     fun getIpDomainJson(context: Context): String = prefs(context).getString(KEY_IP_DOMAIN_JSON, "") ?: ""
     fun isAdaptive(context: Context): Boolean = prefs(context).getBoolean(KEY_ADAPTIVE, true)
     fun getBaseIntervalMs(context: Context): Long = prefs(context).getLong(KEY_BASE_MS, 1000L)

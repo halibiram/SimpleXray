@@ -51,6 +51,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -202,21 +204,111 @@ fun TopologyScreen(
     Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
         if (nodes.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                androidx.compose.foundation.layout.Column(
-                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(16.dp)
+                Card(
+                    modifier = Modifier.padding(24.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
-                    Text("No topology data", style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                    androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
-                    Text(
+                    androidx.compose.foundation.layout.Column(
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(24.dp)
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            modifier = Modifier.padding(bottom = 16.dp),
+                            tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "No Topology Data",
+                            style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+
                         if (com.simplexray.an.config.ApiConfig.isMock(ctx)) {
-                            "Mock mode enabled - checking configuration..."
+                            Text(
+                                "Mock mode enabled",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                color = androidx.compose.ui.graphics.Color.Gray,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Checking configuration...",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.ui.graphics.Color.Gray
+                            )
                         } else {
-                            "Waiting for data...\nCheck Settings to configure Online IP Stat Name"
-                        },
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        color = androidx.compose.ui.graphics.Color.Gray
-                    )
+                            val onlineKey = com.simplexray.an.config.ApiConfig.getOnlineKey(ctx)
+                            if (onlineKey.isBlank()) {
+                                Text(
+                                    "Online IP Stat Name not configured",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+                                Text(
+                                    "Please configure the following in Settings:",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    androidx.compose.foundation.layout.Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            "1. Go to Settings",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "2. Set 'Online IP Stat Name'",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            "Example value:",
+                                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                            color = androidx.compose.ui.graphics.Color.Gray
+                                        )
+                                        Text(
+                                            "inbound>>>api>>>traffic>>>uplink",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    "Waiting for data from Xray...",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                    color = androidx.compose.ui.graphics.Color.Gray,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Current stat name: $onlineKey",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.ui.graphics.Color.Gray,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+                                Text(
+                                    "Make sure:\n• Xray service is running\n• gRPC stats are enabled\n• Port is correct (check Settings)",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.ui.graphics.Color.Gray,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                                )
+                            }
+                        }
+                    }
                 }
             }
         } else {

@@ -58,14 +58,18 @@ fun SettingsScreen(vm: TrafficViewModel = viewModel()) {
             value = onlineKey,
             onValueChange = { onlineKey = it.trim() },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Online IP Stat Name (for topology)") }
+            label = { Text("Online IP Stat Name (for topology)") },
+            placeholder = { Text("inbound>>>api>>>traffic>>>uplink") },
+            supportingText = { Text("Required for topology graph. Example: inbound>>>api>>>traffic>>>uplink", style = MaterialTheme.typography.bodySmall) }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = onlineBytesKey,
             onValueChange = { onlineBytesKey = it.trim() },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Online IP Bytes Stat Name (edge weight)") }
+            label = { Text("Online IP Bytes Stat Name (edge weight)") },
+            placeholder = { Text("Optional for better edge weights") },
+            supportingText = { Text("Optional: Use this for bandwidth-based edge weights in topology", style = MaterialTheme.typography.bodySmall) }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
