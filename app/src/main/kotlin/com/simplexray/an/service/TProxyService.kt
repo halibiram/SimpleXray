@@ -103,6 +103,8 @@ class TProxyService : VpnService() {
     
     // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
     private var chainSupervisor: ChainSupervisor? = null
+    // TUN to SOCKS5 forwarder (replaces hev-socks5-tunnel)
+    private var tunForwarder: TunToSocksForwarder? = null
 
     // Data class to hold both process and reloading state atomically
     // PID is stored separately to allow killing process even if Process reference becomes invalid
@@ -166,7 +168,7 @@ class TProxyService : VpnService() {
                             // FileDescriptor.valid() may not be reliable on all Android versions
                             if (currentTunFd.fileDescriptor.valid()) {
                                 AppLogger.d("TProxyService: VPN file descriptor still valid, maintaining connection")
-                                val channelName = if (prefs.disableVpn) "nosocks" else "socks5"
+                                val channelName = if (prefs.disableVpn) "nosocks" else "chain"
                                 initNotificationChannel(channelName)
                                 createNotification(channelName)
                                 startConnectionMonitoring()
@@ -963,45 +965,61 @@ class TProxyService : VpnService() {
             AppLogger.d("TProxyService: VPN state saved - service is running")
             
             // Start chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
-            // Chain must be started before TProxy to get the local SOCKS5 port
+            // Chain is REQUIRED - no fallback to direct SOCKS5
             val chainStarted = startChain(prefs)
             if (!chainStarted) {
-                AppLogger.w("TProxyService: Chain start failed, falling back to direct SOCKS5")
-            } else {
-                // Wait for chain to be ready and get the local SOCKS5 port
-                waitForChainReady()
-            }
-            
-            val tproxyFile = File(cacheDir, "tproxy.conf")
-            try {
-                tproxyFile.createNewFile()
-                FileOutputStream(tproxyFile, false).use { fos ->
-                    val tproxyConf = getTproxyConf(prefs)
-                    fos.write(tproxyConf.toByteArray())
-                }
-            } catch (e: IOException) {
-                AppLogger.e(e.toString())
+                AppLogger.e("TProxyService: Chain start failed - chain is required, cannot continue")
                 stopXray()
                 return
             }
             
-            establishedFd.fd.let { fd ->
-                NativeBridgeManager.startTProxyService(tproxyFile.absolutePath, fd)
-                
-                // Apply performance optimizations if enabled
-                if (enablePerformanceMode && perfIntegration != null) {
-                    try {
-                        perfIntegration?.applyNetworkOptimizations(fd)
-                    } catch (e: Exception) {
-                        AppLogger.w("Failed to apply network optimizations", e)
+            // Wait for chain to be ready and get the local SOCKS5 port
+            // This is mandatory - if chain is not ready, we cannot proceed
+            val chainPort = waitForChainReady()
+            if (chainPort == null) {
+                AppLogger.e("TProxyService: Chain not ready - cannot get SOCKS5 port, stopping service")
+                stopXray()
+                return
+            }
+            
+            // Get chain SOCKS5 port (REQUIRED)
+            val chainSocksPort = getChainSocksPort()
+                ?: run {
+                    AppLogger.e("TProxyService: Chain SOCKS5 port not available - cannot start forwarder")
+                    stopXray()
+                    return
+                }
+            
+            // Start TUN to SOCKS5 forwarder (replaces hev-socks5-tunnel)
+            establishedFd.let { fd ->
+                try {
+                    tunForwarder = TunToSocksForwarder(
+                        tunFd = fd,
+                        socksHost = "127.0.0.1",
+                        socksPort = chainSocksPort
+                    )
+                    tunForwarder?.start()
+                    AppLogger.i("TProxyService: TUN to SOCKS5 forwarder started (chain port: $chainSocksPort)")
+                    
+                    // Apply performance optimizations if enabled
+                    if (enablePerformanceMode && perfIntegration != null) {
+                        try {
+                            perfIntegration?.applyNetworkOptimizations(fd.fd)
+                        } catch (e: Exception) {
+                            AppLogger.w("Failed to apply network optimizations", e)
+                        }
                     }
+                } catch (e: Exception) {
+                    AppLogger.e("TProxyService: Failed to start TUN forwarder: ${e.message}", e)
+                    stopXray()
+                    return
                 }
             }
 
             val successIntent = Intent(ACTION_START)
             successIntent.setPackage(application.packageName)
             sendBroadcast(successIntent)
-            @Suppress("SameParameterValue") val channelName = "socks5"
+            @Suppress("SameParameterValue") val channelName = "chain"
             initNotificationChannel(channelName)
             createNotification(channelName)
             
@@ -1088,16 +1106,19 @@ class TProxyService : VpnService() {
             } finally {
                 tunFd = null
             }
-            stopForeground(Service.STOP_FOREGROUND_REMOVE)
-            // Safe JNI call with error handling
-            NativeBridgeManager.stopTProxyService()
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        // Stop TUN forwarder (replaces hev-socks5-tunnel)
+        tunForwarder?.stop()
+        tunForwarder?.cleanup()
+        tunForwarder = null
         }
         exit()
     }
     
     /**
      * Start the tunneling chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
-     * Returns true if chain started successfully, false otherwise
+     * Chain is REQUIRED - returns true only if chain started successfully
+     * Throws exception if chain cannot start (no fallback)
      */
     private fun startChain(prefs: Preferences): Boolean {
         return try {
@@ -1105,12 +1126,18 @@ class TProxyService : VpnService() {
                 chainSupervisor = ChainSupervisor(this)
             }
             
+            // Validate Xray config path is available (REQUIRED for chain)
+            if (prefs.selectedConfigPath == null) {
+                AppLogger.e("TProxyService: No Xray config path available - chain REQUIRED, cannot start")
+                return false
+            }
+            
             // Build chain config from preferences and Xray config
             val chainConfig = buildChainConfig(prefs)
             
-            // Validate that we have at least Xray config path
-            if (chainConfig.xrayConfigPath == null && prefs.selectedConfigPath == null) {
-                AppLogger.w("TProxyService: No Xray config path available, chain cannot start")
+            // Validate that chain config has Xray config path
+            if (chainConfig.xrayConfigPath == null) {
+                AppLogger.e("TProxyService: Chain config missing Xray config path - chain REQUIRED, cannot start")
                 return false
             }
             
@@ -1120,11 +1147,11 @@ class TProxyService : VpnService() {
                 true
             } else {
                 val error = result?.exceptionOrNull()
-                AppLogger.w("TProxyService: Chain start failed: ${error?.message}", error)
+                AppLogger.e("TProxyService: Chain start failed - chain REQUIRED: ${error?.message}", error)
                 false
             }
         } catch (e: Exception) {
-            AppLogger.e("TProxyService: Error starting chain: ${e.message}", e)
+            AppLogger.e("TProxyService: Error starting chain - chain REQUIRED: ${e.message}", e)
             false
         }
     }
@@ -1244,10 +1271,11 @@ class TProxyService : VpnService() {
     /**
      * Wait for chain to be ready and local SOCKS5 port to be available
      * Checks both Reality SOCKS and Xray SOCKS inbound ports
+     * Returns the port number if ready, null if not ready after max attempts
      */
-    private fun waitForChainReady() {
+    private fun waitForChainReady(): Int? {
         var attempts = 0
-        val maxAttempts = 10
+        val maxAttempts = 20 // Increased attempts for chain to be ready
         val delayMs = 500L
         
         while (attempts < maxAttempts) {
@@ -1255,7 +1283,7 @@ class TProxyService : VpnService() {
             val realityAddr = RealitySocks.getLocalAddress()
             if (realityAddr != null) {
                 AppLogger.i("TProxyService: Chain ready, Reality SOCKS port: ${realityAddr.port}")
-                return
+                return realityAddr.port
             }
             
             // If Reality SOCKS is not available, check Xray SOCKS inbound
@@ -1266,7 +1294,7 @@ class TProxyService : VpnService() {
                 if (xraySocksPort != null) {
                     // Port exists in config, assume Xray is ready (or will be ready soon)
                     AppLogger.i("TProxyService: Chain ready, Xray SOCKS port: $xraySocksPort")
-                    return
+                    return xraySocksPort
                 }
             }
             
@@ -1276,7 +1304,8 @@ class TProxyService : VpnService() {
             }
         }
         
-        AppLogger.w("TProxyService: Chain SOCKS5 port not available after ${maxAttempts} attempts")
+        AppLogger.e("TProxyService: Chain SOCKS5 port not available after ${maxAttempts} attempts")
+        return null
     }
     
     /**
@@ -1292,35 +1321,9 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Get TProxy configuration string
-     */
-    private fun getTproxyConf(prefs: Preferences): String {
-        var tproxyConf = """misc:
-  task-stack-size: ${prefs.taskStackSize}
-tunnel:
-  mtu: ${prefs.tunnelMtu}
-"""
-        
-        // Use chain's local SOCKS5 port if available, otherwise fall back to preferences
-        val socksPort = getChainSocksPort() ?: prefs.socksPort
-        val socksAddress = "127.0.0.1" // Chain always uses localhost
-        
-        tproxyConf += """socks5:
-  port: $socksPort
-  address: '$socksAddress'
-  udp: '${if (prefs.udpInTcp) "tcp" else "udp"}'
-"""
-        // Chain doesn't use authentication, but keep for backward compatibility
-        if (prefs.socksUsername.isNotEmpty() && prefs.socksPassword.isNotEmpty()) {
-            tproxyConf += "  username: '" + prefs.socksUsername + "'\n"
-            tproxyConf += "  password: '" + prefs.socksPassword + "'\n"
-        }
-        return tproxyConf
-    }
-    
-    /**
-     * Get chain's local SOCKS5 port if chain is running
-     * Falls back to Xray's SOCKS inbound port if Reality SOCKS is not available
+     * Get chain's local SOCKS5 port - REQUIRED for chain mode
+     * Returns port from Reality SOCKS or Xray SOCKS inbound
+     * Throws exception if port is not available
      */
     private fun getChainSocksPort(): Int? {
         return try {
@@ -1343,7 +1346,7 @@ tunnel:
             
             null
         } catch (e: Exception) {
-            AppLogger.d("TProxyService: Chain SOCKS5 port not available: ${e.message}")
+            AppLogger.e("TProxyService: Error getting chain SOCKS5 port: ${e.message}", e)
             null
         }
     }
@@ -1435,10 +1438,10 @@ tunnel:
         private const val TAG = "VpnService"
         private const val BROADCAST_DELAY_MS: Long = 3000
 
-        // Delegate to NativeBridgeManager for JNI operations
+        // Stats and native library dir no longer available (hev-socks5-tunnel removed)
         @JvmStatic
-        fun TProxyGetStats(): LongArray? = NativeBridgeManager.getTProxyStats()
+        fun TProxyGetStats(): LongArray? = null
         
-        fun getNativeLibraryDir(context: Context?): String? = NativeBridgeManager.getNativeLibraryDir(context)
+        fun getNativeLibraryDir(context: Context?): String? = null
     }
 }
