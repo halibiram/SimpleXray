@@ -44,3 +44,8 @@ For full BoringSSL integration (using BoringSSL in code, not just linking):
 3. Enable hardware acceleration (AES-NI/NEON)
 
 See `PATCH_STRATEGY.md` for detailed strategy.
+
+## Full Integration TODO
+
+For complete BoringSSL integration roadmap, see:
+- `../BORINGSSL_FULL_INTEGRATION_TODO.md` - Comprehensive TODO list with all required steps for full BoringSSL integration
