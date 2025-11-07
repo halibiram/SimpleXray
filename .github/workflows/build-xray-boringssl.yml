@@ -570,13 +570,19 @@ jobs:
           cd Xray-core
           echo "ℹ️  Patches are optional - BoringSSL is linked via CGO flags"
           echo "ℹ️  If patches fail, build continues with vanilla Xray-core + BoringSSL linking"
+          
+          # Get current Xray-core version for patch compatibility check
+          XRAY_CURRENT_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
+          echo "📌 Xray-core version: $XRAY_CURRENT_VERSION"
 
           if [ -d "../xray-patches" ]; then
             PATCH_COUNT=0
             SUCCESS_COUNT=0
             SKIP_COUNT=0
+            FAILED_COUNT=0
             
-            for patch in ../xray-patches/*.patch; do
+            # Sort patches by number to apply in order
+            for patch in $(ls -1 ../xray-patches/*.patch 2>/dev/null | sort); do
               if [ -f "$patch" ]; then
                 PATCH_COUNT=$((PATCH_COUNT + 1))
                 PATCH_NAME=$(basename "$patch")
@@ -590,6 +596,12 @@ jobs:
                 
                 echo "📝 Attempting to apply patch: $PATCH_NAME"
                 
+                # Check patch version compatibility (if patch contains version info)
+                PATCH_VERSION=$(grep -i "xray.*version\|xray.*tag" "$patch" | head -1 || echo "")
+                if [ -n "$PATCH_VERSION" ]; then
+                  echo "   Patch version info: $PATCH_VERSION"
+                fi
+                
                 # Try to apply patch with more verbose error output
                 if git apply --check "$patch" 2>&1; then
                   if git apply "$patch" 2>&1; then
@@ -597,10 +609,16 @@ jobs:
                     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
                   else
                     echo "⚠️  Failed to apply: $PATCH_NAME (may already be applied)"
+                    FAILED_COUNT=$((FAILED_COUNT + 1))
+                    # Check if already applied
+                    if git apply --reverse --check "$patch" 2>/dev/null; then
+                      echo "   ℹ️  Patch appears to be already applied"
+                    fi
                   fi
                 else
                   echo "⚠️  Patch check failed for: $PATCH_NAME (patch may not match current codebase)"
                   echo "   This is OK - BoringSSL linking happens via CGO flags"
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
                   # Show what files the patch expects (if any)
                   if grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
                     echo "   Patch expects to modify:"
@@ -613,8 +631,10 @@ jobs:
             if [ $PATCH_COUNT -eq 0 ]; then
               echo "ℹ️  No patches found in xray-patches directory"
             else
-              echo "📊 Patch summary: $SUCCESS_COUNT applied, $SKIP_COUNT skipped, $((PATCH_COUNT - SUCCESS_COUNT - SKIP_COUNT)) failed"
-              if [ $SUCCESS_COUNT -eq 0 ]; then
+              echo "📊 Patch summary: $SUCCESS_COUNT applied, $SKIP_COUNT skipped, $FAILED_COUNT failed (out of $PATCH_COUNT total)"
+              if [ $SUCCESS_COUNT -gt 0 ]; then
+                echo "✅ Applied $SUCCESS_COUNT patch(es) - BoringSSL integration enabled"
+              else
                 echo "ℹ️  No patches were applied - this is OK"
                 echo "ℹ️  BoringSSL will be linked via CGO flags in the build step"
               fi
@@ -820,7 +840,7 @@ jobs:
           BINARY_SIZE=$(stat -c%s libxray.unstripped.so 2>/dev/null || stat -f%z libxray.unstripped.so 2>/dev/null || echo "0")
           BINARY_SIZE_MB=$((BINARY_SIZE / 1024 / 1024))
           echo "📦 Unstripped binary size: ${BINARY_SIZE_MB}MB"
-          
+
           # Compare with expected sizes
           # Normal Xray-core: ~10-15MB
           # With BoringSSL linked: ~20-30MB

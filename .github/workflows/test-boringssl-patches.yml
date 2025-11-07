@@ -1,0 +1,131 @@
+name: Test BoringSSL Patches
+
+on:
+  workflow_dispatch:
+    inputs:
+      xray_version:
+        description: "Xray-core version to test patches against"
+        required: false
+        default: "v25.10.15"
+  pull_request:
+    paths:
+      - 'xray-patches/**'
+      - '.github/workflows/test-boringssl-patches.yml'
+
+jobs:
+  test-patches:
+    name: Test Patches
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.3'
+          cache: false
+
+      - name: Clone Xray-core
+        run: |
+          XRAY_VERSION="${{ inputs.xray_version || 'v25.10.15' }}"
+          echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
+          
+          git clone --depth=1 https://github.com/XTLS/Xray-core.git
+          cd Xray-core
+          if [ -n "$XRAY_VERSION" ] && [ "$XRAY_VERSION" != "latest" ]; then
+            git checkout "$XRAY_VERSION" || echo "⚠️  Version $XRAY_VERSION not found, using latest"
+          fi
+          COMMIT=$(git rev-parse HEAD | cut -c 1-7)
+          echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_ENV
+          echo "📌 Testing patches against Xray-core: $COMMIT"
+
+      - name: Test Patch Application
+        run: |
+          cd Xray-core
+          echo "🧪 Testing patch application..."
+          
+          PATCH_COUNT=0
+          SUCCESS_COUNT=0
+          FAILED_COUNT=0
+          
+          if [ -d "../xray-patches" ]; then
+            for patch in $(ls -1 ../xray-patches/*.patch 2>/dev/null | sort); do
+              if [ -f "$patch" ]; then
+                PATCH_COUNT=$((PATCH_COUNT + 1))
+                PATCH_NAME=$(basename "$patch")
+                
+                # Skip placeholder patches
+                if ! grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
+                  echo "ℹ️  Skipping $PATCH_NAME (placeholder)"
+                  continue
+                fi
+                
+                echo "📝 Testing patch: $PATCH_NAME"
+                
+                # Test if patch can be applied
+                if git apply --check "$patch" 2>&1; then
+                  echo "✅ Patch check passed: $PATCH_NAME"
+                  SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+                  
+                  # Try to apply (dry run)
+                  if git apply --check "$patch" 2>&1; then
+                    echo "   ✅ Patch can be applied"
+                  fi
+                else
+                  echo "❌ Patch check failed: $PATCH_NAME"
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
+                  echo "   Error details:"
+                  git apply --check "$patch" 2>&1 | head -10 || true
+                fi
+              fi
+            done
+            
+            echo ""
+            echo "📊 Test Summary:"
+            echo "   Total patches: $PATCH_COUNT"
+            echo "   ✅ Passed: $SUCCESS_COUNT"
+            echo "   ❌ Failed: $FAILED_COUNT"
+            
+            if [ $FAILED_COUNT -gt 0 ]; then
+              echo "⚠️  Some patches failed - they may need to be updated for current Xray-core version"
+              exit 1
+            fi
+          else
+            echo "ℹ️  No patches directory found"
+          fi
+
+      - name: Verify Patch Format
+        run: |
+          echo "🔍 Verifying patch file formats..."
+          
+          if [ -d "xray-patches" ]; then
+            for patch in xray-patches/*.patch; do
+              if [ -f "$patch" ]; then
+                PATCH_NAME=$(basename "$patch")
+                
+                # Check if it's a valid patch file
+                if grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
+                  echo "✅ $PATCH_NAME: Valid patch format"
+                  
+                  # Check for common issues
+                  if grep -q "<<<<<<< HEAD\|=======\|>>>>>>>" "$patch"; then
+                    echo "   ⚠️  Warning: Contains merge conflict markers"
+                  fi
+                  
+                  # Check file paths in patch
+                  FILES=$(grep -E "^diff --git|^---|^\+\+\+" "$patch" | head -5 || true)
+                  if [ -n "$FILES" ]; then
+                    echo "   Files to modify:"
+                    echo "$FILES" | sed 's/^/      /'
+                  fi
+                else
+                  echo "ℹ️  $PATCH_NAME: Placeholder/documentation file"
+                fi
+              fi
+            done
+          fi
+

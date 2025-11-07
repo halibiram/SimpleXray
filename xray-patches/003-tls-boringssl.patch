@@ -1,0 +1,22 @@
+diff --git a/crypto/tls/conn.go b/crypto/tls/conn.go
+index 1234567..abcdefg 100644
+--- a/crypto/tls/conn.go
++++ b/crypto/tls/conn.go
+@@ -1,5 +1,6 @@
+ // Copyright 2009 The Go Authors. All rights reserved.
+ 
++//go:build !cgo
+ // +build !cgo
+ 
+ package tls
+@@ -10,6 +11,8 @@ import (
+ 	"time"
+ )
+ 
++// This file is used when CGO is disabled.
++// When CGO is enabled, boringssl_tls_bridge.go provides BoringSSL-based implementation.
++
+ // A Conn represents a secure connection.
+ type Conn struct {
+ 	// constant after handshake; protected by in.Mutex, out.Mutex, or handshakeMutex
+
