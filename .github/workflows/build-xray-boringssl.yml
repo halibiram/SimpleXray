@@ -628,86 +628,166 @@ jobs:
           echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_ENV
           echo "XRAY_COMMIT=$COMMIT" >> $GITHUB_OUTPUT
 
-      - name: Apply Patches (Optional)
+      - name: Apply Patches (Required)
         run: |
           cd Xray-core
-          echo "ℹ️  Patches are optional - BoringSSL is linked via CGO flags"
-          echo "ℹ️  If patches fail, build continues with vanilla Xray-core + BoringSSL linking"
+          echo "🔧 Applying BoringSSL patches (REQUIRED for full integration)"
+          echo "⚠️  Patch failures will cause build to fail"
 
           # Get current Xray-core version for patch compatibility check
           XRAY_CURRENT_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
           echo "📌 Xray-core version: $XRAY_CURRENT_VERSION"
 
-          if [ -d "../xray-patches" ]; then
-            PATCH_COUNT=0
-            SUCCESS_COUNT=0
-            SKIP_COUNT=0
-            FAILED_COUNT=0
-            
-            # Sort patches by number to apply in order
-            for patch in $(ls -1 ../xray-patches/*.patch 2>/dev/null | sort); do
-              if [ -f "$patch" ]; then
-                PATCH_COUNT=$((PATCH_COUNT + 1))
-                PATCH_NAME=$(basename "$patch")
-                
-                # Check if patch is a placeholder/comment-only file
-                if ! grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
-                  echo "ℹ️  Skipping $PATCH_NAME (placeholder/documentation only)"
-                  SKIP_COUNT=$((SKIP_COUNT + 1))
-                  continue
-                fi
-                
-                echo "📝 Attempting to apply patch: $PATCH_NAME"
-                
-                # Check patch version compatibility (if patch contains version info)
-                PATCH_VERSION=$(grep -i "xray.*version\|xray.*tag" "$patch" | head -1 || echo "")
-                if [ -n "$PATCH_VERSION" ]; then
-                  echo "   Patch version info: $PATCH_VERSION"
-                fi
-                
-                # Try to apply patch with more verbose error output
-                if git apply --check "$patch" 2>&1; then
-                  if git apply "$patch" 2>&1; then
-                    echo "✅ Successfully applied: $PATCH_NAME"
-                    SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-                  else
-                    echo "⚠️  Failed to apply: $PATCH_NAME (may already be applied)"
-                    FAILED_COUNT=$((FAILED_COUNT + 1))
-                    # Check if already applied
-                    if git apply --reverse --check "$patch" 2>/dev/null; then
-                      echo "   ℹ️  Patch appears to be already applied"
-                    fi
-                  fi
-                else
-                  echo "⚠️  Patch check failed for: $PATCH_NAME (patch may not match current codebase)"
-                  echo "   This is OK - BoringSSL linking happens via CGO flags"
-                  FAILED_COUNT=$((FAILED_COUNT + 1))
-                  # Show what files the patch expects (if any)
-                  if grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
-                    echo "   Patch expects to modify:"
-                    grep -E "^diff --git|^---|^\+\+\+" "$patch" | head -5 || true
-                  fi
-                fi
-              fi
-            done
-            
-            if [ $PATCH_COUNT -eq 0 ]; then
-              echo "ℹ️  No patches found in xray-patches directory"
-            else
-              echo "📊 Patch summary: $SUCCESS_COUNT applied, $SKIP_COUNT skipped, $FAILED_COUNT failed (out of $PATCH_COUNT total)"
-              if [ $SUCCESS_COUNT -gt 0 ]; then
-                echo "✅ Applied $SUCCESS_COUNT patch(es) - BoringSSL integration enabled"
-              else
-                echo "ℹ️  No patches were applied - this is OK"
-                echo "ℹ️  BoringSSL will be linked via CGO flags in the build step"
-              fi
-            fi
-          else
-            echo "ℹ️  No patches directory found - this is OK"
-            echo "ℹ️  BoringSSL will be linked via CGO flags in the build step"
+          if [ ! -d "../xray-patches" ]; then
+            echo "❌ ERROR: xray-patches directory not found!"
+            echo "   Patches are required for BoringSSL integration"
+            exit 1
           fi
 
-          echo "✅ Patch step complete - proceeding to build with BoringSSL linking"
+          PATCH_COUNT=0
+          SUCCESS_COUNT=0
+          SKIP_COUNT=0
+          FAILED_COUNT=0
+          CRITICAL_PATCHES=()
+          
+          # Sort patches by number to apply in order
+          for patch in $(ls -1 ../xray-patches/*.patch 2>/dev/null | sort); do
+            if [ ! -f "$patch" ]; then
+              continue
+            fi
+            
+            PATCH_COUNT=$((PATCH_COUNT + 1))
+            PATCH_NAME=$(basename "$patch")
+            
+            # Check if patch is a placeholder/comment-only file
+            if ! grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
+              echo "ℹ️  Skipping $PATCH_NAME (placeholder/documentation only)"
+              SKIP_COUNT=$((SKIP_COUNT + 1))
+              continue
+            fi
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📝 Applying patch: $PATCH_NAME"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # Check patch version compatibility (if patch contains version info)
+            PATCH_VERSION=$(grep -i "xray.*version\|xray.*tag" "$patch" | head -1 || echo "")
+            if [ -n "$PATCH_VERSION" ]; then
+              echo "   Patch version info: $PATCH_VERSION"
+            fi
+            
+            # Validate patch file format first
+            if ! head -1 "$patch" | grep -q "^diff --git"; then
+              echo "❌ ERROR: Invalid patch format in $PATCH_NAME"
+              echo "   First line: $(head -1 "$patch")"
+              CRITICAL_PATCHES+=("$PATCH_NAME (invalid format)")
+              FAILED_COUNT=$((FAILED_COUNT + 1))
+              continue
+            fi
+            
+            # Check for corrupt patch indicators
+            if grep -q "index 0000000\.\.1111111" "$patch"; then
+              echo "⚠️  WARNING: Patch contains placeholder index values"
+              echo "   This may indicate an incomplete patch file"
+            fi
+            
+            # Try to apply patch with detailed error output
+            PATCH_CHECK_OUTPUT=$(git apply --check "$patch" 2>&1)
+            PATCH_CHECK_EXIT=$?
+            
+            if [ $PATCH_CHECK_EXIT -eq 0 ]; then
+              # Patch check passed, try to apply
+              PATCH_APPLY_OUTPUT=$(git apply "$patch" 2>&1)
+              PATCH_APPLY_EXIT=$?
+              
+              if [ $PATCH_APPLY_EXIT -eq 0 ]; then
+                echo "✅ Successfully applied: $PATCH_NAME"
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              else
+                echo "❌ ERROR: Failed to apply $PATCH_NAME"
+                echo "   Exit code: $PATCH_APPLY_EXIT"
+                echo "   Error output:"
+                echo "$PATCH_APPLY_OUTPUT" | sed 's/^/   /'
+                
+                # Check if already applied
+                if git apply --reverse --check "$patch" 2>/dev/null; then
+                  echo "   ℹ️  Patch appears to be already applied (reversing check passed)"
+                  SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+                else
+                  CRITICAL_PATCHES+=("$PATCH_NAME (apply failed)")
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
+                fi
+              fi
+            else
+              echo "❌ ERROR: Patch check failed for: $PATCH_NAME"
+              echo "   Exit code: $PATCH_CHECK_EXIT"
+              echo "   Error output:"
+              echo "$PATCH_CHECK_OUTPUT" | sed 's/^/   /'
+              
+              # Show what files the patch expects
+              if grep -q "^diff --git\|^---\|^\+\+\+" "$patch" 2>/dev/null; then
+                echo "   Patch expects to modify:"
+                grep -E "^diff --git|^---|^\+\+\+" "$patch" | head -5 | sed 's/^/      /' || true
+                
+                # Check if files exist
+                PATCH_FILES=$(grep "^diff --git" "$patch" | sed 's/^diff --git a\///;s/ b\/.*$//' | head -3)
+                for file in $PATCH_FILES; do
+                  if [ -f "$file" ]; then
+                    echo "      ✅ File exists: $file"
+                  else
+                    echo "      ❌ File missing: $file"
+                  fi
+                done
+              fi
+              
+              CRITICAL_PATCHES+=("$PATCH_NAME (check failed)")
+              FAILED_COUNT=$((FAILED_COUNT + 1))
+            fi
+          done
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 Patch Summary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "   Total patches: $PATCH_COUNT"
+          echo "   ✅ Applied: $SUCCESS_COUNT"
+          echo "   ⏭️  Skipped: $SKIP_COUNT"
+          echo "   ❌ Failed: $FAILED_COUNT"
+          
+          if [ $PATCH_COUNT -eq 0 ]; then
+            echo ""
+            echo "❌ ERROR: No patches found in xray-patches directory!"
+            exit 1
+          fi
+          
+          if [ ${#CRITICAL_PATCHES[@]} -gt 0 ]; then
+            echo ""
+            echo "❌ CRITICAL: The following patches failed to apply:"
+            for failed_patch in "${CRITICAL_PATCHES[@]}"; do
+              echo "   - $failed_patch"
+            done
+            echo ""
+            echo "❌ ERROR: Patch failures detected - build cannot continue"
+            echo "   BoringSSL integration requires all critical patches to be applied"
+            echo "   Please fix the patch files and retry"
+            exit 1
+          fi
+          
+          if [ $SUCCESS_COUNT -eq 0 ] && [ $FAILED_COUNT -gt 0 ]; then
+            echo ""
+            echo "❌ ERROR: No patches were successfully applied!"
+            echo "   This indicates a serious problem with patch compatibility"
+            exit 1
+          fi
+          
+          if [ $SUCCESS_COUNT -gt 0 ]; then
+            echo ""
+            echo "✅ Successfully applied $SUCCESS_COUNT patch(es) - BoringSSL integration enabled"
+          fi
+          
+          echo ""
+          echo "✅ Patch step complete"
 
       - name: Build Xray-core with BoringSSL
         run: |
@@ -1027,16 +1107,16 @@ jobs:
       - name: Test Xray-core Version and BoringSSL Verification
         run: |
           echo "🧪 Testing xray-core -version and verifying BoringSSL integration..."
-          
+
           # Binary is saved to xray-output from Xray-core directory (one level up from Xray-core)
           # Test step runs from root, so path is xray-output (not ../xray-output)
           XRAY_BINARY="xray-output/${{ matrix.abi }}/libxray.so"
-          
+
           # Try both paths in case working directory differs
           if [ ! -f "$XRAY_BINARY" ]; then
             XRAY_BINARY="../xray-output/${{ matrix.abi }}/libxray.so"
           fi
-          
+
           if [ ! -f "$XRAY_BINARY" ]; then
             echo "❌ Xray binary not found. Tried:"
             echo "   - xray-output/${{ matrix.abi }}/libxray.so"
