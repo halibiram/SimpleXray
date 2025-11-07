@@ -616,6 +616,17 @@ class TProxyService : VpnService() {
         // Ensure BORINGSSL_TEST_DATA_ROOT is not set to prevent test data access
         // Test data should only be accessed in test builds, not production
         environment.remove("BORINGSSL_TEST_DATA_ROOT")
+        // Additional restrictions to prevent /data/local/tmp/tests access
+        // Remove any test-related environment variables that might trigger test directory access
+        environment.remove("TEST_DATA_ROOT")
+        environment.remove("TEST_DIR")
+        environment.remove("GO_TEST_DIR")
+        // Restrict PATH to prevent accessing system test binaries
+        // Only include minimal necessary paths, exclude /data/local/tmp
+        val restrictedPath = "${filesDir.path}/bin:${System.getenv("PATH")?.split(":")?.filter { 
+            !it.contains("/data/local/tmp") && !it.contains("test") 
+        }?.joinToString(":") ?: "/system/bin:/system/xbin"}"
+        environment["PATH"] = restrictedPath
         
         processBuilder.directory(filesDir)
         processBuilder.redirectErrorStream(true)
