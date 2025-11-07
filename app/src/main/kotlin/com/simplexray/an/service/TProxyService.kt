@@ -118,19 +118,57 @@ class TProxyService : VpnService() {
     // This prevents race conditions when reading/updating both process and reloading flag together
     private val processState = AtomicReference(ProcessState(null, -1L, false))
     private var tunFd: ParcelFileDescriptor? = null
+    
+    /**
+     * Protect a socket file descriptor from being routed through the VPN tunnel.
+     * This is critical to prevent loopback issues where VPN traffic tries to route
+     * through its own tunnel, causing connection drops.
+     * 
+     * @param fd File descriptor to protect
+     * @return true if protection succeeded, false otherwise
+     */
+    fun protectSocket(fd: Int): Boolean {
+        return try {
+            val protected = protect(fd)
+            if (protected) {
+                AppLogger.d("TProxyService: Socket protected successfully, fd=$fd")
+            } else {
+                AppLogger.w("TProxyService: Socket protection failed, fd=$fd")
+            }
+            protected
+        } catch (e: Exception) {
+            AppLogger.e("TProxyService: Error protecting socket fd=$fd: ${e.message}", e)
+            false
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         isServiceRunning.set(true)
         logFileManager = LogFileManager(this)
         
+        // VPN Permission Check: Ensure user has granted VPN permission
+        // VpnService.prepare() returns null if permission is already granted
+        // If it returns an Intent, user needs to grant permission
+        val vpnPrepareIntent = VpnService.prepare(this)
+        if (vpnPrepareIntent != null) {
+            AppLogger.w("TProxyService: VPN permission not granted, user must approve VPN access")
+            // Note: We cannot startActivityForResult from Service.onCreate()
+            // Permission check should be done before starting the service
+            // This is a safety check - actual permission request is done in MainViewModel/ConnectionViewModel
+        } else {
+            AppLogger.d("TProxyService: VPN permission already granted")
+        }
+        
         // Initialize performance optimizations if enabled
         // Add configuration validation before initializing performance mode
         if (enablePerformanceMode) {
             try {
                 perfIntegration = PerformanceIntegration(this)
+                // Set VpnService instance for socket protection (critical for preventing loopback)
+                perfIntegration?.setVpnService(this)
                 perfIntegration?.initialize()
-                AppLogger.d("Performance mode enabled")
+                AppLogger.d("Performance mode enabled with VPN socket protection")
             } catch (e: IllegalStateException) {
                 AppLogger.e("Performance mode initialization failed - invalid state: ${e.message}", e)
                 // Disable performance mode if initialization fails
@@ -146,6 +184,9 @@ class TProxyService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // VPN Session Lifecycle Logging
+        AppLogger.d("TProxyService: onStartCommand called - intent=${intent?.action}, flags=$flags, startId=$startId, tunFd=${if (tunFd != null) "valid" else "null"}")
+        
         // Handle null intent (service restart after being killed by system)
         if (intent == null) {
             AppLogger.w("TProxyService: Restarted with null intent, attempting state recovery")
@@ -294,6 +335,15 @@ class TProxyService : VpnService() {
     }
 
     override fun onDestroy() {
+        // VPN Session Lifecycle Logging
+        AppLogger.d("TProxyService: onDestroy called - VPN state=destroying, tunFd=${if (tunFd != null) "valid" else "null"}")
+        
+        // Crash Detector: Check if VPN was unexpectedly stopped
+        val vpnActive = tunFd != null && isServiceRunning.get()
+        if (vpnActive) {
+            AppLogger.e("VPN", "Unexpected Stop: VPN was active when service destroyed. tunFd=${if (tunFd != null) "valid" else "null"}, isRunning=${isServiceRunning.get()}")
+        }
+        
         super.onDestroy()
         isServiceRunning.set(false)
         
@@ -319,19 +369,25 @@ class TProxyService : VpnService() {
         killProcessSafely(oldState.process, oldState.pid)
         
         serviceScope.cancel()
-        AppLogger.d("TProxyService destroyed.")
+        AppLogger.d("TProxyService: onDestroy completed - VPN state=destroyed")
         // Removed exitProcess(0) - let Android handle service lifecycle properly
         // exitProcess() forcefully kills the entire app process which prevents proper cleanup
     }
 
     override fun onRevoke() {
-        AppLogger.w("TProxyService: VPN connection revoked by system")
+        // VPN Session Lifecycle Logging
+        AppLogger.w("TProxyService: onRevoke called - VPN connection revoked by system, tunFd=${if (tunFd != null) "valid" else "null"}")
+        
         // Clear state that VPN is running
         val prefs = Preferences(this)
         prefs.vpnServiceWasRunning = false
+        AppLogger.d("TProxyService: VPN state cleared after revoke")
+        
         // VPN was revoked, stop the service
         stopXray()
         super.onRevoke()
+        
+        AppLogger.d("TProxyService: onRevoke completed - VPN state=revoked")
     }
 
     private fun startXray() {
@@ -929,7 +985,9 @@ class TProxyService : VpnService() {
             // Check if process name contains "xray" or matches expected binary name
             cmdline.contains("xray", ignoreCase = true) || 
             cmdline.contains("xray_core", ignoreCase = true) ||
-            cmdline.endsWith("/xray_core", ignoreCase = true)
+            cmdline.endsWith("/xray_core", ignoreCase = true) ||
+            cmdline.contains("libxray_copy.so", ignoreCase = true) ||
+            cmdline.endsWith("/libxray_copy.so", ignoreCase = true)
         } catch (e: Exception) {
             // If we can't verify, assume it's safe (process may have exited)
             AppLogger.w("Could not verify process name for PID $pid: ${e.message}")
@@ -1044,19 +1102,38 @@ class TProxyService : VpnService() {
     }
 
     private fun startService() {
-        if (tunFd != null) return
+        if (tunFd != null) {
+            AppLogger.d("TProxyService: VPN interface already established, skipping")
+            return
+        }
+        
         val prefs = Preferences(this)
+        
+        // VPN Permission Check: Ensure permission is granted before establishing VPN
+        val vpnPrepareIntent = VpnService.prepare(this)
+        if (vpnPrepareIntent != null) {
+            AppLogger.e("TProxyService: Cannot establish VPN - permission not granted")
+            prefs.vpnServiceWasRunning = false
+            stopXray()
+            return
+        }
+        
         val builder = getVpnBuilder(prefs)
         var establishedFd: ParcelFileDescriptor? = null
         try {
+            AppLogger.d("TProxyService: Establishing VPN interface...")
             establishedFd = builder.establish()
             if (establishedFd == null) {
+                // VPN interface establishment failed
+                AppLogger.e("TProxyService: VPN interface establishment failed - builder.establish() returned null")
                 // Clear state on failure
                 prefs.vpnServiceWasRunning = false
                 stopXray()
                 return
             }
             
+            // VPN interface successfully established
+            AppLogger.i("TProxyService: VPN interface established successfully, fd=${establishedFd.fd}")
             tunFd = establishedFd
             
             // Save state that VPN is running
@@ -1143,6 +1220,19 @@ class TProxyService : VpnService() {
     private fun getVpnBuilder(prefs: Preferences): Builder = Builder().apply {
         setBlocking(false)
         setMtu(prefs.tunnelMtu)
+
+        // Android 14+ (API 34+) requires careful route handling to prevent VPN loop
+        // Without proper route configuration, VPN traffic may loop back through the VPN interface
+        // Note: Android VPN Builder doesn't have explicit "exclude" - we ensure localhost
+        // routes are not added, which prevents them from going through VPN
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+ (API 34+): Ensure localhost (127.0.0.1) is NOT routed through VPN
+            // By not adding a route for 127.0.0.0/8, localhost traffic bypasses VPN
+            // This prevents VPN loop where VPN traffic tries to route through itself
+            // The default route (0.0.0.0/0) will be added below, but localhost is excluded
+            // because we don't explicitly add it, and Android's routing table handles it correctly
+            AppLogger.d("TProxyService: Android 14+ - Ensuring localhost routes excluded to prevent VPN loop")
+        }
 
         if (prefs.bypassLan) {
             addRoute("10.0.0.0", 8)

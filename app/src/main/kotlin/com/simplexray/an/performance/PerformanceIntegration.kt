@@ -1,6 +1,7 @@
 package com.simplexray.an.performance
 
 import android.content.Context
+import android.net.VpnService
 import com.simplexray.an.common.AppLogger
 import com.simplexray.an.prefs.Preferences
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +18,18 @@ import kotlinx.coroutines.flow.asStateFlow
 class PerformanceIntegration(private val context: Context) {
     
     private val perfManager = PerformanceManager.getInstance(context)
+    private var vpnService: VpnService? = null
+    
+    /**
+     * Set VpnService instance for socket protection
+     * This is critical to prevent loopback issues where VPN traffic
+     * tries to route through its own tunnel
+     */
+    fun setVpnService(service: VpnService?) {
+        vpnService = service
+        AppLogger.d("$TAG: VpnService instance set for socket protection")
+    }
+    
     private val threadPoolManager = ThreadPoolManager.getInstance(context)
     private val prefs = Preferences(context)
     
@@ -223,6 +236,41 @@ class PerformanceIntegration(private val context: Context) {
      * Get performance manager
      */
     fun getPerformanceManager() = perfManager
+    
+    /**
+     * Get pooled socket with VPN protection
+     * This ensures the socket is protected from being routed through VPN tunnel
+     */
+    fun getProtectedPooledSocket(poolType: PerformanceManager.PoolType): Int {
+        val fd = perfManager.getPooledSocket(poolType)
+        if (fd > 0) {
+            protectSocket(fd)
+        }
+        return fd
+    }
+    
+    /**
+     * Protect a socket file descriptor (public API)
+     */
+    fun protectSocket(fd: Int): Boolean {
+        return vpnService?.let { service ->
+            try {
+                val protected = service.protect(fd)
+                if (protected) {
+                    AppLogger.d("$TAG: Socket protected successfully, fd=$fd")
+                } else {
+                    AppLogger.w("$TAG: Socket protection failed, fd=$fd")
+                }
+                protected
+            } catch (e: Exception) {
+                AppLogger.e("$TAG: Error protecting socket fd=$fd: ${e.message}", e)
+                false
+            }
+        } ?: run {
+            AppLogger.w("$TAG: Cannot protect socket - VpnService not set, fd=$fd")
+            false
+        }
+    }
     
     /**
      * Get burst traffic manager
