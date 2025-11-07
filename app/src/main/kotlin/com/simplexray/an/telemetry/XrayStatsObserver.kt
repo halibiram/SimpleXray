@@ -39,6 +39,11 @@ class XrayStatsObserver(
 
     private val _currentSnapshot = MutableStateFlow(TrafficSnapshot())
     val currentSnapshot: Flow<TrafficSnapshot> = _currentSnapshot.asStateFlow()
+    
+    /**
+     * Get current snapshot value (for synchronous access)
+     */
+    fun getCurrentSnapshotValue(): TrafficSnapshot = _currentSnapshot.value
 
     private val _history = MutableStateFlow<List<TrafficSnapshot>>(emptyList())
     val history: Flow<List<TrafficSnapshot>> = _history.asStateFlow()

@@ -18,6 +18,7 @@ Bu dokümantasyon, Xray-core'un BoringSSL'i gerçekten kullanması için gereken
 ### Faz 1: CGO Bridge Altyapısı
 
 #### 1.1 Xray-core CGO Bridge Dosyası Oluştur
+
 - [ ] `Xray-core/crypto/boringssl_bridge.go` dosyası oluştur
 - [ ] BoringSSL header dosyalarını include et (`#include <openssl/ssl.h>`, `#include <openssl/crypto.h>`)
 - [ ] CGO build tag'leri ekle (`//go:build cgo`)
@@ -25,6 +26,7 @@ Bu dokümantasyon, Xray-core'un BoringSSL'i gerçekten kullanması için gereken
 - [ ] Error handling ve memory management ekle
 
 **Dosya Yapısı:**
+
 ```go
 //go:build cgo
 // +build cgo
@@ -42,6 +44,7 @@ import "C"
 ```
 
 #### 1.2 Temel Crypto Fonksiyonları
+
 - [ ] `AES128GCMEncrypt()` - BoringSSL EVP_aes_128_gcm kullanımı
 - [ ] `AES256GCMEncrypt()` - BoringSSL EVP_aes_256_gcm kullanımı
 - [ ] `ChaCha20Poly1305Encrypt()` - BoringSSL EVP_chacha20_poly1305 kullanımı
@@ -50,6 +53,7 @@ import "C"
 - [ ] `RandomBytes()` - BoringSSL RAND_bytes kullanımı
 
 #### 1.3 TLS Handshake Bridge
+
 - [ ] `TLS13Handshake()` - BoringSSL SSL_do_handshake wrapper
 - [ ] `TLS13ClientHello()` - BoringSSL client hello oluşturma
 - [ ] `TLS13ServerHello()` - BoringSSL server hello işleme
@@ -58,17 +62,20 @@ import "C"
 ### Faz 2: Xray-core Patch'leri
 
 #### 2.1 Crypto Paketi Patch'i
+
 - [ ] Xray-core'u clone et ve versiyon belirle
 - [ ] `crypto/cipher` paketini incele
 - [ ] Go'nun `crypto/cipher` kullanımlarını BoringSSL bridge'e yönlendir
 - [ ] Patch dosyası oluştur: `002-crypto-boringssl.patch`
 
 **Hedef Dosyalar:**
+
 - `crypto/cipher/gcm.go` - AES-GCM implementasyonu
 - `crypto/cipher/chacha20poly1305.go` - ChaCha20-Poly1305 implementasyonu
 - `crypto/aes/aes.go` - AES cipher implementasyonu
 
 #### 2.2 TLS Paketi Patch'i
+
 - [ ] `crypto/tls` paketini incele
 - [ ] `crypto/tls/handshake_client.go` - Client handshake'i BoringSSL'e yönlendir
 - [ ] `crypto/tls/handshake_server.go` - Server handshake'i BoringSSL'e yönlendir
@@ -76,6 +83,7 @@ import "C"
 - [ ] Patch dosyası oluştur: `003-tls-boringssl.patch`
 
 #### 2.3 X.509 Certificate Patch'i
+
 - [ ] `crypto/x509` paketini incele
 - [ ] Certificate verification'ı BoringSSL'e yönlendir
 - [ ] X509 certificate parsing'i BoringSSL'e yönlendir
@@ -84,16 +92,19 @@ import "C"
 ### Faz 3: Hardware Acceleration
 
 #### 3.1 AES-NI Desteği (x86_64)
+
 - [ ] CPU feature detection ekle (`__builtin_cpu_supports("aes")`)
 - [ ] AES-NI optimized fonksiyonları kullan
 - [ ] Fallback mekanizması ekle (software implementation)
 
 #### 3.2 NEON Desteği (ARM64)
+
 - [ ] ARMv8 crypto extension detection ekle
 - [ ] NEON optimized fonksiyonları kullan
 - [ ] Fallback mekanizması ekle
 
 #### 3.3 Performance Benchmarking
+
 - [ ] BoringSSL vs Go crypto performans karşılaştırması
 - [ ] Hardware acceleration etkisini ölç
 - [ ] Memory usage karşılaştırması
@@ -101,16 +112,19 @@ import "C"
 ### Faz 4: Build Workflow Güncellemeleri
 
 #### 4.1 Patch Uygulama İyileştirmeleri
+
 - [ ] Patch uygulama hata yönetimini iyileştir
 - [ ] Patch versiyon uyumluluğu kontrolü ekle
 - [ ] Patch başarısız olursa fallback mekanizması
 
 #### 4.2 Build Verification
+
 - [ ] BoringSSL fonksiyonlarının gerçekten kullanıldığını doğrula
 - [ ] Binary'de BoringSSL sembollerinin varlığını kontrol et
 - [ ] Runtime test'leri ekle (eğer mümkünse)
 
 #### 4.3 CI/CD Entegrasyonu
+
 - [ ] Patch test workflow'u oluştur
 - [ ] Otomatik patch uygulama testi
 - [ ] Build başarısızlık durumunda bildirim
@@ -118,16 +132,19 @@ import "C"
 ### Faz 5: Testing ve Doğrulama
 
 #### 5.1 Unit Testler
+
 - [ ] BoringSSL bridge fonksiyonları için unit testler
 - [ ] Crypto fonksiyon doğruluk testleri
 - [ ] Error handling testleri
 
 #### 5.2 Integration Testler
+
 - [ ] TLS handshake testleri
 - [ ] Certificate verification testleri
 - [ ] Cipher suite testleri
 
 #### 5.3 Performance Testleri
+
 - [ ] Encryption/decryption throughput testleri
 - [ ] TLS handshake latency testleri
 - [ ] Memory usage profiling
@@ -135,11 +152,13 @@ import "C"
 ### Faz 6: Dokümantasyon
 
 #### 6.1 Kod Dokümantasyonu
+
 - [ ] CGO bridge fonksiyonları için GoDoc yorumları
 - [ ] Patch'ler için açıklayıcı yorumlar
 - [ ] Build süreci dokümantasyonu
 
 #### 6.2 Kullanım Dokümantasyonu
+
 - [ ] BoringSSL entegrasyonu nasıl çalışır
 - [ ] Patch uygulama adımları
 - [ ] Troubleshooting rehberi
@@ -176,6 +195,7 @@ func AES128GCMEncrypt(key, nonce, plaintext, aad []byte) ([]byte, []byte, error)
 ### Patch Oluşturma Adımları
 
 1. Xray-core'u clone et:
+
 ```bash
 git clone https://github.com/XTLS/Xray-core.git
 cd Xray-core
@@ -183,6 +203,7 @@ git checkout v25.10.15  # veya güncel versiyon
 ```
 
 2. Değişiklikleri yap:
+
 ```bash
 # CGO bridge dosyası ekle
 # Crypto paketlerini değiştir
@@ -190,6 +211,7 @@ git checkout v25.10.15  # veya güncel versiyon
 ```
 
 3. Patch oluştur:
+
 ```bash
 git add .
 git commit -m "WIP: Add BoringSSL CGO bridge"
@@ -198,6 +220,7 @@ cp 0001-*.patch ../SimpleXray/xray-patches/001-boringssl-bridge.patch
 ```
 
 4. Patch'i test et:
+
 ```bash
 cd Xray-core
 git checkout v25.10.15
@@ -227,6 +250,7 @@ git apply --check ../SimpleXray/xray-patches/001-boringssl-bridge.patch
 ## 🚀 Hızlı Başlangıç
 
 En hızlı sonuç için:
+
 1. CGO bridge dosyası oluştur (Faz 1.1)
 2. Temel crypto fonksiyonlarını implement et (Faz 1.2)
 3. Xray-core crypto paketini patch'le (Faz 2.1)
@@ -237,4 +261,3 @@ En hızlı sonuç için:
 - [BoringSSL API Documentation](https://commondatastorage.googleapis.com/chromium-boringssl-docs/headers.html)
 - [Go CGO Documentation](https://pkg.go.dev/cmd/cgo)
 - [Xray-core Source Code](https://github.com/XTLS/Xray-core)
-

@@ -18,8 +18,25 @@ object Hy2ConfigBuilder {
     fun buildConfig(config: Hy2Config): JsonObject {
         val root = JsonObject()
         
-        // Log level
-        root.addProperty("logLevel", "info")
+        // Log level - Use debug for better diagnostics
+        root.addProperty("logLevel", "debug")
+        
+        // Validate Hysteria2 config
+        require(config.server.isNotBlank()) {
+            "Hysteria2 server address cannot be empty"
+        }
+        require(config.port > 0 && config.port <= 65535) {
+            "Hysteria2 port must be between 1 and 65535"
+        }
+        require(config.auth.isNotBlank()) {
+            "Hysteria2 auth cannot be empty"
+        }
+        
+        // Hysteria2 uses QUIC which requires TLS - ensure SNI is set if provided
+        if (config.sni.isNullOrBlank() && !config.insecure) {
+            // Warning: SNI should be set for proper TLS handshake
+            // But we allow insecure mode for testing
+        }
         
         // Server address
         root.addProperty("server", "${config.server}:${config.port}")

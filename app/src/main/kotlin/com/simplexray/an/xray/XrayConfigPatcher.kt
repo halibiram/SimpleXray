@@ -411,11 +411,18 @@ object XrayConfigPatcher {
             val optimizer = PerformanceOptimizer(context)
             val perfConfig = optimizer.getCurrentXrayConfig()
             
-            // Apply log level
+            // Apply log level - default to debug if not set
             val logObj = (root.get("log") as? JsonObject) ?: JsonObject().also { root.add("log", it) }
             val perfLog = perfConfig["log"] as? Map<*, *>
-            perfLog?.get("loglevel")?.let { level ->
-                logObj.addProperty("loglevel", level.toString())
+            val logLevel = perfLog?.get("loglevel")?.toString() ?: "debug"
+            logObj.addProperty("loglevel", logLevel)
+            
+            // Ensure access and error log paths are set
+            if (!logObj.has("access")) {
+                logObj.addProperty("access", "/data/data/com.simplexray.an/files/xray_access.log")
+            }
+            if (!logObj.has("error")) {
+                logObj.addProperty("error", "/data/data/com.simplexray.an/files/xray_error.log")
             }
             
             // Apply policy settings
@@ -612,8 +619,14 @@ object XrayConfigPatcher {
                         tlsSettings.addProperty("sessionTicket", true)
                     }
 
+                    // Enable debug logging for BoringSSL handshake trace
+                    // This will log: "crypto/tls: handshake start" and "crypto/tls: handshake done"
+                    if (!tlsSettings.has("loglevel")) {
+                        tlsSettings.addProperty("loglevel", "debug")
+                    }
+
                     // Note: TLS 1.3 Early Data (0-RTT) is handled by Xray automatically when session tickets are enabled
-                    Log.d(TAG, "Applied TLS 1.3 settings with early data support")
+                    Log.d(TAG, "Applied TLS 1.3 settings with early data support and handshake trace")
                 } else {
                     Log.d(TAG, "Skipping TLS settings - outbound uses security: $currentSecurity")
                 }

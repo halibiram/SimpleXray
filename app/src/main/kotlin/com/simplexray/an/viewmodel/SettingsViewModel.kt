@@ -104,7 +104,7 @@ class SettingsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
                 val app = getApplication<Application>()
-                val xrayCore = java.io.File(app.filesDir, "xray_core")
+                val xrayCore = java.io.File(app.filesDir, "libxray_copy.so")
                 if (!xrayCore.exists() || !xrayCore.canExecute()) {
                     val libraryDir = app.applicationInfo.nativeLibraryDir
                     if (libraryDir == null) {
@@ -120,10 +120,10 @@ class SettingsViewModel(
                         }
                     }
                     if (!xrayCore.setExecutable(true)) {
-                        throw IllegalStateException("Failed to set executable permission on xray_core")
+                        throw IllegalStateException("Failed to set executable permission on libxray_copy.so")
                     }
                     if (!xrayCore.canExecute()) {
-                        throw IllegalStateException("Failed to make xray_core executable")
+                        throw IllegalStateException("Failed to make libxray_copy.so executable")
                     }
                 }
                 

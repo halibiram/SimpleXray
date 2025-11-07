@@ -10,6 +10,14 @@ object XrayConfigBuilder {
 
     fun defaultConfig(apiHost: String, apiPort: Int): JsonObject {
         val root = JsonObject()
+        
+        // Logging - Use debug level with access/error log paths
+        root.add("log", JsonObject().apply {
+            addProperty("loglevel", "debug")
+            addProperty("access", "/data/data/com.simplexray.an/files/xray_access.log")
+            addProperty("error", "/data/data/com.simplexray.an/files/xray_error.log")
+        })
+        
         // Enable api service with StatsService
         val api = JsonObject().apply {
             addProperty("tag", "api")

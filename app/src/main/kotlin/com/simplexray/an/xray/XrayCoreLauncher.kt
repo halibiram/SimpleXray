@@ -132,6 +132,17 @@ object XrayCoreLauncher {
             return false
         }
         
+        // Validate config JSON using xray-core -test flag
+        val validation = XrayConfigValidator.validateConfig(context, cfg)
+        if (!validation.isValid) {
+            AppLogger.e("Config validation failed: ${validation.message}")
+            validation.errors.forEach { error ->
+                AppLogger.e("  Validation error: $error")
+            }
+            return false
+        }
+        AppLogger.d("Config validation passed: ${validation.message}")
+        
         logCallback = onLogLine
         return startProcess(context, bin, cfg, maxRetries, retryDelayMs)
     }
@@ -200,6 +211,10 @@ object XrayCoreLauncher {
             }
             
             pb.redirectOutput(logFile)
+            
+            // Install signal handlers before starting process
+            XraySignalHandler.installHandlers()
+            
             val p = pb.start()
             procRef.set(p)
             retryCount.set(0)
@@ -238,6 +253,8 @@ object XrayCoreLauncher {
                     } catch (e: IllegalThreadStateException) {
                         -1
                     }
+                    // Log Go runtime exit code
+                    AppLogger.e("XrayCore Exit Code: $exitCode (startup check)")
                     AppLogger.e("xray process died during startup check (exit code: $exitCode)")
                     procRef.set(null)
                     pidRef.set(-1L)
@@ -262,6 +279,8 @@ object XrayCoreLauncher {
                 } catch (e: IllegalThreadStateException) {
                     -1
                 }
+                // Log Go runtime exit code
+                AppLogger.e("XrayCore Exit Code: $exitCode (immediate crash)")
                 AppLogger.e("xray process died immediately after start (exit code: $exitCode)")
                 
                 // Try to read log file for error information
@@ -335,6 +354,8 @@ object XrayCoreLauncher {
                             -1
                         }
                         val pid = pidRef.get() // Use stored PID instead of trying to get from dead process
+                        // Log Go runtime exit code prominently
+                        AppLogger.e("XrayCore Exit Code: $exitCode (PID: $pid)")
                         AppLogger.w("Process died unexpectedly (PID: $pid, exit code: $exitCode), attempting restart")
                         
                         // Clear process and PID references
@@ -491,6 +512,10 @@ object XrayCoreLauncher {
         logMonitorJob?.cancel()
         retryJob?.cancel()
         logCallback = null
+        
+        // Restore signal handlers when stopping
+        XraySignalHandler.restoreHandlers()
+        
         val p = procRef.getAndSet(null)
         val pid = pidRef.getAndSet(-1L)
         
@@ -652,7 +677,9 @@ object XrayCoreLauncher {
             // Check if process name contains "xray" or matches expected binary name
             cmdline.contains("xray", ignoreCase = true) || 
             cmdline.contains("xray_core", ignoreCase = true) ||
-            cmdline.endsWith("/xray_core", ignoreCase = true)
+            cmdline.endsWith("/xray_core", ignoreCase = true) ||
+            cmdline.contains("libxray_copy.so", ignoreCase = true) ||
+            cmdline.endsWith("/libxray_copy.so", ignoreCase = true)
         } catch (e: Exception) {
             // If we can't verify, assume it's safe (process may have exited)
             AppLogger.w("Could not verify process name for PID $pid: ${e.message}")
@@ -719,9 +746,10 @@ object XrayCoreLauncher {
             }
         }
         
-        // Fallback for older Android versions: copy to filesDir
-        // This maintains backward compatibility with Android 13 and below
-        val dst = File(context.filesDir, "xray_core")
+        // SELinux fix: Copy to filesDir with libxray_copy.so name to avoid setattr denial
+        // This avoids "avc: denied { setattr } for name=\"libxray.so\"" warnings
+        // Native code should not use chmod or mprotect on .so files
+        val dst = File(context.filesDir, "libxray_copy.so")
         try {
             // Copy file and verify success by comparing sizes and basic integrity
             val srcSize = src.length()

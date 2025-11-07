@@ -132,12 +132,16 @@ class TProxyService : VpnService() {
             val protected = protect(fd)
             if (protected) {
                 AppLogger.d("TProxyService: Socket protected successfully, fd=$fd")
+                // Log to verify protect() binding is working
+                android.util.Log.d("TProxyService", "VpnService.protect(fd=$fd) returned true - binding verified")
             } else {
                 AppLogger.w("TProxyService: Socket protection failed, fd=$fd")
+                android.util.Log.w("TProxyService", "VpnService.protect(fd=$fd) returned false - binding may not work")
             }
             protected
         } catch (e: Exception) {
             AppLogger.e("TProxyService: Error protecting socket fd=$fd: ${e.message}", e)
+            android.util.Log.e("TProxyService", "VpnService.protect(fd=$fd) exception: ${e.message}", e)
             false
         }
     }

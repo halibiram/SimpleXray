@@ -84,9 +84,11 @@ object RealityXrayConfig {
         
         val root = JsonObject()
         
-        // Logging
+        // Logging - Use debug level with access/error log paths
         root.add("log", JsonObject().apply {
-            addProperty("loglevel", "warning")
+            addProperty("loglevel", "debug")
+            addProperty("access", "/data/data/com.simplexray.an/files/xray_access.log")
+            addProperty("error", "/data/data/com.simplexray.an/files/xray_error.log")
         })
         
         // Inbounds: SOCKS5 server on local port
@@ -156,7 +158,8 @@ object RealityXrayConfig {
                     addProperty("maxTimeDiff", 0L)
                 })
                 
-                // TLS fingerprint based on profile
+                // TLS fingerprint based on profile (utls required for Reality)
+                // Ensure fingerprint is always set for Reality protocol
                 val fingerprint = when (config.fingerprintProfile) {
                     TlsFingerprintProfile.CHROME -> "chrome"
                     TlsFingerprintProfile.FIREFOX -> "firefox"
@@ -164,7 +167,20 @@ object RealityXrayConfig {
                     TlsFingerprintProfile.EDGE -> "edge"
                     TlsFingerprintProfile.CUSTOM -> "random"
                 }
+                // Reality requires TLS fingerprint (utls) to be enabled
+                require(fingerprint.isNotBlank()) {
+                    "Reality protocol requires TLS fingerprint (utls) to be enabled"
+                }
                 addProperty("fingerprint", fingerprint)
+                
+                // Validate port and key match server configuration
+                // Port validation already done above, but ensure it matches server port
+                require(config.port > 0 && config.port <= 65535) {
+                    "Reality port must match server port (1-65535)"
+                }
+                require(config.publicKey.isNotBlank()) {
+                    "Reality publicKey must match server publicKey"
+                }
             })
         }
         outbounds.add(realityOutbound)

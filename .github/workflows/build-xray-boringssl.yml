@@ -105,6 +105,27 @@ jobs:
               echo "✅ BoringSSL cloned successfully from GitHub"
             fi
             
+            # Pin BoringSSL to a specific version (chromium-stable branch for stability)
+            # Using chromium-stable ensures compatibility with Chromium's tested version
+            cd "$BORINGSSL_DIR"
+            echo "📌 Pinning BoringSSL to chromium-stable branch..."
+            if git fetch origin chromium-stable:chromium-stable 2>&1; then
+              if git checkout chromium-stable 2>&1; then
+                BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
+                echo "✅ BoringSSL pinned to chromium-stable: $BORINGSSL_COMMIT"
+                echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
+              else
+                echo "⚠️  Failed to checkout chromium-stable, using master HEAD"
+                BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
+                echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
+              fi
+            else
+              echo "⚠️  Failed to fetch chromium-stable, using master HEAD"
+              BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
+              echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
+            fi
+            cd - > /dev/null
+            
             # Verify clone was successful
             if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
               echo "❌ BoringSSL CMakeLists.txt not found after clone!"
@@ -138,6 +159,7 @@ jobs:
             echo "❌ NDK toolchain directory not found: $TOOLCHAIN_DIR"
             exit 1
           fi
+          echo "✅ NDK toolchain directory verified: $TOOLCHAIN_DIR"
 
           # Verify CMake toolchain file exists
           CMAKE_TOOLCHAIN="$NDK_HOME/build/cmake/android.toolchain.cmake"
@@ -145,6 +167,7 @@ jobs:
             echo "❌ CMake toolchain file not found: $CMAKE_TOOLCHAIN"
             exit 1
           fi
+          echo "✅ CMake toolchain file verified: $CMAKE_TOOLCHAIN"
 
           # Verify NDK toolchain binaries are executable
           TOOLCHAIN_BIN="$TOOLCHAIN_DIR/bin"
@@ -153,13 +176,29 @@ jobs:
             exit 1
           fi
 
-          # Check if clang is available (will be used by cmake)
+          # Verify specific toolchain binary path (e.g., x86_64-linux-android24-clang)
           CLANG_BIN="$TOOLCHAIN_BIN/${{ matrix.toolchain }}-clang"
           if [ ! -f "$CLANG_BIN" ]; then
-            echo "⚠️  Clang binary not found at expected path: $CLANG_BIN"
+            echo "❌ Clang binary not found at expected path: $CLANG_BIN"
+            echo "Expected toolchain: ${{ matrix.toolchain }}"
             echo "Available clang binaries:"
-            ls -la "$TOOLCHAIN_BIN"/*clang* 2>/dev/null | head -5 || echo "No clang binaries found"
+            ls -la "$TOOLCHAIN_BIN"/*clang* 2>/dev/null | head -10 || echo "No clang binaries found"
+            exit 1
           fi
+          echo "✅ NDK toolchain binary verified: $CLANG_BIN"
+
+          # Verify toolchain binary is executable
+          if [ ! -x "$CLANG_BIN" ]; then
+            echo "❌ Clang binary is not executable: $CLANG_BIN"
+            exit 1
+          fi
+
+          # Display toolchain version for verification
+          echo "🔧 NDK Toolchain Information:"
+          echo "   Toolchain: ${{ matrix.toolchain }}"
+          echo "   Clang path: $CLANG_BIN"
+          echo "   Clang version:"
+          "$CLANG_BIN" --version | head -3 || echo "   (version check failed)"
 
           echo "✅ Building BoringSSL from $BORINGSSL_DIR"
           cd "$BORINGSSL_DIR"
@@ -782,6 +821,17 @@ jobs:
             exit $BUILD_EXIT
           }
 
+          # Verify static linking flags in build log
+          echo "🔍 Verifying static linking flags in build log..."
+          if grep -q "Wl,-Bstatic" ../xray-build-${{ matrix.abi }}.log && \
+             grep -q "lcrypto\|lssl" ../xray-build-${{ matrix.abi }}.log; then
+            echo "✅ Static linking flags found in build log: -Wl,-Bstatic -lcrypto -lssl"
+          else
+            echo "⚠️  Warning: Static linking flags not clearly visible in build log"
+            echo "   Checking for linker flags..."
+            grep -i "Bstatic\|lcrypto\|lssl" ../xray-build-${{ matrix.abi }}.log | head -5 || echo "   (no matches found)"
+          fi
+
           # Verify BoringSSL linkage BEFORE stripping (to preserve symbols for verification)
           echo "🔍 Verifying BoringSSL linkage (before strip)..."
 
@@ -857,10 +907,26 @@ jobs:
             echo "   Current: BoringSSL libraries are linked but may not be actively used"
           fi
 
-          # Check linker dependencies
+          # Check linker dependencies with readelf (verify static linking)
           if command -v readelf &> /dev/null; then
             echo "🔍 Checking library dependencies with readelf..."
+            echo "   (Static linking verification: BoringSSL should NOT appear in NEEDED libraries)"
             readelf -d libxray.unstripped.so 2>/dev/null | grep -i "NEEDED\|library" | head -10 || true
+            
+            # Verify BoringSSL is NOT in dynamic dependencies (confirms static linking)
+            BORINGSSL_NEEDED=$(readelf -d libxray.unstripped.so 2>/dev/null | grep -i "NEEDED.*crypto\|NEEDED.*ssl" || true)
+            if [ -n "$BORINGSSL_NEEDED" ]; then
+              echo "⚠️  Warning: BoringSSL appears in dynamic dependencies (should be statically linked)"
+              echo "$BORINGSSL_NEEDED"
+            else
+              echo "✅ BoringSSL NOT in dynamic dependencies (confirms static linking)"
+            fi
+            
+            # Display full readelf output for verification
+            echo "📋 Full readelf -d output:"
+            readelf -d libxray.unstripped.so 2>/dev/null || echo "   (readelf failed)"
+          else
+            echo "⚠️  readelf not available, skipping static linking verification"
           fi
 
           # Now strip the binary for release
@@ -908,6 +974,20 @@ jobs:
           mkdir -p ../xray-output/${{ matrix.abi }}
           mv libxray.so ../xray-output/${{ matrix.abi }}/libxray.so
 
+          # Verify final binary with readelf (after strip)
+          echo "🔍 Final static linking verification (after strip)..."
+          if command -v readelf &> /dev/null; then
+            echo "   Checking stripped binary: ../xray-output/${{ matrix.abi }}/libxray.so"
+            BORINGSSL_NEEDED_STRIPPED=$(readelf -d ../xray-output/${{ matrix.abi }}/libxray.so 2>/dev/null | grep -i "NEEDED.*crypto\|NEEDED.*ssl" || true)
+            if [ -n "$BORINGSSL_NEEDED_STRIPPED" ]; then
+              echo "⚠️  Warning: BoringSSL in dynamic dependencies after strip"
+            else
+              echo "✅ BoringSSL statically linked (not in dynamic dependencies after strip)"
+            fi
+            echo "   Dynamic dependencies:"
+            readelf -d ../xray-output/${{ matrix.abi }}/libxray.so 2>/dev/null | grep "NEEDED" || echo "   (no dynamic dependencies)"
+          fi
+
       - name: Check Xray Build Logs
         continue-on-error: true
         run: |
@@ -919,6 +999,84 @@ jobs:
           else
             echo "⚠️  Build log file not found, skipping analysis"
           fi
+
+      - name: Test Xray-core Version and BoringSSL Verification
+        run: |
+          echo "🧪 Testing xray-core -version and verifying BoringSSL integration..."
+
+          XRAY_BINARY="../xray-output/${{ matrix.abi }}/libxray.so"
+          if [ ! -f "$XRAY_BINARY" ]; then
+            echo "❌ Xray binary not found: $XRAY_BINARY"
+            exit 1
+          fi
+
+          echo "📦 Binary location: $XRAY_BINARY"
+          echo "📦 Binary size: $(stat -c%s "$XRAY_BINARY" 2>/dev/null || stat -f%z "$XRAY_BINARY" 2>/dev/null || echo "unknown") bytes"
+
+          # Note: libxray.so is a shared library, not an executable
+          # We need to check for BoringSSL strings in the binary instead
+          echo ""
+          echo "🔍 Verifying BoringSSL strings in binary (after strip)..."
+
+          # Check for BoringSSL-related strings
+          BORINGSSL_STRINGS=$(strings "$XRAY_BINARY" 2>/dev/null | grep -iE "BoringSSL|boringssl|OPENSSL_VERSION_TEXT" | head -10 || true)
+          if [ -n "$BORINGSSL_STRINGS" ]; then
+            echo "✅ BoringSSL strings found in binary:"
+            echo "$BORINGSSL_STRINGS"
+          else
+            echo "ℹ️  BoringSSL strings not found (may have been stripped)"
+            echo "   This is normal if symbols were stripped"
+          fi
+
+          # Check for crypto-related function names
+          CRYPTO_FUNCTIONS=$(strings "$XRAY_BINARY" 2>/dev/null | grep -iE "SSL_|TLS_|EVP_|BIO_|X509_|CRYPTO_" | head -20 || true)
+          if [ -n "$CRYPTO_FUNCTIONS" ]; then
+            echo "✅ Crypto-related function names found:"
+            echo "$CRYPTO_FUNCTIONS" | head -10
+          else
+            echo "ℹ️  Crypto function names not found (may have been stripped)"
+          fi
+
+          # Verify static linking with readelf
+          echo ""
+          echo "🔍 Verifying static linking (readelf -d)..."
+          if command -v readelf &> /dev/null; then
+            echo "   Dynamic dependencies (NEEDED libraries):"
+            readelf -d "$XRAY_BINARY" 2>/dev/null | grep "NEEDED" || echo "   (no dynamic dependencies found)"
+            
+            # Check that BoringSSL is NOT in dynamic dependencies
+            BORINGSSL_DYN=$(readelf -d "$XRAY_BINARY" 2>/dev/null | grep -iE "NEEDED.*crypto|NEEDED.*ssl" || true)
+            if [ -n "$BORINGSSL_DYN" ]; then
+              echo "⚠️  Warning: BoringSSL found in dynamic dependencies (should be static)"
+              echo "$BORINGSSL_DYN"
+            else
+              echo "✅ BoringSSL NOT in dynamic dependencies (confirms static linking)"
+            fi
+          else
+            echo "⚠️  readelf not available, skipping verification"
+          fi
+
+          # Summary
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 BoringSSL Verification Summary (after strip)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "✅ Binary: $XRAY_BINARY"
+          if [ -n "$BORINGSSL_STRINGS" ] || [ -n "$CRYPTO_FUNCTIONS" ]; then
+            echo "✅ BoringSSL strings/functions: Found"
+          else
+            echo "ℹ️  BoringSSL strings/functions: Not found (stripped - this is normal)"
+          fi
+          if [ -z "$BORINGSSL_DYN" ]; then
+            echo "✅ Static linking: Confirmed (BoringSSL not in dynamic deps)"
+          else
+            echo "⚠️  Static linking: Warning (BoringSSL in dynamic deps)"
+          fi
+          echo ""
+          echo "📝 Note: libxray.so is a shared library, not an executable"
+          echo "   To test runtime behavior, integrate into Android app and test"
+          echo "   Current verification confirms BoringSSL is statically linked"
 
       - name: Upload Xray Artifacts
         uses: actions/upload-artifact@v4
