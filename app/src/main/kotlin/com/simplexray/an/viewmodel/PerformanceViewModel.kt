@@ -22,6 +22,8 @@ import com.simplexray.an.performance.speedtest.SpeedTestResult
 import com.simplexray.an.performance.BatteryImpactMonitor
 import com.simplexray.an.performance.PerformanceBenchmark
 import com.simplexray.an.performance.PerformanceIntegration
+import com.simplexray.an.performance.PerformanceManager
+import com.simplexray.an.prefs.Preferences
 import com.simplexray.an.service.TProxyService
 import com.simplexray.an.xray.XrayConfigPatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -92,6 +94,17 @@ class PerformanceViewModel(application: Application) : AndroidViewModel(applicat
     // Adaptive Tuning
     val tuningState: StateFlow<TuningState> = adaptiveTuner.tuningState
     val lastRecommendation: StateFlow<ProfileRecommendation?> = adaptiveTuner.lastRecommendation
+    
+    // Performance status tracking
+    private val prefs = Preferences(application)
+    private val _isPerformanceModeEnabled = MutableStateFlow(prefs.enablePerformanceMode)
+    val isPerformanceModeEnabled: StateFlow<Boolean> = _isPerformanceModeEnabled.asStateFlow()
+    
+    private val _isNativeLibraryLoaded = MutableStateFlow(PerformanceManager.isNativeLibraryLoaded())
+    val isNativeLibraryLoaded: StateFlow<Boolean> = _isNativeLibraryLoaded.asStateFlow()
+    
+    private val _nativeLibraryError = MutableStateFlow(PerformanceManager.getNativeLibraryLoadError())
+    val nativeLibraryError: StateFlow<String?> = _nativeLibraryError.asStateFlow()
 
     init {
         // Initialize performance integration if available

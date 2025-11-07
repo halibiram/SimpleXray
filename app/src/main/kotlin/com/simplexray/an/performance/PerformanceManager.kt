@@ -35,20 +35,42 @@ class PerformanceManager private constructor(context: Context) {
         // BUG: Double-checked locking pattern - INSTANCE may be partially initialized if accessed before construction completes
         // BUG: Context may be null if applicationContext is null
         
+        @Volatile
+        private var nativeLibraryLoaded = false
+        
+        @Volatile
+        private var nativeLibraryLoadError: String? = null
+        
         fun getInstance(context: Context): PerformanceManager {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: PerformanceManager(context.applicationContext).also { INSTANCE = it }
             }
         }
         
+        /**
+         * Check if native library is loaded successfully
+         */
+        fun isNativeLibraryLoaded(): Boolean = nativeLibraryLoaded
+        
+        /**
+         * Get native library load error message if any
+         */
+        fun getNativeLibraryLoadError(): String? = nativeLibraryLoadError
+        
         init {
             try {
                 System.loadLibrary("perf-net")
+                nativeLibraryLoaded = true
+                nativeLibraryLoadError = null
                 AppLogger.d("$TAG: Native library 'perf-net' loaded successfully")
             } catch (e: UnsatisfiedLinkError) {
+                nativeLibraryLoaded = false
+                nativeLibraryLoadError = "Native library 'perf-net' not found. Performance optimizations will be limited."
                 AppLogger.e("$TAG: Failed to load native library 'perf-net'", e)
                 // Continue without performance optimizations
             } catch (e: Exception) {
+                nativeLibraryLoaded = false
+                nativeLibraryLoadError = "Unexpected error loading native library: ${e.message}"
                 AppLogger.e("$TAG: Unexpected error loading native library", e)
             }
         }

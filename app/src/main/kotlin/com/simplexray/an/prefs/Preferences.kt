@@ -378,7 +378,7 @@ class Preferences(context: Context) {
     }
 
     var enablePerformanceMode: Boolean
-        get() = getBooleanPref(ENABLE_PERFORMANCE_MODE, false)
+        get() = getBooleanPref(ENABLE_PERFORMANCE_MODE, true)
         set(value) {
             setValueInProvider(ENABLE_PERFORMANCE_MODE, value)
         }

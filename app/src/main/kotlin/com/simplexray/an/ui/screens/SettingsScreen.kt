@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.simplexray.an.BuildConfig
 import com.simplexray.an.R
 import com.simplexray.an.common.ThemeMode
+import com.simplexray.an.performance.PerformanceManager
 import com.simplexray.an.viewmodel.MainViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -475,12 +476,26 @@ fun SettingsScreen(
 
         PreferenceCategoryTitle("Performance")
 
+        // Check native library status
+        val isNativeLibraryLoaded = remember { PerformanceManager.isNativeLibraryLoaded() }
+        val nativeLibraryError = remember { PerformanceManager.getNativeLibraryLoadError() }
+
         ListItem(
             headlineContent = { Text("Performance Mode") },
             supportingContent = { 
-                Text(
-                    "Enable aggressive performance optimizations (CPU affinity, zero-copy I/O, connection pooling, etc.)"
-                )
+                Column {
+                    Text(
+                        "Enable aggressive performance optimizations (CPU affinity, zero-copy I/O, connection pooling, etc.)"
+                    )
+                    if (!isNativeLibraryLoaded) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "⚠️ ${nativeLibraryError ?: "Native library not loaded. Some optimizations may be limited."}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             },
             trailingContent = {
                 Switch(

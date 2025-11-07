@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.simplexray.an.common.ROUTE_CUSTOM_PROFILES
 import com.simplexray.an.ui.performance.AdaptiveTuningStatusCard
@@ -75,6 +76,11 @@ fun PerformanceScreen(
             )
         }
     ) { padding ->
+        // Get performance status from viewModel
+        val isPerformanceModeEnabled by viewModel?.isPerformanceModeEnabled?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(true) }
+        val isNativeLibraryLoaded by viewModel?.isNativeLibraryLoaded?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(true) }
+        val nativeLibraryError by viewModel?.nativeLibraryError?.collectAsStateWithLifecycle() ?: remember { mutableStateOf<String?>(null) }
+        
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -82,6 +88,17 @@ fun PerformanceScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Performance status warning banner
+            if (!isPerformanceModeEnabled || !isNativeLibraryLoaded) {
+                item {
+                    PerformanceStatusWarningBanner(
+                        isPerformanceModeEnabled = isPerformanceModeEnabled,
+                        isNativeLibraryLoaded = isNativeLibraryLoaded,
+                        nativeLibraryError = nativeLibraryError
+                    )
+                }
+            }
+            
             // Current metrics card
             item {
                 MetricsCard(metrics = currentMetrics)
@@ -501,6 +518,60 @@ fun ProfileCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+fun PerformanceStatusWarningBanner(
+    isPerformanceModeEnabled: Boolean,
+    isNativeLibraryLoaded: Boolean,
+    nativeLibraryError: String?
+) {
+    val warningMessage = when {
+        !isPerformanceModeEnabled && !isNativeLibraryLoaded -> 
+            "Performance Mode is disabled and native library failed to load. Advanced optimizations are not available."
+        !isPerformanceModeEnabled -> 
+            "Performance Mode is disabled. Enable it in Settings to activate CPU affinity, zero-copy I/O, and connection pooling."
+        !isNativeLibraryLoaded -> 
+            nativeLibraryError ?: "Native performance library failed to load. Some optimizations may be limited."
+        else -> null
+    }
+    
+    if (warningMessage != null) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Warning",
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Performance Optimizations Limited",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        warningMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
         }
     }
 }
