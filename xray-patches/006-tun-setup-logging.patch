@@ -1,6 +1,6 @@
 diff --git a/common/platform/tun.go b/common/platform/tun.go
-index 0000000..1111111
---- a/common/platform/tun.go
+new file mode 100644
+--- /dev/null
 +++ b/common/platform/tun.go
 @@ -0,0 +1,30 @@
 +package platform

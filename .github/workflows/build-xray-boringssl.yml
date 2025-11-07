@@ -785,7 +785,7 @@ jobs:
           # Define critical patches that MUST succeed
           CRITICAL_PATCH_NAMES=("001-boringssl-bridge.patch" "005-boringssl-tls-bridge.patch")
           CRITICAL_FAILED=()
-          
+
           # Check if any critical patches failed
           for failed_patch in "${CRITICAL_PATCHES[@]}"; do
             for critical_name in "${CRITICAL_PATCH_NAMES[@]}"; do
@@ -795,7 +795,7 @@ jobs:
               fi
             done
           done
-          
+
           if [ ${#CRITICAL_FAILED[@]} -gt 0 ]; then
             echo ""
             echo "❌ CRITICAL: The following REQUIRED patches failed to apply:"

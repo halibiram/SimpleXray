@@ -1,63 +1,35 @@
 diff --git a/transport/internet/tls/config.go b/transport/internet/tls/config.go
-index 0000000..2222222
+index 90427b8..8657214 100644
 --- a/transport/internet/tls/config.go
 +++ b/transport/internet/tls/config.go
-@@ -0,0 +1,50 @@
-+package tls
-+
-+import (
-+	"crypto/tls"
-+	"log"
-+)
+@@ -526,3 +526,30 @@ func ParseCurveName(curveNames []string) []tls.CurveID {
+ func IsFromMitm(str string) bool {
+ 	return strings.ToLower(str) == "frommitm"
+ }
 +
 +// EnableHandshakeTrace enables debug logging for TLS handshakes when tlsSettings is active
 +func EnableHandshakeTrace(config *tls.Config) {
 +	if config == nil {
 +		return
 +	}
-+	
++
 +	// Set log level to debug for handshake tracing
 +	// This will log: "crypto/tls: handshake start" and "crypto/tls: handshake done"
 +	config.MinVersion = tls.VersionTLS12 // Ensure TLS 1.2+
-+	
++
 +	// Add custom handshake hook for logging
 +	originalGetCertificate := config.GetCertificate
 +	config.GetCertificate = func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-+		log.Printf("[TLS] Handshake start: serverName=%s, supportedVersions=%v", 
-+			clientHello.ServerName, clientHello.SupportedVersions)
++		errors.LogInfo(context.Background(), "[TLS] Handshake start: serverName=", clientHello.ServerName, ", supportedVersions=", clientHello.SupportedVersions)
 +		if originalGetCertificate != nil {
 +			cert, err := originalGetCertificate(clientHello)
 +			if err != nil {
-+				log.Printf("[TLS] Handshake failed: error=%v", err)
++				errors.LogErrorInner(context.Background(), err, "[TLS] Handshake failed")
 +				return nil, err
 +			}
-+			log.Printf("[TLS] Handshake done: certificate selected")
++			errors.LogInfo(context.Background(), "[TLS] Handshake done: certificate selected")
 +			return cert, nil
 +		}
 +		return nil, nil
 +	}
 +}
-+
-+// Alternative: Patch existing TLS connection code to add handshake logging
-+// This patch modifies the TLS connection establishment to log handshake events
-+
-+// In the actual Xray codebase, find where tls.Dial() or tls.Client() is called:
-+//
-+// Before:
-+//   conn, err := tls.Dial("tcp", addr, config)
-+//
-+// After:
-+//   if config != nil {
-+//       log.Printf("[TLS] Handshake start: addr=%s", addr)
-+//   }
-+//   conn, err := tls.Dial("tcp", addr, config)
-+//   if err != nil {
-+//       log.Printf("[TLS] Handshake failed: addr=%s, error=%v", addr, err)
-+//   } else {
-+//       log.Printf("[TLS] Handshake done: addr=%s, version=%x", addr, conn.ConnectionState().Version)
-+//   }
-+
-+// For BoringSSL integration, also add:
-+//   log.Printf("[BoringSSL] TLS handshake using BoringSSL backend")
-+//   log.Printf("[BoringSSL] Cipher suite: %s", conn.ConnectionState().CipherSuite)
-
