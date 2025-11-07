@@ -416,6 +416,48 @@ class TProxyService : VpnService() {
                 processPid = -1L
             }
             
+            // Check if process dies immediately after start (indicates crash or config error)
+            // Wait a short time to see if process stays alive
+            try {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.delay(2000) // Wait 2 seconds
+                }
+                if (!currentProcess.isAlive) {
+                    val exitCode = try {
+                        currentProcess.exitValue()
+                    } catch (e: IllegalThreadStateException) {
+                        -1
+                    }
+                    AppLogger.e("Xray process died immediately after start (PID: $processPid, exit code: $exitCode). This indicates a crash or configuration error.")
+                    
+                    // Try to read error output for diagnostics
+                    try {
+                        val logFile = File(applicationContext.filesDir, "xray.log")
+                        if (logFile.exists() && logFile.length() > 0) {
+                            val errorLog = logFile.inputStream().bufferedReader().use { reader ->
+                                val fileSize = logFile.length()
+                                val logSize = minOf(2000, fileSize.toInt()) // Last 2KB
+                                if (fileSize > logSize) {
+                                    reader.skip(fileSize - logSize)
+                                }
+                                reader.readText()
+                            }
+                            if (errorLog.isNotBlank()) {
+                                val sanitized = AppLogger.sanitize(errorLog)
+                                AppLogger.e("Xray error log after immediate crash:\n$sanitized")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.w("Could not read error log: ${e.message}", e)
+                    }
+                    
+                    stopXray()
+                    return
+                }
+            } catch (e: Exception) {
+                AppLogger.w("Error checking if process is alive: ${e.message}", e)
+            }
+            
             // Atomically update process state with PID, preserving reloading flag
             processState.updateAndGet { state ->
                 ProcessState(currentProcess, processPid, state.reloading)
@@ -589,6 +631,52 @@ class TProxyService : VpnService() {
             if (wasReloading.reloading && wasReloading.process === currentProcess) {
                 AppLogger.d("Xray process stopped due to configuration reload.")
             } else if (wasReloading.process === currentProcess) {
+                // Enhanced diagnostics for VPN disconnection issue
+                val exitCode = try {
+                    currentProcess?.exitValue() ?: -1
+                } catch (e: IllegalThreadStateException) {
+                    -1
+                } catch (e: Exception) {
+                    AppLogger.w("Could not get exit code: ${e.message}", e)
+                    -1
+                }
+                
+                // Check if process is still alive (might have been killed externally)
+                val isStillAlive = try {
+                    currentProcess?.isAlive ?: false
+                } catch (e: Exception) {
+                    false
+                }
+                
+                if (exitCode != 0 && exitCode != -1) {
+                    AppLogger.e("Xray process exited with non-zero code: $exitCode (PID: $processPid). This may indicate a crash or configuration error.")
+                } else if (!isStillAlive) {
+                    AppLogger.w("Xray process exited unexpectedly (PID: $processPid, exit code: $exitCode). VPN will disconnect.")
+                } else {
+                    AppLogger.d("Xray process stopped normally (PID: $processPid).")
+                }
+                
+                // Try to read recent logs for diagnostics
+                try {
+                    val logFile = File(applicationContext.filesDir, "xray.log")
+                    if (logFile.exists() && logFile.length() > 0) {
+                        val recentLogs = logFile.inputStream().bufferedReader().use { reader ->
+                            val fileSize = logFile.length()
+                            val logSize = minOf(1000, fileSize.toInt()) // Last 1KB
+                            if (fileSize > logSize) {
+                                reader.skip(fileSize - logSize)
+                            }
+                            reader.readText()
+                        }
+                        if (recentLogs.isNotBlank()) {
+                            val sanitized = AppLogger.sanitize(recentLogs)
+                            AppLogger.e("Recent xray logs before exit:\n$sanitized")
+                        }
+                    }
+                } catch (e: Exception) {
+                    AppLogger.w("Could not read xray logs for diagnostics: ${e.message}", e)
+                }
+                
                 AppLogger.d("Xray process exited unexpectedly or due to stop request. Stopping VPN.")
                 stopXray()
             } else {
