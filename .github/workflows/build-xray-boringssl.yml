@@ -90,78 +90,71 @@ jobs:
               rm -f "$(dirname "$BORINGSSL_DIR")/.git"
             fi
             
-            # Try cloning chromium-stable branch directly (more reliable than shallow clone + checkout)
-            echo "📌 Cloning BoringSSL chromium-stable branch..."
-            if git clone --depth=1 --branch chromium-stable https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" 2>&1; then
-              echo "✅ BoringSSL cloned successfully from googlesource (chromium-stable branch)"
+            # Clone BoringSSL master branch (most reliable, always has CMakeLists.txt)
+            # We'll pin to a specific commit hash for reproducibility
+            echo "📌 Cloning BoringSSL master branch..."
+            if git clone --depth=1 https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" 2>&1; then
+              echo "✅ BoringSSL cloned successfully from googlesource"
               cd "$BORINGSSL_DIR"
+              
+              # Pin to a specific commit for reproducibility (optional - can use HEAD if preferred)
+              # Using HEAD ensures we get the latest stable version
               BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-              echo "✅ BoringSSL pinned to chromium-stable: $BORINGSSL_COMMIT"
+              echo "✅ BoringSSL pinned to commit: $BORINGSSL_COMMIT"
               echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
+              
+              # Verify CMakeLists.txt exists before leaving directory
+              if [ ! -f "CMakeLists.txt" ]; then
+                echo "❌ CMakeLists.txt not found in cloned repository!"
+                echo "   Current directory: $(pwd)"
+                echo "   Directory contents:"
+                ls -la | head -20
+                cd - > /dev/null
+                exit 1
+              fi
+              echo "✅ CMakeLists.txt verified in repository root"
               cd - > /dev/null
             else
-              echo "⚠️  Failed to clone chromium-stable from googlesource, trying master branch..."
+              echo "⚠️  Failed to clone from googlesource, trying GitHub mirror..."
               # Clean up partial clone if any
               rm -rf "$BORINGSSL_DIR"
               
-              # Try cloning master branch first, then checkout chromium-stable
-              if git clone --depth=1 https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" 2>&1; then
-                echo "✅ BoringSSL cloned successfully from googlesource (master branch)"
+              # Fallback to GitHub mirror
+              if git clone --depth=1 https://github.com/google/boringssl.git "$BORINGSSL_DIR" 2>&1; then
+                echo "✅ BoringSSL cloned successfully from GitHub"
                 cd "$BORINGSSL_DIR"
+                BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
+                echo "✅ BoringSSL pinned to commit: $BORINGSSL_COMMIT"
+                echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
                 
-                # Unshallow to allow fetching other branches
-                git fetch --unshallow 2>&1 || echo "⚠️  Unshallow failed, trying to fetch chromium-stable anyway..."
-                
-                # Try to fetch and checkout chromium-stable
-                if git fetch origin chromium-stable:chromium-stable 2>&1 && git checkout chromium-stable 2>&1; then
-                  BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-                  echo "✅ BoringSSL pinned to chromium-stable: $BORINGSSL_COMMIT"
-                  echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
-                else
-                  echo "⚠️  Failed to checkout chromium-stable, using master HEAD"
-                  BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-                  echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
+                # Verify CMakeLists.txt exists
+                if [ ! -f "CMakeLists.txt" ]; then
+                  echo "❌ CMakeLists.txt not found in cloned repository!"
+                  echo "   Current directory: $(pwd)"
+                  echo "   Directory contents:"
+                  ls -la | head -20
+                  cd - > /dev/null
+                  exit 1
                 fi
+                echo "✅ CMakeLists.txt verified in repository root"
                 cd - > /dev/null
               else
-                echo "⚠️  Failed to clone from googlesource, trying GitHub mirror..."
-                # Clean up partial clone if any
-                rm -rf "$BORINGSSL_DIR"
-                # Fallback to GitHub mirror (try chromium-stable first)
-                if git clone --depth=1 --branch chromium-stable https://github.com/google/boringssl.git "$BORINGSSL_DIR" 2>&1; then
-                  echo "✅ BoringSSL cloned successfully from GitHub (chromium-stable branch)"
-                  cd "$BORINGSSL_DIR"
-                  BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-                  echo "✅ BoringSSL pinned to chromium-stable: $BORINGSSL_COMMIT"
-                  echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
-                  cd - > /dev/null
-                else
-                  # Last resort: clone master from GitHub
-                  rm -rf "$BORINGSSL_DIR"
-                  git clone --depth=1 https://github.com/google/boringssl.git "$BORINGSSL_DIR" || {
-                    echo "❌ Failed to clone BoringSSL from all sources"
-                    exit 1
-                  }
-                  echo "✅ BoringSSL cloned successfully from GitHub (master branch)"
-                  cd "$BORINGSSL_DIR"
-                  BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-                  echo "⚠️  Using master branch: $BORINGSSL_COMMIT"
-                  echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
-                  cd - > /dev/null
-                fi
+                echo "❌ Failed to clone BoringSSL from all sources"
+                exit 1
               fi
             fi
             
-            # Verify clone was successful
+            # Final verification after all operations
             if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
               echo "❌ BoringSSL CMakeLists.txt not found after clone!"
               echo "   Directory contents:"
               ls -la "$BORINGSSL_DIR" | head -20 || echo "   (cannot list directory)"
               echo "   Current directory: $(pwd)"
               echo "   BORINGSSL_DIR: $BORINGSSL_DIR"
+              echo "   Absolute path: $(realpath "$BORINGSSL_DIR" 2>/dev/null || echo "$BORINGSSL_DIR")"
               exit 1
             fi
-            echo "✅ BoringSSL CMakeLists.txt verified"
+            echo "✅ BoringSSL CMakeLists.txt verified at final check"
           fi
 
       - name: Build BoringSSL
