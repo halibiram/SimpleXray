@@ -52,6 +52,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ steps.go_version.outputs.version }}
+          cache: false
 
       - name: Setup NDK
         run: |

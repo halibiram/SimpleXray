@@ -61,6 +61,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake
+          # Verify tools are installed and executable
+          which cmake && cmake --version
+          which ninja && ninja --version
 
       - name: Clone BoringSSL
         run: |
@@ -119,12 +122,53 @@ jobs:
             exit 1
           fi
 
+          # Verify build tools are available and executable
+          if ! command -v cmake &> /dev/null; then
+            echo "❌ cmake not found in PATH"
+            exit 1
+          fi
+          if ! command -v ninja &> /dev/null; then
+            echo "❌ ninja not found in PATH"
+            exit 1
+          fi
+
+          # Verify NDK toolchain exists and is accessible
+          TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          if [ ! -d "$TOOLCHAIN_DIR" ]; then
+            echo "❌ NDK toolchain directory not found: $TOOLCHAIN_DIR"
+            exit 1
+          fi
+
+          # Verify CMake toolchain file exists
+          CMAKE_TOOLCHAIN="$NDK_HOME/build/cmake/android.toolchain.cmake"
+          if [ ! -f "$CMAKE_TOOLCHAIN" ]; then
+            echo "❌ CMake toolchain file not found: $CMAKE_TOOLCHAIN"
+            exit 1
+          fi
+
+          # Verify NDK toolchain binaries are executable
+          TOOLCHAIN_BIN="$TOOLCHAIN_DIR/bin"
+          if [ ! -d "$TOOLCHAIN_BIN" ]; then
+            echo "❌ NDK toolchain bin directory not found: $TOOLCHAIN_BIN"
+            exit 1
+          fi
+
+          # Check if clang is available (will be used by cmake)
+          CLANG_BIN="$TOOLCHAIN_BIN/${{ matrix.toolchain }}-clang"
+          if [ ! -f "$CLANG_BIN" ]; then
+            echo "⚠️  Clang binary not found at expected path: $CLANG_BIN"
+            echo "Available clang binaries:"
+            ls -la "$TOOLCHAIN_BIN"/*clang* 2>/dev/null | head -5 || echo "No clang binaries found"
+          fi
+
           echo "✅ Building BoringSSL from $BORINGSSL_DIR"
           cd "$BORINGSSL_DIR"
-          TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           BUILD_DIR="build_${{ matrix.abi }}"
           mkdir -p "$BUILD_DIR"
           cd "$BUILD_DIR"
+
+          # Ensure build directory has proper permissions
+          chmod 755 "$BUILD_DIR" || true
 
           echo "🔧 Configuring CMake for ${{ matrix.abi }}..."
 
@@ -386,14 +430,16 @@ jobs:
         continue-on-error: true
         run: |
           echo "🔍 Analyzing BoringSSL build logs for ${{ matrix.abi }}..."
+          # Ensure script is executable
+          chmod +x ./scripts/build-log-checker.sh || true
           BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
           BUILD_DIR="$BORINGSSL_DIR/build_${{ matrix.abi }}"
           LOG_FILE="boringssl-build-${{ matrix.abi }}.log"
 
           if [ -f "$LOG_FILE" ]; then
-            ./scripts/build-log-checker.sh "$LOG_FILE"
+            bash ./scripts/build-log-checker.sh "$LOG_FILE" || echo "⚠️  Log checker script failed"
           elif [ -f "$BUILD_DIR/../$LOG_FILE" ]; then
-            ./scripts/build-log-checker.sh "$BUILD_DIR/../$LOG_FILE"
+            bash ./scripts/build-log-checker.sh "$BUILD_DIR/../$LOG_FILE" || echo "⚠️  Log checker script failed"
           else
             echo "⚠️  Build log file not found, skipping analysis"
             echo "Searched for: $LOG_FILE and $BUILD_DIR/../$LOG_FILE"
@@ -449,6 +495,8 @@ jobs:
             if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "v25.10.15" ]; then
               XRAY_VERSION="$INPUT_VERSION"
             fi
+            # Ensure GO_VERSION is set (fallback to default if empty)
+            GO_VERSION="${GO_VERSION:-1.25.3}"
             echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
             echo "GO_VERSION=$GO_VERSION" >> $GITHUB_ENV
           else
@@ -726,8 +774,10 @@ jobs:
         continue-on-error: true
         run: |
           echo "🔍 Analyzing Xray-core build logs for ${{ matrix.abi }}..."
+          # Ensure script is executable
+          chmod +x ./scripts/build-log-checker.sh || true
           if [ -f "xray-build-${{ matrix.abi }}.log" ]; then
-            ./scripts/build-log-checker.sh "xray-build-${{ matrix.abi }}.log"
+            bash ./scripts/build-log-checker.sh "xray-build-${{ matrix.abi }}.log" || echo "⚠️  Log checker script failed"
           else
             echo "⚠️  Build log file not found, skipping analysis"
           fi

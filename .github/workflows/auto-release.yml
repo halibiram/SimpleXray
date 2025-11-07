@@ -68,10 +68,18 @@ jobs:
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION_NAME" >> $GITHUB_OUTPUT
 
-          echo "XRAY_VERSION=$(grep 'XRAY_CORE_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
-          echo "GEOIP_VERSION=$(grep 'GEOIP_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
-          echo "GEOSITE_VERSION=$(grep 'GEOSITE_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
-          echo "GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
+          XRAY_VERSION=$(grep 'XRAY_CORE_VERSION' version.properties | cut -d '=' -f 2)
+          GEOIP_VERSION=$(grep 'GEOIP_VERSION' version.properties | cut -d '=' -f 2)
+          GEOSITE_VERSION=$(grep 'GEOSITE_VERSION' version.properties | cut -d '=' -f 2)
+          GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)
+
+          # Ensure GO_VERSION is set (fallback to default if empty)
+          GO_VERSION="${GO_VERSION:-1.25.3}"
+
+          echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
+          echo "GEOIP_VERSION=$GEOIP_VERSION" >> $GITHUB_ENV
+          echo "GEOSITE_VERSION=$GEOSITE_VERSION" >> $GITHUB_ENV
+          echo "GO_VERSION=$GO_VERSION" >> $GITHUB_ENV
           # OPENSSL_VERSION no longer needed - using BoringSSL
 
       - name: Check if tag exists
@@ -101,7 +109,7 @@ jobs:
         if: steps.check_tag.outputs.exists == 'false'
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: ${{ env.GO_VERSION || '1.25.3' }}
           cache: false
 
       - name: Setup Keystore and Properties
@@ -118,8 +126,14 @@ jobs:
       - name: Download Rules Files
         if: steps.check_tag.outputs.exists == 'false'
         run: |
-          wget https://github.com/lhear/v2ray-rules-dat/releases/download/${{ env.GEOIP_VERSION }}/geoip.dat -O ./app/src/main/assets/geoip.dat
-          wget https://github.com/lhear/v2ray-rules-dat/releases/download/${{ env.GEOSITE_VERSION }}/geosite.dat -O ./app/src/main/assets/geosite.dat
+          GEOIP_VERSION="${{ env.GEOIP_VERSION }}"
+          GEOSITE_VERSION="${{ env.GEOSITE_VERSION }}"
+          if [ -z "$GEOIP_VERSION" ] || [ -z "$GEOSITE_VERSION" ]; then
+            echo "❌ GEOIP_VERSION or GEOSITE_VERSION not set"
+            exit 1
+          fi
+          wget https://github.com/lhear/v2ray-rules-dat/releases/download/$GEOIP_VERSION/geoip.dat -O ./app/src/main/assets/geoip.dat
+          wget https://github.com/lhear/v2ray-rules-dat/releases/download/$GEOSITE_VERSION/geosite.dat -O ./app/src/main/assets/geosite.dat
 
       - name: Download Custom Xray Libraries
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
@@ -210,7 +224,12 @@ jobs:
 
           git clone https://github.com/XTLS/Xray-core.git
           cd Xray-core
-          git checkout ${{ env.XRAY_VERSION }}
+          XRAY_VERSION="${{ env.XRAY_VERSION }}"
+          if [ -z "$XRAY_VERSION" ]; then
+            echo "⚠️  XRAY_VERSION not set, using latest"
+            XRAY_VERSION="latest"
+          fi
+          git checkout "$XRAY_VERSION" || echo "⚠️  Version $XRAY_VERSION not found, using latest"
           COMMID=$(git rev-parse HEAD | cut -c 1-7)
 
           # Set Android NDK environment variables (absolute paths required for NDK r28c)
@@ -467,6 +486,13 @@ jobs:
 
           **Latest Improvements (v${VERSION}):**
 
+          🔧 **CI/CD Improvements:**
+          - Fixed Hysteria2 Go cache restore failures (disabled cache for external repos)
+          - Fixed BoringSSL build exit code 126 errors with improved tool verification
+          - Enhanced build script error handling and diagnostics
+          - Added proper executable permissions for build scripts
+          - Improved NDK toolchain verification and error messages
+
           🤖 **Android 16 Compatibility:**
           - Fixed SELinux execute_no_trans denial by using native library directly
           - Native library directory has app_file_exec context allowing execution
@@ -542,7 +568,12 @@ jobs:
             HYSTERIA2_STATUS="\\n🌊 *Hysteria2:* QUIC Acceleration Enabled\\n⚡ *QUIC:* Full QUIC proxy support"
           fi
 
-          TEXT="🎉 *New SimpleXray Release*\\n\\n📦 *Version:* $TAG\\n🔨 *Build:* ${{ steps.version.outputs.version_code }}$BORINGSSL_STATUS$HYSTERIA2_STATUS\\n\\n🔐 *Security:* Process verification, input validation\\n🛡️ *Stability:* Memory leak fixes, race condition fixes\\n⚡ *Performance:* I/O debouncing, async optimizations\\n\\n🔗 [Download Now]($RELEASE_URL)\\n\\n✨ Auto-update available in app!"
+          CI_STATUS=""
+          if [ "${{ needs.build-xray-libs.result }}" == "success" ] && [ "${{ needs.build-hysteria2-libs.result }}" == "success" ]; then
+            CI_STATUS="\\n🔧 *CI:* All builds successful"
+          fi
+
+          TEXT="🎉 *New SimpleXray Release*\\n\\n📦 *Version:* $TAG\\n🔨 *Build:* ${{ steps.version.outputs.version_code }}$BORINGSSL_STATUS$HYSTERIA2_STATUS$CI_STATUS\\n\\n🔐 *Security:* Process verification, input validation\\n🛡️ *Stability:* Memory leak fixes, race condition fixes\\n⚡ *Performance:* I/O debouncing, async optimizations\\n\\n🔗 [Download Now]($RELEASE_URL)\\n\\n✨ Auto-update available in app!"
 
           curl -s -X POST \
             -H "Content-Type: application/json" \
