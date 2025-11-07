@@ -15,7 +15,8 @@
 
 APP_OPTIM := release
 APP_PLATFORM := android-21
-APP_ABI := arm64-v8a
+# Build for all supported ABIs to ensure libraries are available
+APP_ABI := arm64-v8a x86_64
 # APP_ABI := arm64-v8a armeabi-v7a  # Temporarily disable 32-bit to fix build
 APP_STL := c++_shared
 APP_CFLAGS := -O3 -DPKGNAME=com/simplexray/an

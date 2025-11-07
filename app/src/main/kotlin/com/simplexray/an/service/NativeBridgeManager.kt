@@ -8,8 +8,60 @@ import com.simplexray.an.common.AppLogger
  * Provides safe wrappers with input validation and error handling.
  */
 object NativeBridgeManager {
+    private var libraryLoaded = false
+    private var libraryLoadError: Throwable? = null
+    
     init {
-        System.loadLibrary("hev-socks5-tunnel")
+        try {
+            System.loadLibrary("hev-socks5-tunnel")
+            libraryLoaded = true
+            AppLogger.d("NativeBridgeManager: Native library 'hev-socks5-tunnel' loaded successfully")
+        } catch (e: UnsatisfiedLinkError) {
+            libraryLoaded = false
+            libraryLoadError = e
+            AppLogger.e("NativeBridgeManager: Failed to load native library 'hev-socks5-tunnel'", e)
+            AppLogger.e("NativeBridgeManager: Library not found. Ensure the library is built and included in the APK.")
+        } catch (e: Exception) {
+            libraryLoaded = false
+            libraryLoadError = e
+            AppLogger.e("NativeBridgeManager: Unexpected error loading native library", e)
+        }
+    }
+    
+    /**
+     * Check if the native library is loaded.
+     * 
+     * @return true if library is loaded, false otherwise
+     */
+    fun isLibraryLoaded(): Boolean = libraryLoaded
+    
+    /**
+     * Get the error that occurred during library loading, if any.
+     * 
+     * @return The error that occurred, or null if library loaded successfully
+     */
+    fun getLibraryLoadError(): Throwable? = libraryLoadError
+    
+    /**
+     * Ensure library is loaded before making native calls.
+     * 
+     * @throws UnsatisfiedLinkError if library is not loaded
+     */
+    private fun ensureLibraryLoaded() {
+        if (!libraryLoaded) {
+            val error = libraryLoadError
+            val errorMsg = if (error != null) {
+                "Native library 'hev-socks5-tunnel' not loaded: ${error.message}"
+            } else {
+                "Native library 'hev-socks5-tunnel' not loaded"
+            }
+            AppLogger.e("NativeBridgeManager: $errorMsg")
+            throw UnsatisfiedLinkError(errorMsg).apply {
+                if (error != null) {
+                    initCause(error)
+                }
+            }
+        }
     }
     
     /**
@@ -21,6 +73,8 @@ object NativeBridgeManager {
      * @throws Exception if native call fails
      */
     fun startTProxyService(configPath: String, fd: Int) {
+        ensureLibraryLoaded()
+        
         // SEC: Validate configPath length to prevent buffer overflow
         if (configPath.length > 4096) {
             AppLogger.e("Config path too long: ${configPath.length} bytes")
@@ -79,6 +133,11 @@ object NativeBridgeManager {
      * @return Array of statistics, or null if unavailable or invalid
      */
     fun getTProxyStats(): LongArray? {
+        if (!libraryLoaded) {
+            AppLogger.w("Native library not loaded, cannot get TProxy stats")
+            return null
+        }
+        
         return try {
             val stats = TProxyGetStatsNative()
             // Validate returned array
