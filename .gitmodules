@@ -4,3 +4,6 @@
 [submodule "app/src/main/jni/perf-net/third_party/boringssl"]
 	path = app/src/main/jni/perf-net/third_party/boringssl
 	url = https://boringssl.googlesource.com/boringssl
+[submodule "app/src/main/jni/quiche-client/third_party/quiche"]
+	path = app/src/main/jni/quiche-client/third_party/quiche
+	url = https://github.com/cloudflare/quiche.git
