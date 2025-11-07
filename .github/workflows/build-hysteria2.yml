@@ -1,0 +1,166 @@
+name: Build Hysteria2 Binaries
+
+on:
+  workflow_call:
+    inputs:
+      hysteria2_version:
+        description: "Hysteria2 version to build"
+        required: false
+        type: string
+        default: "latest"
+  workflow_dispatch:
+    inputs:
+      hysteria2_version:
+        description: "Hysteria2 version to build"
+        required: false
+        default: "latest"
+      build_abis:
+        description: "Comma-separated ABIs to build"
+        required: false
+        default: "arm64-v8a,armeabi-v7a,x86_64"
+
+jobs:
+  build:
+    name: Build Hysteria2
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+        include:
+          - abi: arm64-v8a
+            goarch: arm64
+            toolchain: aarch64-linux-android24
+          - abi: armeabi-v7a
+            goarch: arm
+            toolchain: armv7a-linux-androideabi24
+          - abi: x86_64
+            goarch: amd64
+            toolchain: x86_64-linux-android24
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Setup NDK
+        run: |
+          wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q android-ndk.zip
+          rm android-ndk.zip
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "NDK version: $(cat $NDK_HOME/source.properties | grep Pkg.Revision | cut -d'=' -f2)"
+
+      - name: Clone Hysteria2
+        run: |
+          git clone --depth=1 https://github.com/apernet/hysteria.git
+          cd hysteria
+          
+          # Checkout version if specified
+          HYSTERIA2_VERSION="${{ inputs.hysteria2_version || 'latest' }}"
+          if [ "$HYSTERIA2_VERSION" != "latest" ]; then
+            echo "Checking out version: $HYSTERIA2_VERSION"
+            git fetch --tags
+            git checkout "$HYSTERIA2_VERSION" 2>/dev/null || echo "Version not found, using latest"
+          fi
+          
+          echo "Hysteria2 commit: $(git rev-parse HEAD)"
+          echo "Hysteria2 version: $(git describe --tags --always || echo 'unknown')"
+
+      - name: Build Hysteria2 for ${{ matrix.abi }}
+        run: |
+          cd hysteria
+          
+          export GOOS=android
+          export CGO_ENABLED=1
+          export GOARCH=${{ matrix.goarch }}
+          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain }}-clang
+          export CXX=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain }}-clang++
+          
+          # Android API level
+          ANDROID_API=24
+          
+          # CGO flags
+          export CGO_CFLAGS="--sysroot=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          export CGO_LDFLAGS="-L$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.goarch }}/$ANDROID_API -llog -landroid"
+          
+          echo "Building for ${{ matrix.abi }}..."
+          echo "  GOARCH: ${{ matrix.goarch }}"
+          echo "  CC: $CC"
+          echo "  Toolchain: ${{ matrix.toolchain }}"
+          
+          # Build
+          go build -o hysteria2 \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-s -w" \
+            ./cmd/hysteria2
+          
+          # Verify binary
+          if [ ! -f "hysteria2" ]; then
+            echo "❌ Build failed - binary not found"
+            exit 1
+          fi
+          
+          # Get binary size
+          SIZE=$(stat -c%s hysteria2)
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "✅ Binary built: ${SIZE_MB}MB"
+
+      - name: Copy to jniLibs
+        run: |
+          mkdir -p app/src/main/jniLibs/${{ matrix.abi }}
+          cp hysteria/hysteria2 app/src/main/jniLibs/${{ matrix.abi }}/libhysteria2.so
+          
+          # Verify
+          if [ -f "app/src/main/jniLibs/${{ matrix.abi }}/libhysteria2.so" ]; then
+            echo "✅ Copied to jniLibs/${{ matrix.abi }}/libhysteria2.so"
+            ls -lh app/src/main/jniLibs/${{ matrix.abi }}/libhysteria2.so
+          else
+            echo "❌ Failed to copy binary"
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hysteria2-${{ matrix.abi }}
+          path: app/src/main/jniLibs/${{ matrix.abi }}/libhysteria2.so
+          retention-days: 7
+          if-no-files-found: error
+
+  verify:
+    name: Verify Binaries
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Verify Binaries
+        run: |
+          echo "📋 Verifying Hysteria2 binaries..."
+          
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            if [ -f "artifacts/hysteria2-$abi/libhysteria2.so" ]; then
+              SIZE=$(stat -c%s "artifacts/hysteria2-$abi/libhysteria2.so")
+              SIZE_MB=$((SIZE / 1024 / 1024))
+              echo "✅ $abi: ${SIZE_MB}MB"
+              
+              # Check if binary is ELF
+              file "artifacts/hysteria2-$abi/libhysteria2.so" || echo "⚠️  $abi: Not a valid ELF file"
+            else
+              echo "❌ $abi: Binary not found"
+            fi
+          done
+          
+          echo ""
+          echo "📦 Binary locations:"
+          find artifacts -name "libhysteria2.so" -exec ls -lh {} \;
+

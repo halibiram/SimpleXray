@@ -1248,6 +1248,8 @@ class TProxyService : VpnService() {
                         val shortId = shortIds?.get(0)?.asString ?: return null
                         val serverNames = realitySettings?.getAsJsonArray("serverNames")
                         val serverName = serverNames?.get(0)?.asString ?: serverAddr
+                        val users = server.getAsJsonArray("users")
+                        val uuid = users?.get(0)?.asJsonObject?.get("id")?.asString
                         
                         return RealityConfig(
                             server = serverAddr,
@@ -1256,7 +1258,8 @@ class TProxyService : VpnService() {
                             publicKey = publicKey,
                             serverName = serverName,
                             fingerprintProfile = TlsFingerprintProfile.CHROME,
-                            localPort = 10808 // Default local SOCKS5 port
+                            localPort = 10808, // Default local SOCKS5 port
+                            uuid = uuid
                         )
                     }
                 }

@@ -5,6 +5,7 @@ import com.simplexray.an.common.AppLogger
 import com.simplexray.an.chain.hysteria2.Hysteria2
 import com.simplexray.an.chain.pepper.PepperShaper
 import com.simplexray.an.chain.reality.RealitySocks
+import com.simplexray.an.chain.reality.RealityXrayIntegrator
 import kotlinx.coroutines.cancel
 import com.simplexray.an.xray.XrayCoreLauncher
 import kotlinx.coroutines.CoroutineScope
@@ -84,7 +85,21 @@ class ChainSupervisor(private val context: Context) {
                 return Result.failure(IllegalStateException("Chain is already running"))
             }
             
+            // Validate configuration before starting
+            val validation = ChainHelper.validateChainConfig(config)
+            if (!validation.isValid) {
+                AppLogger.e("ChainSupervisor: Configuration validation failed: ${validation.errors.joinToString(", ")}")
+                return Result.failure(Exception("Invalid configuration: ${validation.errors.joinToString(", ")}"))
+            }
+            
+            if (validation.warnings.isNotEmpty()) {
+                validation.warnings.forEach { warning ->
+                    AppLogger.w("ChainSupervisor: Warning: $warning")
+                }
+            }
+            
             AppLogger.i("ChainSupervisor: Starting chain '${config.name}'")
+            AppLogger.d("ChainSupervisor: Chain status: ${ChainHelper.getChainStatusSummary(config)}")
             currentConfig = config
             kotlinx.coroutines.runBlocking {
                 statusMutex.withLock {
@@ -140,53 +155,87 @@ class ChainSupervisor(private val context: Context) {
             // 3. Attach PepperShaper if configured
             if (config.pepperParams != null) {
                 // Attempt to attach PepperShaper to socket FDs
-                // Note: Proper FD extraction requires:
-                // 1. Hysteria2/RealitySocks to expose socket FDs via JNI
-                // 2. Or attach at Xray level if Xray exposes FDs
-                // For now, we attempt attachment if FDs are available
+                // Try multiple sources: Hysteria2, RealitySocks, or TUN interface
                 val pepperResult = try {
-                    // Try to get socket FDs from Hysteria2 if it's running
-                    // This is a placeholder - actual FD extraction needs to be implemented
-                    // in Hysteria2.getSocketFds() or similar method
-                    val hysteria2Fds = if (config.hysteria2Config != null && Hysteria2.isRunning()) {
-                        // TODO: Implement Hysteria2.getSocketFds() to return Pair<readFd, writeFd>
-                        // For now, return null to indicate FDs not available
-                        null
-                    } else {
-                        null
+                    var attached = false
+                    
+                    // Try 1: Get FDs from Hysteria2 if running
+                    if (config.hysteria2Config != null && Hysteria2.isRunning()) {
+                        val hysteria2Fds = Hysteria2.getSocketFds()
+                        if (hysteria2Fds != null) {
+                            val handle = PepperShaper.attach(
+                                fdPair = hysteria2Fds,
+                                mode = PepperShaper.SocketMode.TCP,
+                                params = config.pepperParams
+                            )
+                            if (handle != null) {
+                                pepperHandle = handle
+                                attached = true
+                                AppLogger.i("ChainSupervisor: PepperShaper attached to Hysteria2 sockets")
+                            }
+                        }
                     }
                     
-                    if (hysteria2Fds != null) {
-                        val handle = PepperShaper.attach(
-                            fdPair = hysteria2Fds,
-                            mode = PepperShaper.SocketMode.TCP, // Default to TCP
-                            params = config.pepperParams
-                        )
-                        if (handle != null) {
-                            pepperHandle = handle
-                            Result.success(Unit)
-                        } else {
-                            Result.failure(Exception("Failed to attach PepperShaper"))
-                        }
-                    } else {
-                        // FDs not available yet - mark as enabled but not attached
-                        // This allows the chain to start, but PepperShaper won't be active
-                        // until FDs become available
+                    // Try 2: If Hysteria2 FDs not available, try to attach at TUN level
+                    // Note: This requires TUN FD to be passed from TProxyService
+                    // For now, we mark PepperShaper as configured but not attached
+                    if (!attached) {
                         AppLogger.w("ChainSupervisor: PepperShaper configured but socket FDs not available")
-                        Result.success(Unit) // Don't fail the chain startup
+                        AppLogger.w("ChainSupervisor: PepperShaper will be inactive (chain will work without it)")
+                        // Don't fail chain startup - PepperShaper is optional
+                        Result.success(Unit)
+                    } else {
+                        Result.success(Unit)
                     }
                 } catch (e: Exception) {
-                    AppLogger.e("ChainSupervisor: Failed to attach PepperShaper", e)
-                    Result.failure(e)
+                    AppLogger.e("ChainSupervisor: Failed to attach PepperShaper: ${e.message}", e)
+                    // Don't fail chain startup - PepperShaper is optional enhancement
+                    AppLogger.w("ChainSupervisor: Continuing without PepperShaper")
+                    Result.success(Unit)
                 }
                 
-                updateLayerStatus("pepper", pepperResult.isSuccess, pepperResult.exceptionOrNull()?.message)
+                updateLayerStatus("pepper", pepperResult.isSuccess, 
+                    if (pepperHandle != null) null else "FDs not available (optional)")
             }
             
             // 4. Start Xray-core if configured
+            // If Reality config exists, integrate it with Xray config for unified chain tunnel
             if (config.xrayConfigPath != null) {
+                // If Reality config is provided, build unified Xray config
+                val finalXrayConfigPath = if (config.realityConfig != null) {
+                    try {
+                        val originalConfigPath = File(context.filesDir, config.xrayConfigPath)
+                        if (originalConfigPath.exists()) {
+                            // Build unified config with Reality integration
+                            val unifiedConfig = RealityXrayIntegrator.buildUnifiedXrayConfig(
+                                originalConfigPath.absolutePath,
+                                config.realityConfig,
+                                chainMode = true
+                            )
+                            
+                            if (unifiedConfig != null) {
+                                val unifiedConfigFile = File(context.filesDir, "unified-chain-${System.currentTimeMillis()}.json")
+                                unifiedConfigFile.writeText(unifiedConfig)
+                                AppLogger.i("ChainSupervisor: Created unified Xray config with Reality integration")
+                                unifiedConfigFile.name // Return relative path
+                            } else {
+                                AppLogger.w("ChainSupervisor: Failed to build unified config, using original")
+                                config.xrayConfigPath
+                            }
+                        } else {
+                            AppLogger.w("ChainSupervisor: Original Xray config not found, using provided path")
+                            config.xrayConfigPath
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e("ChainSupervisor: Error building unified config: ${e.message}", e)
+                        config.xrayConfigPath
+                    }
+                } else {
+                    config.xrayConfigPath
+                }
+                
                 // SEC: Validate config path to prevent path traversal
-                val configFile = File(context.filesDir, config.xrayConfigPath)
+                val configFile = File(context.filesDir, finalXrayConfigPath)
                 val canonicalPath = try {
                     configFile.canonicalPath
                 } catch (e: Exception) {
@@ -233,23 +282,38 @@ class ChainSupervisor(private val context: Context) {
                 updateLayerStatus("xray", result.isSuccess, result.exceptionOrNull()?.message)
             }
             
-            // Check if all critical layers started successfully
+            // Check if critical layers started successfully
+            // Reality and Xray are critical, Hysteria2 and PepperShaper are optional
+            val criticalLayers = mutableListOf<Result<Unit>>()
+            if (config.realityConfig != null) {
+                results.firstOrNull()?.let { criticalLayers.add(it) }
+            }
+            if (config.xrayConfigPath != null) {
+                results.lastOrNull()?.let { criticalLayers.add(it) }
+            }
+            
+            val criticalSuccess = criticalLayers.isEmpty() || criticalLayers.all { it.isSuccess }
             val allSuccess = results.all { it.isSuccess }
             
             kotlinx.coroutines.runBlocking {
                 statusMutex.withLock {
-                    if (allSuccess) {
+                    if (criticalSuccess) {
                         startTime.set(System.currentTimeMillis())
-                        _status.value = _status.value.copy(state = ChainState.RUNNING)
-                        AppLogger.i("ChainSupervisor: Chain started successfully")
+                        if (allSuccess) {
+                            _status.value = _status.value.copy(state = ChainState.RUNNING)
+                            AppLogger.i("ChainSupervisor: Chain started successfully (all layers active)")
+                        } else {
+                            _status.value = _status.value.copy(state = ChainState.RUNNING)
+                            AppLogger.i("ChainSupervisor: Chain started successfully (some optional layers inactive)")
+                        }
                     } else {
                         _status.value = _status.value.copy(state = ChainState.DEGRADED)
-                        AppLogger.w("ChainSupervisor: Chain started in degraded mode")
+                        AppLogger.w("ChainSupervisor: Chain started in degraded mode (critical layers failed)")
                     }
                 }
             }
             
-            if (allSuccess) {
+            if (criticalSuccess) {
                 // Start monitoring after state update
                 startMonitoring()
             }

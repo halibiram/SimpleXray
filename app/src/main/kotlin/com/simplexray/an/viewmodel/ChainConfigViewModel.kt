@@ -181,7 +181,9 @@ class ChainConfigViewModel(application: Application) : AndroidViewModel(applicat
                                 shortId = shortId,
                                 publicKey = publicKey,
                                 serverName = finalServerName,
-                                fingerprintProfile = fingerprintProfile
+                                fingerprintProfile = fingerprintProfile,
+                                localPort = 10808,
+                                uuid = uuid
                             )
                         }
                     }

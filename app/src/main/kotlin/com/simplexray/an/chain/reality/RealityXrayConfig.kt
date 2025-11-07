@@ -52,7 +52,7 @@ object RealityXrayConfig {
                     addProperty("port", config.port)
                     val users = JsonArray()
                     val user = JsonObject().apply {
-                        addProperty("id", generateUUID()) // Generate or use config UUID
+                        addProperty("id", config.uuid ?: generateUUID()) // Use config UUID or generate
                         addProperty("encryption", "none")
                     }
                     users.add(user)

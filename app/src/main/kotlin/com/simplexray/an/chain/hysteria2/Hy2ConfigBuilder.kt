@@ -63,15 +63,17 @@ object Hy2ConfigBuilder {
             root.add("obfs", obfs)
         }
         
-        // SOCKS5 proxy (upstream chaining)
+        // SOCKS5 proxy - always add for standalone QUIC usage
+        // If upstreamSocksAddr is null, Hysteria2 works as standalone QUIC proxy
+        // If upstreamSocksAddr is provided, it chains to upstream SOCKS
+        val socks5 = JsonObject().apply {
+            addProperty("listen", "127.0.0.1:0") // Let Hysteria2 choose port
+            addProperty("timeout", 300) // 5 minutes
+        }
+        root.add("socks5", socks5)
+        
+        // Upstream SOCKS5 proxy (only if chaining is needed)
         if (config.upstreamSocksAddr != null) {
-            val socks5 = JsonObject().apply {
-                addProperty("listen", "127.0.0.1:0") // Let Hysteria2 choose port
-                addProperty("timeout", 300) // 5 minutes
-            }
-            root.add("socks5", socks5)
-            
-            // Upstream SOCKS5 proxy
             val proxy = JsonObject().apply {
                 addProperty("url", "socks5://${config.upstreamSocksAddr.hostString}:${config.upstreamSocksAddr.port}")
             }
