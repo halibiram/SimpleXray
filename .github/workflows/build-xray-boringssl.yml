@@ -1027,10 +1027,27 @@ jobs:
       - name: Test Xray-core Version and BoringSSL Verification
         run: |
           echo "🧪 Testing xray-core -version and verifying BoringSSL integration..."
-
-          XRAY_BINARY="../xray-output/${{ matrix.abi }}/libxray.so"
+          
+          # Binary is saved to xray-output from Xray-core directory (one level up from Xray-core)
+          # Test step runs from root, so path is xray-output (not ../xray-output)
+          XRAY_BINARY="xray-output/${{ matrix.abi }}/libxray.so"
+          
+          # Try both paths in case working directory differs
           if [ ! -f "$XRAY_BINARY" ]; then
-            echo "❌ Xray binary not found: $XRAY_BINARY"
+            XRAY_BINARY="../xray-output/${{ matrix.abi }}/libxray.so"
+          fi
+          
+          if [ ! -f "$XRAY_BINARY" ]; then
+            echo "❌ Xray binary not found. Tried:"
+            echo "   - xray-output/${{ matrix.abi }}/libxray.so"
+            echo "   - ../xray-output/${{ matrix.abi }}/libxray.so"
+            echo "   Current directory: $(pwd)"
+            echo "   Directory contents:"
+            ls -la | head -20
+            if [ -d "xray-output" ]; then
+              echo "   xray-output contents:"
+              find xray-output -type f 2>/dev/null | head -10
+            fi
             exit 1
           fi
 
