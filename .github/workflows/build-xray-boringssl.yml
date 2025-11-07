@@ -692,10 +692,10 @@ jobs:
           export CGO_CFLAGS="-I$BORINGSSL_INCLUDE --sysroot=$NDK_SYSROOT"
 
           # CGO_LDFLAGS: Hybrid static/dynamic linking
-          # Strategy: Force include entire BoringSSL libraries using direct file paths
-          # -Wl,--whole-archive: Force linking of entire BoringSSL libraries (prevents unused symbol removal)
-          # Direct .a file paths: Link BoringSSL libraries directly (more reliable than -L/-l)
+          # Strategy: Link BoringSSL libraries using -L/-l with proper ordering
+          # Direct .a file paths cause duplicate linking issues with Go's CGO linker
           # -Wl,-Bstatic: Switch to static linking mode (only for BoringSSL)
+          # -lcrypto -lssl: BoringSSL libraries (must come after -L flags)
           # -Wl,-Bdynamic: Switch back to dynamic linking mode (for Android system libs)
           # -llog -landroid: Android system libraries (only available as .so, not .a)
           # -lc -lm -ldl: Standard C libraries (dynamic)
@@ -705,14 +705,13 @@ jobs:
           # Using -static would prevent linking against .so files, causing "unable to find library" errors.
           # Solution: Statically link BoringSSL, dynamically link Android system libraries.
           # 
-          # Why direct file paths? More reliable than -L/-l, ensures linker finds the exact files.
-          # Why --whole-archive? Forces linker to include ALL symbols from BoringSSL libraries,
-          # even if they appear unused. This ensures BoringSSL symbols are present in the binary.
+          # Why -L/-l instead of direct paths? Go's CGO linker may duplicate direct paths.
+          # Using -L/-l is more compatible with Go's linking process.
+          # Note: Used symbols will be included automatically by the linker.
           export CGO_LDFLAGS="\
-            -Wl,--whole-archive \
-            $BORINGSSL_CRYPTO \
-            $BORINGSSL_SSL \
-            -Wl,--no-whole-archive \
+            -Wl,-Bstatic \
+            -L$BORINGSSL_CRYPTO_DIR -L$BORINGSSL_SSL_DIR \
+            -lcrypto -lssl \
             -Wl,-Bdynamic \
             -L$ANDROID_LIB_DIR \
             -L$NDK_SYSROOT/usr/lib \
