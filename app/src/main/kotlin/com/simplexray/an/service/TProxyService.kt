@@ -46,7 +46,8 @@ import java.lang.Process
 
 class TProxyService : VpnService() {
     // Properly cancelled in onDestroy() to prevent leaks
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Use var to allow recreation after cancellation in stopXray()
+    private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // Handler for scheduling connection checks (non-blocking operations only)
     private val handler = Handler(Looper.getMainLooper())
     // Use bounded buffer to prevent unbounded growth
@@ -393,6 +394,12 @@ class TProxyService : VpnService() {
     }
 
     private fun startXray() {
+        // Ensure scope is active before launching coroutines
+        // This prevents issues if scope was cancelled unexpectedly
+        if (!serviceScope.isActive) {
+            AppLogger.w("TProxyService: serviceScope was inactive, recreating it")
+            serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        }
         startService()
         serviceScope.launch { runXrayProcess() }
     }
@@ -402,12 +409,6 @@ class TProxyService : VpnService() {
         var processPid: Long = -1
         try {
             AppLogger.d("Attempting to start xray process.")
-            val libraryDir = getNativeLibraryDir(applicationContext)
-            if (libraryDir == null) {
-                AppLogger.e("Failed to get native library directory")
-                stopXray()
-                return
-            }
             val prefs = Preferences(applicationContext)
             val selectedConfigPath = prefs.selectedConfigPath
             if (selectedConfigPath == null) {
@@ -415,7 +416,14 @@ class TProxyService : VpnService() {
                 stopXray()
                 return
             }
-            val xrayPath = "$libraryDir/libxray.so"
+            // Use XrayCoreLauncher.copyExecutable() to copy libxray.so to filesDir
+            // This avoids SELinux setattr restrictions on nativeLibraryDir
+            val xrayPath = com.simplexray.an.xray.XrayCoreLauncher.copyExecutable(applicationContext)?.absolutePath
+            if (xrayPath == null) {
+                AppLogger.e("Failed to copy xray executable to filesDir")
+                stopXray()
+                return
+            }
             // Validate config file path to prevent directory traversal
             val configFile = File(selectedConfigPath)
             if (!configFile.canonicalPath.startsWith(applicationContext.filesDir.canonicalPath) &&
@@ -637,9 +645,13 @@ class TProxyService : VpnService() {
         
         // Restrict filesystem access to prevent SELinux denials
         // Set HOME and TMPDIR to app-accessible directories to prevent system directory probing
+        // Also prevents access to tests directories (shell_test_data_file context)
         environment["HOME"] = filesDir.path
         environment["TMPDIR"] = cacheDir.path
         environment["TMP"] = cacheDir.path
+        // Ensure BORINGSSL_TEST_DATA_ROOT is not set to prevent test data access
+        // Test data should only be accessed in test builds, not production
+        environment.remove("BORINGSSL_TEST_DATA_ROOT")
         
         processBuilder.directory(filesDir)
         processBuilder.redirectErrorStream(true)
@@ -657,8 +669,10 @@ class TProxyService : VpnService() {
         // Stop connection monitoring
         stopConnectionMonitoring()
         
+        // Cancel existing scope and recreate it to allow future startXray() calls
         serviceScope.cancel()
-        AppLogger.d("CoroutineScope cancelled.")
+        serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        AppLogger.d("CoroutineScope cancelled and recreated.")
 
         // Atomically get and clear process state
         val oldState = processState.getAndSet(ProcessState(null, -1L, false))
