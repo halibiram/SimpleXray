@@ -41,25 +41,34 @@ jobs:
 
       - name: Initialize QUICHE Submodule
         run: |
-          echo "📦 Initializing QUICHE submodule..."
+          echo "📦 Initializing QUICHE submodule with all nested submodules..."
           QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
           
-          if [ -d "$QUICHE_DIR" ] && [ -f "$QUICHE_DIR/Cargo.toml" ]; then
-            echo "✅ QUICHE submodule already exists"
+          # Initialize QUICHE submodule recursively to get BoringSSL and other deps
+          echo "📥 Initializing QUICHE submodule recursively..."
+          git submodule sync --recursive || true
+          git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || true
+          
+          # If submodule doesn't exist, clone it manually with all submodules
+          if [ ! -d "$QUICHE_DIR" ] || [ ! -f "$QUICHE_DIR/.git" ]; then
+            echo "⚠️  QUICHE submodule not found, cloning manually with submodules..."
+            mkdir -p "$(dirname "$QUICHE_DIR")"
+            git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
+              echo "❌ Failed to clone QUICHE"
+              exit 1
+            }
           else
-            echo "📥 Initializing QUICHE submodule..."
-            git submodule sync --recursive || true
-            git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || true
-            
-            # If submodule doesn't exist, clone it manually
-            if [ ! -d "$QUICHE_DIR" ] || [ ! -f "$QUICHE_DIR/Cargo.toml" ]; then
-              echo "⚠️  QUICHE submodule not found, cloning manually..."
-              mkdir -p "$(dirname "$QUICHE_DIR")"
-              git clone --depth=1 https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
-                echo "❌ Failed to clone QUICHE"
+            # Ensure nested submodules are initialized
+            cd "$QUICHE_DIR"
+            git submodule update --init --recursive || {
+              echo "⚠️  Failed to initialize nested submodules, trying manual clone..."
+              cd "$(dirname "$QUICHE_DIR")"
+              rm -rf "$QUICHE_DIR"
+              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
+                echo "❌ Failed to clone QUICHE with submodules"
                 exit 1
               }
-            fi
+            }
           fi
           
           # Verify QUICHE structure
@@ -67,6 +76,20 @@ jobs:
             echo "✅ QUICHE structure verified"
             echo "📁 QUICHE directory: $QUICHE_DIR"
             ls -la "$QUICHE_DIR/quiche/" | head -10
+            
+            # Verify BoringSSL submodule exists (required for QUICHE build)
+            if [ -d "$QUICHE_DIR/quiche/deps/boringssl" ] && [ -f "$QUICHE_DIR/quiche/deps/boringssl/CMakeLists.txt" ]; then
+              echo "✅ BoringSSL submodule found"
+            else
+              echo "⚠️  BoringSSL submodule missing, initializing..."
+              cd "$QUICHE_DIR"
+              git submodule update --init --recursive quiche/deps/boringssl || {
+                echo "❌ Failed to initialize BoringSSL submodule"
+                echo "📁 Contents of quiche/deps:"
+                ls -la quiche/deps/ 2>/dev/null || echo "deps directory does not exist"
+                exit 1
+              }
+            fi
           else
             echo "❌ QUICHE structure invalid"
             echo "📁 Contents of $QUICHE_DIR:"
@@ -78,6 +101,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          cmake --version
+          ninja --version
 
       - name: Install cargo-ndk
         run: |
