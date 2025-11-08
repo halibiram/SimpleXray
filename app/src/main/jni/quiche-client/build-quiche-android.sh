@@ -66,6 +66,7 @@ for target in "${TARGETS[@]}"; do
 
     # Aggressive optimization flags via RUSTFLAGS
     # Using thin LTO for cross-compilation compatibility (fat LTO conflicts with embed-bitcode=no)
+    # Removed target-cpu=native as it's incompatible with cross-compilation
     export RUSTFLAGS="
         -C opt-level=3
         -C lto=thin
