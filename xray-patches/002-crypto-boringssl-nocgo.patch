@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..2222222
 --- /dev/null
 +++ b/common/crypto/cipher_nocgo.go
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,23 @@
 +//go:build !cgo
 +// +build !cgo
 +

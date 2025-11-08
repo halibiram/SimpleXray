@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..5555555
 --- /dev/null
 +++ b/common/crypto/x509.go
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,34 @@
 +//go:build cgo
 +// +build cgo
 +
