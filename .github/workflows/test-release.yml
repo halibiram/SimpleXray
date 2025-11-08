@@ -3,6 +3,10 @@ name: "Test Release"
 on:
   workflow_dispatch:
     inputs:
+      workflow_run_id:
+        description: "Workflow run ID to use (e.g., 19190879290). Leave empty to auto-detect"
+        required: false
+        type: string
       release_tag:
         description: "Release tag to use (e.g., v1.10.184). Leave empty to use latest successful release"
         required: false
@@ -44,6 +48,40 @@ jobs:
       - name: Find Successful Workflow Run with Artifacts
         id: find_workflow
         run: |
+          INPUT_RUN_ID="${{ inputs.workflow_run_id }}"
+          
+          if [ -n "$INPUT_RUN_ID" ]; then
+            echo "✅ Using specified workflow run ID: $INPUT_RUN_ID"
+            
+            # Verify the run exists and is successful
+            RUN_INFO=$(gh run view "$INPUT_RUN_ID" --json conclusion,displayTitle,createdAt 2>/dev/null || echo "")
+            if [ -z "$RUN_INFO" ]; then
+              echo "❌ Workflow run $INPUT_RUN_ID not found"
+              exit 1
+            fi
+            
+            RUN_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.conclusion' 2>/dev/null || echo "")
+            if [ "$RUN_CONCLUSION" != "success" ]; then
+              echo "⚠️  Workflow run $INPUT_RUN_ID is not successful (conclusion: $RUN_CONCLUSION)"
+              echo "   Continuing anyway..."
+            fi
+            
+            # Check if this run has artifacts
+            ARTIFACTS=$(gh run view "$INPUT_RUN_ID" --json artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
+            if [ -n "$ARTIFACTS" ] && [ "$ARTIFACTS" != "" ]; then
+              echo "✅ Found artifacts in run $INPUT_RUN_ID:"
+              echo "$ARTIFACTS" | while read -r artifact; do
+                echo "   - $artifact"
+              done
+              FOUND_RUN_ID="$INPUT_RUN_ID"
+              echo "run_id=$FOUND_RUN_ID" >> $GITHUB_OUTPUT
+              echo "use_release=false" >> $GITHUB_OUTPUT
+              exit 0
+            else
+              echo "⚠️  No artifacts found in run $INPUT_RUN_ID, will check releases..."
+            fi
+          fi
+          
           echo "🔍 Finding successful Auto Release workflow run with artifacts..."
           
           # Get workflow file name
