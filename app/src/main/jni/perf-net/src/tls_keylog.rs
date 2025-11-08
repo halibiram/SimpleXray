@@ -8,7 +8,7 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JString, JLongArray};
+use jni::objects::{JClass, JString, JLongArray, JByteArray};
 use jni::sys::{jint, jlong, jlongArray};
 use log::{debug, error};
 use parking_lot::Mutex;

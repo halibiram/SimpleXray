@@ -7,6 +7,7 @@ use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JByteArray};
 use jni::sys::{jint, jobject, jobjectArray, jintArray};
 use nix::sys::socket::{recv, send, MsgFlags, recvmsg};
+// IoVec is in nix::sys::uio (requires uio feature, which we added to Cargo.toml)
 use nix::sys::uio::IoVec;
 use std::os::unix::io::RawFd;
 use std::ptr;
@@ -38,7 +39,10 @@ fn check_zerocopy_support() -> bool {
         let result = {
             #[cfg(target_os = "android")]
             {
-                use libc::{SOL_SOCKET, SO_ZEROCOPY};
+                // SO_ZEROCOPY is Linux 4.14+ only, may not be in libc on older Android
+                // Use numeric constant if not available
+                const SO_ZEROCOPY: i32 = 60; // Linux 4.14+
+                use libc::SOL_SOCKET;
                 let optval: i32 = 1;
                 let r = unsafe {
                     libc::setsockopt(test_fd, SOL_SOCKET, SO_ZEROCOPY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
@@ -162,7 +166,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     if check_zerocopy_support() {
         #[cfg(target_os = "android")]
         {
-            use libc::{SOL_SOCKET, SO_ZEROCOPY};
+            const SO_ZEROCOPY: i32 = 60; // Linux 4.14+
+            use libc::SOL_SOCKET;
             let optval: i32 = 1;
             let _ = unsafe {
                 libc::setsockopt(fd, SOL_SOCKET, SO_ZEROCOPY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
@@ -263,6 +268,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             return -1;
         }
 
+        // Use IoVec from nix::sys::uio (requires uio feature)
         iovecs.push(IoVec::from_mut_slice(unsafe {
             std::slice::from_raw_parts_mut(buf_ptr, len as usize)
         }));

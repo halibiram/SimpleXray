@@ -11,7 +11,7 @@ use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jint, jlong};
 use log::debug;
-use rustls::client::{ServerCertVerifier, ServerCertVerified};
+use rustls::client::danger::{ServerCertVerifier, ServerCertVerified};
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::Error;
 use std::sync::Arc;
