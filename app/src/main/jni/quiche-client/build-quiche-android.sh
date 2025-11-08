@@ -65,11 +65,11 @@ for target in "${TARGETS[@]}"; do
     esac
 
     # Aggressive optimization flags via RUSTFLAGS
+    # Using thin LTO for cross-compilation compatibility (fat LTO conflicts with embed-bitcode=no)
     export RUSTFLAGS="
         -C opt-level=3
-        -C lto=fat
+        -C lto=thin
         -C codegen-units=1
-        -C target-cpu=native
         -C panic=abort
         -C overflow-checks=off
         -C debug-assertions=off

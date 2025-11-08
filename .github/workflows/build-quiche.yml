@@ -139,10 +139,10 @@ jobs:
           echo "QUICHE commit: $(git rev-parse HEAD)"
           echo "Building for ${{ matrix.rust_target }} (${{ matrix.abi }})..."
           
-          # Set optimization flags (removed target-cpu=native for cross-compilation)
+          # Set optimization flags (using thin LTO for cross-compilation compatibility)
           export RUSTFLAGS="
             -C opt-level=3
-            -C lto=fat
+            -C lto=thin
             -C codegen-units=1
             -C panic=abort
             -C overflow-checks=off
