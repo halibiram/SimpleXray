@@ -319,7 +319,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     }).collect();
 
-    match recvmsg(fd, &mut io_slices, None, flags) {
+    match recvmsg::<()>(fd, &mut io_slices, None, flags) {
         Ok(received_msg) => {
             // Extract bytes from RecvMsg - in nix 0.28, bytes is a field
             let total_bytes = received_msg.bytes;
