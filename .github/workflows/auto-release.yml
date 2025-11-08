@@ -9,7 +9,6 @@ on:
       - "xray-patches/**"
       - "scripts/**"
       - ".github/workflows/**"
-      - "version.properties"
   workflow_dispatch:
     inputs:
       with_boringssl:
@@ -29,89 +28,26 @@ jobs:
       (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
     secrets: inherit
 
-  build-hysteria2-libs:
-    name: Build Hysteria2 Binaries
-    uses: ./.github/workflows/build-hysteria2.yml
-    if: |
-      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    secrets: inherit
-
-  build-quiche-libs:
-    name: Build QUICHE Native Client
-    uses: ./.github/workflows/build-quiche.yml
-    if: |
-      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    secrets: inherit
-
   build-and-release:
     name: Build and Auto Release
     runs-on: ubuntu-latest
-    needs: [build-xray-libs, build-hysteria2-libs, build-quiche-libs]
-    if: always() &&
-      (needs.build-xray-libs.result == 'success' || needs.build-xray-libs.result == 'skipped') &&
-      (needs.build-hysteria2-libs.result == 'success' || needs.build-hysteria2-libs.result == 'skipped') &&
-      (needs.build-quiche-libs.result == 'success' || needs.build-quiche-libs.result == 'skipped')
+    needs: [build-xray-libs]
+    if: always() && (needs.build-xray-libs.result == 'success' || needs.build-xray-libs.result == 'skipped')
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: false
+          submodules: true
 
-      - name: Initialize Valid Submodules
+      - name: Explicit Submodule Update
         run: |
-          # Initialize required submodules
-          # Use --recursive to initialize nested submodules
-          git submodule sync || true
-
-          # Initialize hev-socks5-tunnel with nested submodules (yaml, lwip, hev-task-system)
-          git submodule update --init --recursive app/src/main/jni/hev-socks5-tunnel || true
-
-          # Initialize QUICHE submodule with nested submodules (BoringSSL)
-          # QUICHE headers are needed even if libraries are pre-built
-          echo "📦 Initializing QUICHE submodule..."
-          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
-
-          # Ensure parent directory exists
-          mkdir -p "$(dirname "$QUICHE_DIR")"
-
-          # Try submodule update first
-          if git submodule update --init --recursive "$QUICHE_DIR" 2>&1; then
-            echo "✅ QUICHE submodule updated via git submodule"
-          else
-            echo "⚠️  QUICHE submodule update failed, trying manual initialization..."
-            # Remove if exists but incomplete
-            if [ -d "$QUICHE_DIR" ] && [ ! -f "$QUICHE_DIR/.git" ]; then
-              echo "Removing incomplete QUICHE directory..."
-              rm -rf "$QUICHE_DIR"
-            fi
-            # Try manual clone if submodule update fails
-            if [ ! -d "$QUICHE_DIR" ]; then
-              echo "Cloning QUICHE repository manually..."
-              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
-                echo "❌ Failed to initialize QUICHE submodule"
-                echo "This is non-fatal - build will continue without QUICHE support"
-                # Don't exit - build can continue without QUICHE
-              }
-            fi
-          fi
-
-          # Verify QUICHE submodule structure
-          if [ -d "$QUICHE_DIR/quiche" ] && [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
-            echo "✅ QUICHE submodule initialized correctly"
-            echo "   Path: $QUICHE_DIR"
-            echo "   Structure verified: quiche/Cargo.toml exists"
-          elif [ -d "$QUICHE_DIR" ]; then
-            echo "⚠️  QUICHE submodule directory exists but structure incomplete"
-            echo "   Contents:"
-            ls -la "$QUICHE_DIR" | head -10 || true
-            echo "   Build will continue but QUICHE support may be disabled"
-          else
-            echo "⚠️  QUICHE submodule not found - build will continue without QUICHE"
-          fi
-
-          echo "✅ Submodules initialized"
+          git submodule sync --recursive || true
+          git submodule update --init --recursive || {
+            echo "⚠️  Some submodules failed to update, continuing..."
+            # BoringSSL may not be a submodule, that's okay
+          }
 
       - name: Read Versions
         id: version
@@ -122,18 +58,10 @@ jobs:
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION_NAME" >> $GITHUB_OUTPUT
 
-          XRAY_VERSION=$(grep 'XRAY_CORE_VERSION' version.properties | cut -d '=' -f 2)
-          GEOIP_VERSION=$(grep 'GEOIP_VERSION' version.properties | cut -d '=' -f 2)
-          GEOSITE_VERSION=$(grep 'GEOSITE_VERSION' version.properties | cut -d '=' -f 2)
-          GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)
-
-          # Ensure GO_VERSION is set (fallback to default if empty)
-          GO_VERSION="${GO_VERSION:-1.25.3}"
-
-          echo "XRAY_VERSION=$XRAY_VERSION" >> $GITHUB_ENV
-          echo "GEOIP_VERSION=$GEOIP_VERSION" >> $GITHUB_ENV
-          echo "GEOSITE_VERSION=$GEOSITE_VERSION" >> $GITHUB_ENV
-          echo "GO_VERSION=$GO_VERSION" >> $GITHUB_ENV
+          echo "XRAY_VERSION=$(grep 'XRAY_CORE_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
+          echo "GEOIP_VERSION=$(grep 'GEOIP_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
+          echo "GEOSITE_VERSION=$(grep 'GEOSITE_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
+          echo "GO_VERSION=$(grep 'GO_VERSION' version.properties | cut -d '=' -f 2)" >> $GITHUB_ENV
           # OPENSSL_VERSION no longer needed - using BoringSSL
 
       - name: Check if tag exists
@@ -147,12 +75,12 @@ jobs:
             echo "✅ Tag v${{ steps.version.outputs.version_name }} does not exist, proceeding with build"
           fi
 
-      - name: Set up Java 21
+      - name: Set up Java 17
         if: steps.check_tag.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "21"
+          java-version: "17"
           cache: "gradle"
 
       - name: Set up Android SDK
@@ -163,14 +91,11 @@ jobs:
         if: steps.check_tag.outputs.exists == 'false'
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION != '' && env.GO_VERSION || '1.25.3' }}
+          go-version: ${{ env.GO_VERSION }}
           cache: false
 
       - name: Setup Keystore and Properties
         if: steps.check_tag.outputs.exists == 'false'
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           echo "${{ secrets.SIGNING_KEYSTORE }}" > keystore.b64
           base64 -d keystore.b64 > ./store.jks
@@ -183,14 +108,8 @@ jobs:
       - name: Download Rules Files
         if: steps.check_tag.outputs.exists == 'false'
         run: |
-          GEOIP_VERSION="${{ env.GEOIP_VERSION }}"
-          GEOSITE_VERSION="${{ env.GEOSITE_VERSION }}"
-          if [ -z "$GEOIP_VERSION" ] || [ -z "$GEOSITE_VERSION" ]; then
-            echo "❌ GEOIP_VERSION or GEOSITE_VERSION not set"
-            exit 1
-          fi
-          wget https://github.com/lhear/v2ray-rules-dat/releases/download/$GEOIP_VERSION/geoip.dat -O ./app/src/main/assets/geoip.dat
-          wget https://github.com/lhear/v2ray-rules-dat/releases/download/$GEOSITE_VERSION/geosite.dat -O ./app/src/main/assets/geosite.dat
+          wget https://github.com/lhear/v2ray-rules-dat/releases/download/${{ env.GEOIP_VERSION }}/geoip.dat -O ./app/src/main/assets/geoip.dat
+          wget https://github.com/lhear/v2ray-rules-dat/releases/download/${{ env.GEOSITE_VERSION }}/geosite.dat -O ./app/src/main/assets/geosite.dat
 
       - name: Download Custom Xray Libraries
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
@@ -198,31 +117,12 @@ jobs:
         with:
           path: xray-libs
           pattern: xray-*
-          merge-multiple: false
-
-      - name: Download Hysteria2 Binaries
-        if: steps.check_tag.outputs.exists == 'false' && needs.build-hysteria2-libs.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          path: hysteria2-libs
-          pattern: hysteria2-*
-          merge-multiple: false
-
-      - name: Download QUICHE Libraries
-        if: steps.check_tag.outputs.exists == 'false' && needs.build-quiche-libs.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          path: quiche-libs
-          pattern: quiche-*
-          merge-multiple: false
+          merge-multiple: true
 
       - name: Replace Xray Binaries
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
         run: |
           echo "📦 Replacing Xray binaries with BoringSSL-enabled versions..."
-
-          # Ensure jniLibs directory structure exists
-          mkdir -p app/src/main/jniLibs
 
           # Remove old binaries if they exist
           rm -f app/src/main/jniLibs/*/libxray.so
@@ -238,78 +138,9 @@ jobs:
             fi
           done
 
-          # Verify binaries and directory structure
+          # Verify
           echo "📋 Verifying Xray binaries:"
           ls -lh app/src/main/jniLibs/*/libxray.so 2>/dev/null || echo "⚠️  No Xray binaries found"
-
-      - name: Replace Hysteria2 Binaries
-        if: steps.check_tag.outputs.exists == 'false' && needs.build-hysteria2-libs.result == 'success'
-        run: |
-          echo "📦 Replacing Hysteria2 binaries..."
-
-          # Ensure jniLibs directory structure exists
-          mkdir -p app/src/main/jniLibs
-
-          # Remove old binaries if they exist
-          rm -f app/src/main/jniLibs/*/libhysteria2.so
-
-          # Copy new Hysteria2 binaries
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            if [ -f "hysteria2-libs/hysteria2-$abi/libhysteria2.so" ]; then
-              mkdir -p app/src/main/jniLibs/$abi
-              cp hysteria2-libs/hysteria2-$abi/libhysteria2.so app/src/main/jniLibs/$abi/libhysteria2.so
-              echo "✅ Copied Hysteria2 binary for $abi"
-            else
-              echo "⚠️  Hysteria2 binary not found for $abi, will use simulation mode"
-            fi
-          done
-
-          # Verify binaries
-          echo "📋 Verifying Hysteria2 binaries:"
-          ls -lh app/src/main/jniLibs/*/libhysteria2.so 2>/dev/null || echo "⚠️  No Hysteria2 binaries found"
-
-          # Verify resource directories are intact (important for build)
-          echo "📋 Verifying resource directories:"
-          if [ -d "app/src/main/res" ]; then
-            echo "✅ Resource directory exists"
-            ls -la app/src/main/res/ | head -10
-          else
-            echo "❌ Resource directory missing!"
-            exit 1
-          fi
-
-      - name: Copy QUICHE Libraries
-        if: steps.check_tag.outputs.exists == 'false' && needs.build-quiche-libs.result == 'success'
-        run: |
-          echo "📦 Copying QUICHE libraries..."
-
-          # Ensure quiche-client libs directory exists
-          mkdir -p app/src/main/jni/quiche-client/libs
-
-          # Copy QUICHE libraries for each ABI
-          for abi in arm64-v8a x86_64; do
-            if [ -d "quiche-libs/quiche-$abi" ]; then
-              mkdir -p app/src/main/jni/quiche-client/libs/$abi
-              
-              # Copy static library
-              if [ -f "quiche-libs/quiche-$abi/libquiche.a" ]; then
-                cp quiche-libs/quiche-$abi/libquiche.a app/src/main/jni/quiche-client/libs/$abi/
-                echo "✅ Copied libquiche.a for $abi"
-              fi
-              
-              # Copy shared library if it exists
-              if [ -f "quiche-libs/quiche-$abi/libquiche.so" ]; then
-                cp quiche-libs/quiche-$abi/libquiche.so app/src/main/jni/quiche-client/libs/$abi/
-                echo "✅ Copied libquiche.so for $abi"
-              fi
-            else
-              echo "⚠️  QUICHE libraries not found for $abi"
-            fi
-          done
-
-          # Verify libraries
-          echo "📋 Verifying QUICHE libraries:"
-          find app/src/main/jni/quiche-client/libs -name "libquiche.*" -type f 2>/dev/null | head -10 || echo "⚠️  No QUICHE libraries found"
 
       - name: Build Xray-core from Source (Fallback)
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result != 'success'
@@ -322,80 +153,25 @@ jobs:
 
           git clone https://github.com/XTLS/Xray-core.git
           cd Xray-core
-          XRAY_VERSION="${{ env.XRAY_VERSION }}"
-          if [ -z "$XRAY_VERSION" ]; then
-            echo "⚠️  XRAY_VERSION not set, using latest"
-            XRAY_VERSION="latest"
-          fi
-          git checkout "$XRAY_VERSION" || echo "⚠️  Version $XRAY_VERSION not found, using latest"
+          git checkout ${{ env.XRAY_VERSION }}
           COMMID=$(git rev-parse HEAD | cut -c 1-7)
-
-          # Set Android NDK environment variables (absolute paths required for NDK r28c)
-          export ANDROID_NDK_HOME="$NDK_HOME"
-          export ANDROID_API=24
-          export NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
           export GOOS=android
           export CGO_ENABLED=1
 
-          # Build function with hybrid static/dynamic linking
-          build_xray() {
-            local ABI=$1
-            local GOARCH=$2
-            local NDK_ARCH=$3
-            local TOOLCHAIN=$4
-            
-            echo "Building for $ABI..."
-            
-            export GOARCH=$GOARCH
-            export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$TOOLCHAIN-clang
-            export CXX=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$TOOLCHAIN-clang++
-            
-            # Android system library path (NDK r28c: liblog.so is in usr/lib/$NDK_ARCH/$ANDROID_API/)
-            ANDROID_LIB_DIR="$NDK_SYSROOT/usr/lib/$NDK_ARCH/$ANDROID_API"
-            
-            # Set LIBRARY_PATH environment variable (most reliable method)
-            export LIBRARY_PATH="$ANDROID_LIB_DIR:$LIBRARY_PATH"
-            
-            # CGO flags with absolute sysroot paths (required for NDK r28c)
-            export CGO_CFLAGS="--sysroot=$NDK_SYSROOT"
-            
-            # CGO_LDFLAGS: Hybrid static/dynamic linking
-            # -Wl,-Bdynamic: Use dynamic linking for Android system libs (.so files)
-            # -llog -landroid: Android system libraries (only available as .so, not .a)
-            # -lc -lm -ldl: Standard C libraries (dynamic)
-            # --sysroot: Tell linker where to find system libraries
-            export CGO_LDFLAGS="\
-              -Wl,-Bdynamic \
-              -L$ANDROID_LIB_DIR \
-              -L$NDK_SYSROOT/usr/lib \
-              -L$NDK_SYSROOT/usr/lib64 \
-              -llog -landroid -lc -lm -ldl \
-              --sysroot=$NDK_SYSROOT"
-            
-            echo "  GOARCH: $GOARCH"
-            echo "  CC: $CC"
-            echo "  Android Lib Dir: $ANDROID_LIB_DIR"
-            echo "  CGO_LDFLAGS: $CGO_LDFLAGS"
-            
-            go build \
-              -o xray \
-              -trimpath \
-              -buildvcs=false \
-              -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" \
-              -v \
-              ./main
-            
-            mkdir -p ../app/src/main/jniLibs/$ABI
-            mv xray ../app/src/main/jniLibs/$ABI/libxray.so
-            echo "✅ Built Xray for $ABI"
-          }
+          echo "Building for arm64-v8a..."
+          export GOARCH=arm64
+          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          go build -o xray -trimpath -buildvcs=false -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" -v ./main
+          mkdir -p ../app/src/main/jniLibs/arm64-v8a
+          mv xray ../app/src/main/jniLibs/arm64-v8a/libxray.so
 
-          # Build for arm64-v8a
-          build_xray "arm64-v8a" "arm64" "aarch64-linux-android" "aarch64-linux-android24"
-
-          # Build for x86_64
-          build_xray "x86_64" "amd64" "x86_64-linux-android" "x86_64-linux-android24"
+          echo "Building for x86_64..."
+          export GOARCH=amd64
+          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang
+          go build -o xray -trimpath -buildvcs=false -ldflags="-X github.com/xtls/xray-core/core.build=${COMMID} -s -w -buildid=" -v ./main
+          mkdir -p ../app/src/main/jniLibs/x86_64
+          mv xray ../app/src/main/jniLibs/x86_64/libxray.so
 
       - name: Verify BoringSSL Integration
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
@@ -468,237 +244,17 @@ jobs:
             echo "✅ Created minimal google-services.json template"
           fi
 
-      - name: Verify Resources Before Build
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          echo "📋 Verifying resources before build..."
-
-          # Check if resource directories exist
-          if [ ! -d "app/src/main/res" ]; then
-            echo "❌ Resource directory missing!"
-            echo "📁 Current directory structure:"
-            ls -la app/src/main/ || true
-            exit 1
-          fi
-
-          # Check if string resources exist
-          if [ -f "app/src/main/res/values/strings.xml" ]; then
-            echo "✅ strings.xml found"
-            # Check if kernel string exists
-            if grep -q "kernel" app/src/main/res/values/strings.xml; then
-              echo "✅ kernel string found in strings.xml"
-              # Show kernel string value
-              grep "kernel" app/src/main/res/values/strings.xml | head -1
-            else
-              echo "⚠️  kernel string not found in strings.xml"
-              echo "📄 strings.xml content (first 20 lines):"
-              head -20 app/src/main/res/values/strings.xml || true
-            fi
-          else
-            echo "❌ strings.xml not found!"
-            echo "📁 Available files in app/src/main/res/values/:"
-            ls -la app/src/main/res/values/ || echo "Directory does not exist"
-            exit 1
-          fi
-
-          # List all resource directories
-          echo "📁 Resource directories:"
-          ls -la app/src/main/res/ || true
-
-          # Verify all language resource files
-          echo "🌍 Checking language resource files:"
-          for lang_file in app/src/main/res/values*/strings.xml; do
-            if [ -f "$lang_file" ]; then
-              echo "  ✅ $(basename $(dirname $lang_file))/strings.xml"
-            fi
-          done
-
-      - name: Verify Keystore Setup
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          echo "🔍 Verifying keystore setup..."
-          if [ -f "./store.jks" ]; then
-            echo "✅ Keystore file exists ($(du -h ./store.jks | cut -f1))"
-          else
-            echo "❌ Keystore file missing!"
-            exit 1
-          fi
-
-          if [ -f "./store.properties" ]; then
-            echo "✅ store.properties exists"
-            # Check if all required properties are set (without showing values)
-            grep -q "storeFile" ./store.properties && echo "✅ storeFile set" || (echo "❌ storeFile missing" && exit 1)
-            grep -q "storePassword" ./store.properties && echo "✅ storePassword set" || (echo "❌ storePassword missing" && exit 1)
-            grep -q "keyAlias" ./store.properties && echo "✅ keyAlias set" || (echo "❌ keyAlias missing" && exit 1)
-            grep -q "keyPassword" ./store.properties && echo "✅ keyPassword set" || (echo "❌ keyPassword missing" && exit 1)
-          else
-            echo "❌ store.properties missing!"
-            exit 1
-          fi
-
-      - name: Verify Native Libraries
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          echo "🔍 Verifying native libraries..."
-          echo "Xray libraries:"
-          find xray-libs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No Xray libraries found"
-          echo "Hysteria2 libraries:"
-          find hysteria2-libs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No Hysteria2 libraries found"
-          echo "jniLibs directory:"
-          find app/src/main/jniLibs -name "*.so" -type f 2>/dev/null | head -20 || echo "⚠️  No libraries in jniLibs"
-
-      - name: Check Build Environment
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          echo "🔍 Checking build environment..."
-          echo "Java version:"
-          java -version
-          echo "Gradle version:"
-          ./gradlew --version
-          echo "Android SDK:"
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "NDK version (from version.properties):"
-          grep NDK_VERSION version.properties || echo "NDK_VERSION not found"
-
-      - name: Verify QUICHE Submodule Before Build
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          echo "🔍 Verifying QUICHE submodule before build..."
-          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
-          if [ -d "$QUICHE_DIR/quiche" ]; then
-            echo "✅ QUICHE submodule directory exists"
-            if [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
-              echo "✅ QUICHE Cargo.toml found"
-            else
-              echo "⚠️  QUICHE Cargo.toml not found"
-            fi
-            if [ -d "$QUICHE_DIR/quiche/deps/boringssl" ]; then
-              echo "✅ QUICHE BoringSSL dependency found"
-            else
-              echo "⚠️  QUICHE BoringSSL dependency not found"
-            fi
-          else
-            echo "⚠️  QUICHE submodule directory not found (build may skip QUICHE)"
-          fi
-
       - name: Build Release APK
         if: steps.check_tag.outputs.exists == 'false'
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: |
-          echo "🔨 Building release APK..."
-          # Capture Gradle output to file for better error reporting
-          set +e  # Don't exit on error immediately
-          ./gradlew assembleRelease --stacktrace --warning-mode all 2>&1 | tee gradle-build.log
-          BUILD_EXIT_CODE=${PIPESTATUS[0]}
-          set -e  # Re-enable exit on error
-
-          if [ "$BUILD_EXIT_CODE" -ne 0 ]; then
-            echo "❌ Build failed with exit code: $BUILD_EXIT_CODE"
-            echo ""
-            echo "=== First 50 lines of Gradle output (for context) ==="
-            head -50 gradle-build.log || echo "Could not read build log"
-            echo ""
-            echo "=== Last 150 lines of Gradle output (most recent errors) ==="
-            tail -150 gradle-build.log || echo "Could not read build log"
-            echo ""
-            echo "=== Searching for FAILURE messages ==="
-            grep -i "FAILURE\|BUILD FAILED" gradle-build.log | tail -10 || echo "No FAILURE messages found"
-            echo ""
-            echo "=== Searching for error patterns ==="
-            grep -i "error\|failed\|exception" gradle-build.log | grep -v "at org.gradle" | tail -30 || echo "No error patterns found"
-            echo ""
-            echo "=== Checking for build logs ==="
-            find app/build -name "*.log" -type f 2>/dev/null | head -5
-            echo ""
-            echo "=== Checking for error reports ==="
-            find app/build -name "*error*" -type f 2>/dev/null | head -5
-            echo ""
-            echo "=== Build output directory structure ==="
-            ls -la app/build/outputs/ 2>/dev/null || echo "  app/build/outputs/ does not exist"
-            echo ""
-            echo "=== Gradle build log location ==="
-            echo "Full log available at: gradle-build.log"
-            echo "❌ Build failed - cannot proceed without APK"
-            exit 1
-          fi
-          echo "✅ Build completed"
-
-          # Verify APK was actually generated
-          echo "📋 Verifying APK was generated..."
-          APK_EXISTS=false
-          if [ -f "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" ]; then
-            APK_EXISTS=true
-            APK_SIZE=$(stat -c%s "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" 2>/dev/null || echo "0")
-            APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
-            echo "✅ APK found: simplexray-arm64-v8a.apk (${APK_SIZE_MB}MB)"
-          else
-            echo "❌ APK not found at expected location: app/build/outputs/apk/release/simplexray-arm64-v8a.apk"
-            echo "📁 Searching for APKs in build directory:"
-            find app/build -name "*.apk" -type f 2>/dev/null | head -10 || echo "  No APKs found"
-            echo "📁 Build output structure:"
-            ls -la app/build/outputs/apk/ 2>/dev/null || echo "  app/build/outputs/apk/ does not exist"
-            ls -la app/build/outputs/ 2>/dev/null || echo "  app/build/outputs/ does not exist"
-            echo "❌ Build completed but APK was not generated!"
-            exit 1
-          fi
-
-          # Verify string resources are included
-          if [ "$APK_EXISTS" = true ]; then
-            echo "📋 Verifying string resources in APK..."
-            unzip -q -o app/build/outputs/apk/release/simplexray-arm64-v8a.apk -d /tmp/apk-check
-            if [ -f "/tmp/apk-check/res/values/strings.xml" ] || [ -f "/tmp/apk-check/resources.arsc" ]; then
-              echo "✅ String resources found in APK"
-              # Check if kernel string is in APK
-              if [ -f "/tmp/apk-check/resources.arsc" ]; then
-                echo "✅ resources.arsc found (contains all resources)"
-              fi
-            else
-              echo "⚠️  Warning: String resources may not be included in APK"
-            fi
-            rm -rf /tmp/apk-check
-          fi
+        run: ./gradlew assembleRelease
 
       - name: Find and Copy APKs
         if: steps.check_tag.outputs.exists == 'false'
         run: |
-          echo "🔍 Searching for APK files..."
           mkdir -p release-artifacts
-
-          # Search in multiple possible locations
-          APK_FOUND=false
-
-          # Check the expected location first
-          if [ -f "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" ]; then
-            cp app/build/outputs/apk/release/simplexray-arm64-v8a.apk release-artifacts/
-            echo "✅ Found APK at expected location"
-            APK_FOUND=true
-          fi
-
-          # Also search for any APK files
-          APK_COUNT=$(find app/build -name "*.apk" -type f 2>/dev/null | wc -l)
-          if [ "$APK_COUNT" -gt 0 ]; then
-            echo "📦 Found $APK_COUNT APK file(s):"
-            find app/build -name "*.apk" -type f -exec ls -lh {} \;
-            find app/build -name "*.apk" -type f -exec cp {} release-artifacts/ \;
-            APK_FOUND=true
-          else
-            echo "⚠️  No APK files found in app/build"
-            echo "📁 Checking build output directories:"
-            ls -la app/build/outputs/apk/ 2>/dev/null || echo "  app/build/outputs/apk/ does not exist"
-            ls -la app/build/outputs/ 2>/dev/null || echo "  app/build/outputs/ does not exist"
-            ls -la app/build/ 2>/dev/null || echo "  app/build/ does not exist"
-          fi
-
-          echo "=== APKs in release-artifacts/ ==="
-          ls -lah release-artifacts/ || echo "⚠️  release-artifacts/ is empty"
-
-          if [ "$APK_FOUND" = false ]; then
-            echo "❌ ERROR: No APK files found after build!"
-            echo "This indicates the build may have failed or APK generation was skipped."
-            exit 1
-          fi
+          find app/build -name "*.apk" -type f -exec cp {} release-artifacts/ \;
+          echo "=== APKs copied to release-artifacts/ ==="
+          ls -lah release-artifacts/
 
       - name: Create Release
         if: steps.check_tag.outputs.exists == 'false'
@@ -732,47 +288,6 @@ jobs:
           - 🚀 TLS 1.3 with Chrome mobile fingerprint mimic
           - 📡 QUIC/HTTP3 support
           - 🎯 Xray-core built with BoringSSL (3-40x faster crypto performance)
-          - 🌊 Hysteria2 QUIC acceleration (standalone or chain mode)
-
-          **Latest Improvements (v${VERSION}):**
-
-          🔧 **CI/CD Improvements:**
-          - Fixed Hysteria2 Go cache restore failures (disabled cache for external repos)
-          - Fixed BoringSSL build exit code 126 errors with improved tool verification
-          - Enhanced build script error handling and diagnostics
-          - Added proper executable permissions for build scripts
-          - Improved NDK toolchain verification and error messages
-
-          🤖 **Android 16 Compatibility:**
-          - Fixed SELinux execute_no_trans denial by using native library directly
-          - Native library directory has app_file_exec context allowing execution
-          - Fallback to copy method for Android 13 and below (backward compatibility)
-          - Fixed port 0 validation error in ConfigUtils
-
-          🔐 **Security Enhancements:**
-          - Added process identity verification before termination (prevents PID reuse attacks)
-          - Enhanced input validation across JNI boundaries and file operations
-          - Improved command injection prevention with array-based exec
-          - Added file descriptor and PID range validation
-
-          🛡️ **Stability Fixes:**
-          - Fixed memory leaks in coroutine management and broadcast receivers
-          - Fixed race conditions in state updates with proper synchronization
-          - Added registration tracking to prevent double-registration issues
-          - Enhanced process lifecycle management with identity verification
-          - Fixed ConfigUtils port validation (prevents invalid port 0 in config)
-
-          ⚡ **Performance Optimizations:**
-          - Added debouncing (500ms) to reduce excessive file system access
-          - Optimized database queries with proper dispatcher usage
-          - Improved async operations in traffic repository
-          - Enhanced I/O handling with flowOn optimizations
-
-          🔧 **Code Quality:**
-          - Replaced magic numbers with named constants
-          - Added Mutex-based synchronization for thread-safe state updates
-          - Enhanced error handling in receiver registration/unregistration
-          - Improved JNI boundary validation
 
           **Changes:**
           See commit history for detailed changes.
@@ -783,19 +298,15 @@ jobs:
 
           # Only upload arm64-v8a APK (BoringSSL optimized for ARM64)
           if [ -f "release-artifacts/simplexray-arm64-v8a.apk" ]; then
-            APK_SIZE=$(stat -c%s "release-artifacts/simplexray-arm64-v8a.apk" 2>/dev/null || echo "0")
-            APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
-            echo "✅ APK found: simplexray-arm64-v8a.apk (${APK_SIZE_MB}MB)"
             gh release create "$TAG" \
               --title "SimpleXray $TAG" \
               --notes-file release_notes.md \
               release-artifacts/simplexray-arm64-v8a.apk
           else
-            echo "❌ ERROR: APK not found in release-artifacts/"
-            echo "📁 Contents of release-artifacts/:"
-            ls -lah release-artifacts/ || echo "  Directory does not exist"
-            echo "❌ Cannot create release without APK - failing workflow"
-            exit 1
+            echo "⚠️  APK not found, creating release without APK"
+            gh release create "$TAG" \
+              --title "SimpleXray $TAG" \
+              --notes-file release_notes.md
           fi
 
       - name: Send Release Notification to Telegram
@@ -817,17 +328,7 @@ jobs:
             BORINGSSL_STATUS="\\n🚀 *Xray-core:* BoringSSL Enabled\\n⚡ *Performance:* 3-40x faster crypto"
           fi
 
-          HYSTERIA2_STATUS=""
-          if [ "${{ needs.build-hysteria2-libs.result }}" == "success" ]; then
-            HYSTERIA2_STATUS="\\n🌊 *Hysteria2:* QUIC Acceleration Enabled\\n⚡ *QUIC:* Full QUIC proxy support"
-          fi
-
-          CI_STATUS=""
-          if [ "${{ needs.build-xray-libs.result }}" == "success" ] && [ "${{ needs.build-hysteria2-libs.result }}" == "success" ]; then
-            CI_STATUS="\\n🔧 *CI:* All builds successful"
-          fi
-
-          TEXT="🎉 *New SimpleXray Release*\\n\\n📦 *Version:* $TAG\\n🔨 *Build:* ${{ steps.version.outputs.version_code }}$BORINGSSL_STATUS$HYSTERIA2_STATUS$CI_STATUS\\n\\n🔐 *Security:* Process verification, input validation\\n🛡️ *Stability:* Memory leak fixes, race condition fixes\\n⚡ *Performance:* I/O debouncing, async optimizations\\n\\n🔗 [Download Now]($RELEASE_URL)\\n\\n✨ Auto-update available in app!"
+          TEXT="🎉 *New SimpleXray Release*\\n\\n📦 *Version:* $TAG\\n🔨 *Build:* ${{ steps.version.outputs.version_code }}$BORINGSSL_STATUS\\n🔗 [Download Now]($RELEASE_URL)\\n\\n✨ Auto-update available in app!"
 
           curl -s -X POST \
             -H "Content-Type: application/json" \

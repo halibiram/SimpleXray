@@ -5,17 +5,17 @@ pluginManagement {
         mavenCentral()
     }
 
-    // Explicit plugin versions for Kotlin 2.1.10 ecosystem
+    // Explicit plugin versions for Kotlin 2.2.0 ecosystem
     resolutionStrategy {
         eachPlugin {
             if (requested.id.id == 'com.google.devtools.ksp') {
-                useVersion('2.1.10-1.0.29')
+                useVersion('2.3.2')
             }
             if (requested.id.id.startsWith('org.jetbrains.kotlin')) {
-                useVersion('2.1.10')
+                useVersion('2.2.0')
             }
             if (requested.id.id == 'org.jetbrains.kotlin.plugin.compose') {
-                useVersion('2.1.10')
+                useVersion('2.2.0')
             }
         }
     }
