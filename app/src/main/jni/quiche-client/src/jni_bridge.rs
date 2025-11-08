@@ -5,14 +5,14 @@
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JByteArray};
-use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray};
+use jni::sys::{jboolean, jbooleanArray, jdoubleArray, jint, jlong, jlongArray};
 use std::sync::Arc;
 use parking_lot::Mutex;
-use log::{debug, error, info};
+use log::{error, info};
 
-use crate::client::{QuicheClient, QuicConfig, CongestionControl, CpuAffinity, QuicMetrics};
-use crate::tun_forwarder::{QuicheTunForwarder, ForwarderConfig, ForwarderStats};
-use crate::crypto::{QuicheCrypto, CryptoCapabilities};
+use crate::client::{QuicheClient, QuicConfig, CongestionControl, CpuAffinity};
+use crate::tun_forwarder::{QuicheTunForwarder, ForwarderConfig};
+use crate::crypto::QuicheCrypto;
 
 // Helper to convert Java string to Rust string
 fn jstring_to_string(env: &JNIEnv, jstr: jni::sys::jstring) -> String {

@@ -4,14 +4,12 @@
  */
 
 use quinn::{ClientConfig, Endpoint, Connection};
-use quinn_proto::CongestionControlAlgorithm;
 use std::sync::Arc;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::time::Duration;
-use log::{debug, error, info, warn};
+use std::net::ToSocketAddrs;
+use log::{info, warn};
 use tokio::runtime::Runtime;
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use tokio::io::AsyncWriteExt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +176,7 @@ impl QuicheClient {
         let endpoint = endpoint.with_default_client_config(client_config);
 
         // Connect
+        // quinn's connect accepts a string for server_name
         let new_conn = self.runtime.block_on(async {
             endpoint.connect(server_addr, &self.config.server_host)?.await
         })?;
@@ -242,8 +241,9 @@ impl QuicheClient {
     }
 }
 
-use rustls::client::{ServerCertVerifier, ServerCertVerified};
-use rustls::{Certificate, Error};
+use rustls::client::danger::{ServerCertVerifier, ServerCertVerified};
+use rustls::pki_types::CertificateDer;
+use rustls::Error;
 
 // Dummy certificate verifier (accepts all certificates)
 // In production, use proper certificate validation
@@ -252,14 +252,47 @@ struct NoCertificateVerification;
 impl ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, Error> {
         Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        // Return default supported schemes
+        vec![
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ED25519,
+        ]
     }
 }
 

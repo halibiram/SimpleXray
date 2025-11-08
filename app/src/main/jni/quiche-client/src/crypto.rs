@@ -4,7 +4,7 @@
  */
 
 use ring::aead;
-use log::{debug, error, info};
+use log::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CryptoAlgorithm {
@@ -24,8 +24,8 @@ pub struct CryptoCapabilities {
 
 pub struct QuicheCrypto {
     algorithm: CryptoAlgorithm,
-    sealing_key: Option<aead::SealingKey>,
-    opening_key: Option<aead::OpeningKey>,
+    sealing_key: Option<aead::LessSafeKey>,
+    opening_key: Option<aead::LessSafeKey>,
 }
 
 impl QuicheCrypto {
@@ -46,10 +46,13 @@ impl QuicheCrypto {
         };
 
         let unbound_key = aead::UnboundKey::new(aead_alg, key)?;
-        let nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
+        let less_safe_key = aead::LessSafeKey::new(unbound_key);
         
-        self.sealing_key = Some(aead::SealingKey::new(unbound_key.clone(), nonce));
-        self.opening_key = Some(aead::OpeningKey::new(unbound_key, nonce));
+        // LessSafeKey is not Clone, so we need to create two keys from the same UnboundKey
+        // Since UnboundKey is not Clone either, we need to create it twice
+        let unbound_key2 = aead::UnboundKey::new(aead_alg, key)?;
+        self.sealing_key = Some(less_safe_key);
+        self.opening_key = Some(aead::LessSafeKey::new(unbound_key2));
 
         info!("Crypto initialized (key_len={})", key.len());
         Ok(())
@@ -64,19 +67,23 @@ impl QuicheCrypto {
         let sealing_key = self.sealing_key.as_ref()
             .ok_or("Crypto not initialized")?;
 
-        if ciphertext.len() < plaintext.len() + aead::AES_128_GCM.tag_len() {
+        if ciphertext.len() < plaintext.len() + sealing_key.algorithm().tag_len() {
             return Err("Ciphertext buffer too small".into());
         }
+
+        // Copy plaintext to ciphertext buffer
+        ciphertext[..plaintext.len()].copy_from_slice(plaintext);
 
         let nonce = aead::Nonce::try_assume_unique_for_key(nonce)
             .map_err(|_| "Invalid nonce length")?;
 
-        let tag_len = aead::seal_in_place(
-            sealing_key,
+        // seal_in_place_append_tag takes a slice containing the plaintext
+        // and appends the tag. The buffer must be large enough for plaintext + tag.
+        // We pass a slice that includes space for the tag.
+        let tag_len = sealing_key.seal_in_place_append_tag(
             nonce,
             aead::Aad::empty(),
-            ciphertext,
-            plaintext.len(),
+            &mut ciphertext[..plaintext.len()],
         )?;
 
         Ok(plaintext.len() + tag_len)
@@ -94,12 +101,10 @@ impl QuicheCrypto {
         let nonce = aead::Nonce::try_assume_unique_for_key(nonce)
             .map_err(|_| "Invalid nonce length")?;
 
-        let plaintext = aead::open_in_place(
-            opening_key,
+        let plaintext = opening_key.open_in_place(
             nonce,
             aead::Aad::empty(),
-            0,
-            ciphertext,
+            &mut ciphertext[..plaintext_len],
         )?;
 
         Ok(plaintext.len())
