@@ -66,16 +66,19 @@ jobs:
               echo "   Continuing anyway..."
             fi
             
-            # Check if this run has artifacts
-            ARTIFACTS=$(gh run view "$INPUT_RUN_ID" --json artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
+            # Check if this run has artifacts using API
+            ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/$INPUT_RUN_ID/artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
             if [ -n "$ARTIFACTS" ] && [ "$ARTIFACTS" != "" ]; then
               echo "✅ Found artifacts in run $INPUT_RUN_ID:"
               echo "$ARTIFACTS" | while read -r artifact; do
-                echo "   - $artifact"
+                if [ -n "$artifact" ]; then
+                  echo "   - $artifact"
+                fi
               done
               FOUND_RUN_ID="$INPUT_RUN_ID"
               echo "run_id=$FOUND_RUN_ID" >> $GITHUB_OUTPUT
               echo "use_release=false" >> $GITHUB_OUTPUT
+              echo "✅ Will use artifacts from run $INPUT_RUN_ID"
               exit 0
             else
               echo "⚠️  No artifacts found in run $INPUT_RUN_ID, will check releases..."
@@ -131,13 +134,18 @@ jobs:
             
             echo "  Checking run $RUN_ID ($CREATED_AT)..."
             
-            # Check if this run has artifacts
-            ARTIFACTS=$(gh run view "$RUN_ID" --json artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
+            # Check if this run has artifacts using API
+            ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
             
             if [ -n "$ARTIFACTS" ] && [ "$ARTIFACTS" != "" ]; then
               FOUND_RUN_ID="$RUN_ID"
               echo "✅ Found successful run with artifacts: $RUN_ID"
-              echo "   Artifacts: $(echo "$ARTIFACTS" | tr '\n' ' ')"
+              echo "   Artifacts:"
+              echo "$ARTIFACTS" | while read -r artifact; do
+                if [ -n "$artifact" ]; then
+                  echo "     - $artifact"
+                fi
+              done
               break
             else
               echo "   No artifacts found"
