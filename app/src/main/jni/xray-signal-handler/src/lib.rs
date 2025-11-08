@@ -55,8 +55,23 @@ extern "C" fn signal_handler(sig: libc::c_int) {
                             std::mem::transmute(sa.sa_sigaction);
                         handler(sig, &mut info, &mut context);
                     } else {
-                        // Use simple handler
-                        let handler: extern "C" fn(libc::c_int) = std::mem::transmute(sa.sa_handler);
+                        // Use simple handler - access union field correctly
+                        #[cfg(target_os = "android")]
+                        let handler_addr = unsafe {
+                            // On Android, sa_handler is part of a union, access via sa_sigaction
+                            // For simple handlers, we need to check if it's a function pointer
+                            if sa.sa_sigaction != libc::SIG_DFL as usize && sa.sa_sigaction != libc::SIG_IGN as usize {
+                                sa.sa_sigaction
+                            } else {
+                                return;
+                            }
+                        };
+                        #[cfg(not(target_os = "android"))]
+                        let handler_addr = unsafe {
+                            // On other platforms, use sa_handler directly
+                            std::mem::transmute::<_, usize>(sa.sa_handler)
+                        };
+                        let handler: extern "C" fn(libc::c_int) = unsafe { std::mem::transmute(handler_addr) };
                         handler(sig);
                     }
                 } else {
@@ -77,16 +92,10 @@ extern "C" fn signal_handler(sig: libc::c_int) {
 fn print_stack_trace() {
     let backtrace = std::backtrace::Backtrace::capture();
     error!("Stack trace:");
-    for (i, frame) in backtrace.frames().iter().take(MAX_STACK_DEPTH).enumerate() {
-        for symbol in frame.symbols() {
-            if let Some(name) = symbol.name() {
-                error!("  #{}: {}", i, name);
-            } else if let Some(addr) = symbol.addr() {
-                error!("  #{}: <unknown> ({:p})", i, addr);
-            } else {
-                error!("  #{}: <unknown>", i);
-            }
-        }
+    // Use format! to convert backtrace to string
+    let bt_str = format!("{:?}", backtrace);
+    for (i, line) in bt_str.lines().take(MAX_STACK_DEPTH).enumerate() {
+        error!("  #{}: {}", i, line);
     }
 }
 
@@ -100,7 +109,7 @@ pub extern "system" fn Java_com_simplexray_an_xray_XraySignalHandler_nativeInsta
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("XraySignalHandler")
-            .with_min_level(log::Level::Debug),
+            .with_max_level(log::LevelFilter::Debug),
     );
 
     let signals = [libc::SIGABRT, libc::SIGSEGV, libc::SIGBUS];

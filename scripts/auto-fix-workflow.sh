@@ -85,3 +85,6 @@ echo -e "\n${GREEN}✅ Analiz tamamlandı${NC}"
 
 
 
+
+
+

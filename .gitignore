@@ -22,6 +22,29 @@ app/release
 app/src/main/jniLibs
 app/src/main/jni/hev-socks5-tunnel
 
+# Rust build artifacts
+# Cargo target directories (compiled Rust code)
+app/src/main/jni/*/target/
+app/src/main/jni/*/*/target/
+app/src/main/jni/*/*/*/target/
+
+# Compiled Rust shared libraries (.so files) and static libraries (.a files)
+app/src/main/jni/**/*.so
+app/src/main/jni/**/*.a
+app/src/main/jni/**/libs/
+app/src/main/jni/**/target/**/*.so
+app/src/main/jni/**/target/**/*.a
+app/src/main/jni/**/target/**/*.rlib
+app/src/main/jni/**/target/**/*.rmeta
+app/src/main/jni/**/target/**/*.d
+
+# Rust build cache and metadata
+app/src/main/jni/**/target/**/CACHEDIR.TAG
+app/src/main/jni/**/target/**/.cargo-lock
+app/src/main/jni/**/target/**/deps/
+app/src/main/jni/**/target/**/build/
+app/src/main/jni/**/target/**/incremental/
+
 # Local configuration
 local.properties
 

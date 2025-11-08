@@ -102,7 +102,7 @@ pub fn update_after_send(
     // Update next send time based on rate
     if params.target_rate_bps > 0 {
         // Calculate interval: packet_size * 8 bits / rate_bps = seconds
-        let interval_ns = (packet_size * 8 * 1_000_000_000) / params.target_rate_bps;
+        let interval_ns = ((packet_size as u64) * 8 * 1_000_000_000) / params.target_rate_bps;
         state.next_send_time_ns = current_time_ns + interval_ns.max(params.min_pacing_interval_ns);
     } else {
         // No rate limit, just respect min interval

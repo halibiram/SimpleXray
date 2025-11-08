@@ -59,9 +59,9 @@ impl PepperRingBuffer {
         let available = if write_seq == read_seq {
             // Same generation
             if write_pos >= read_pos {
-                self.capacity - (write_pos - read_pos)
+                self.capacity - (write_pos - read_pos) as usize
             } else {
-                read_pos - write_pos
+                (read_pos - write_pos) as usize
             }
         } else {
             // Different generation (wrapped)

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use log::{debug, error, info};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use queue::PepperRingBuffer;
 use pacing::{PepperPacingState, PepperPacingParams, can_send, update_after_send, get_time_ns};
@@ -30,9 +31,13 @@ struct PepperShaperHandle {
 }
 
 // Handle storage
-static HANDLES: Mutex<HashMap<i64, Arc<PepperShaperHandle>>> = Mutex::new(HashMap::new());
+static HANDLES: OnceLock<Mutex<HashMap<i64, Arc<PepperShaperHandle>>>> = OnceLock::new();
 static NEXT_HANDLE_ID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
 static INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn get_handles() -> &'static Mutex<HashMap<i64, Arc<PepperShaperHandle>>> {
+    HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Initialize PepperShaper
 #[no_mangle]
@@ -43,7 +48,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeIn
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("PepperShaper")
-            .with_min_level(log::Level::Debug),
+            .with_max_level(log::LevelFilter::Debug),
     );
 
     if INITIALIZED.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -54,13 +59,13 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeIn
 }
 
 /// Extract parameters from Java object
-fn extract_params(env: &JNIEnv, params: JObject) -> Option<PepperPacingParams> {
-    let params_class = env.get_object_class(params).ok()?;
+fn extract_params(env: &mut JNIEnv, params: &JObject) -> Option<PepperPacingParams> {
+    let _params_class = env.get_object_class(params).ok()?;
     
-    let max_burst_bytes = env.get_field(params, "maxBurstBytes", "J").ok()?.j()?;
-    let target_rate_bps = env.get_field(params, "targetRateBps", "J").ok()?.j()?;
-    let loss_aware_backoff = env.get_field(params, "lossAwareBackoff", "Z").ok()?.z()?;
-    let enable_pacing = env.get_field(params, "enablePacing", "Z").ok()?.z()?;
+    let max_burst_bytes = env.get_field(params, "maxBurstBytes", "J").ok()?.j().ok()?;
+    let target_rate_bps = env.get_field(params, "targetRateBps", "J").ok()?.j().ok()?;
+    let loss_aware_backoff = env.get_field(params, "lossAwareBackoff", "Z").ok()?.z().ok()?;
+    let enable_pacing = env.get_field(params, "enablePacing", "Z").ok()?.z().ok()?;
     
     Some(PepperPacingParams {
         target_rate_bps: target_rate_bps as u64,
@@ -74,7 +79,7 @@ fn extract_params(env: &JNIEnv, params: JObject) -> Option<PepperPacingParams> {
 /// Attach shaper to a socket/file descriptor pair
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeAttach(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     read_fd: jint,
     write_fd: jint,
@@ -93,7 +98,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeAt
 
     debug!("Attaching shaper: readFd={}, writeFd={}, mode={}", read_fd, write_fd, mode);
 
-    let pacing_params = match extract_params(&env, params) {
+    let pacing_params = match extract_params(&mut env, &params) {
         Some(p) => p,
         None => {
             error!("Failed to extract parameters");
@@ -108,7 +113,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeAt
     let tx_queue = Arc::new(PepperRingBuffer::new(QUEUE_SIZE));
     let rx_queue = Arc::new(PepperRingBuffer::new(QUEUE_SIZE));
 
-    let mut pacing_state = PepperPacingState::new(&pacing_params);
+    let pacing_state = PepperPacingState::new(&pacing_params);
     let pacing_state = Arc::new(Mutex::new(pacing_state));
 
     let handle = Arc::new(PepperShaperHandle {
@@ -122,7 +127,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeAt
         pacing_params: Arc::new(Mutex::new(pacing_params)),
     });
 
-    let mut handles = HANDLES.lock();
+    let mut handles = get_handles().lock();
     handles.insert(handle_id, handle);
 
     debug!("Shaper attached: handle={}", handle_id);
@@ -142,7 +147,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeDe
 
     debug!("Detaching shaper: handle={}", handle);
 
-    let mut handles = HANDLES.lock();
+    let mut handles = get_handles().lock();
     if let Some(h) = handles.remove(&handle) {
         h.active.store(false, std::sync::atomic::Ordering::Release);
         debug!("Shaper detached: handle={}", handle);
@@ -156,7 +161,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeDe
 /// Update shaper parameters
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeUpdateParams(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     params: JObject,
@@ -167,7 +172,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeUp
 
     debug!("Updating params: handle={}", handle);
 
-    let pacing_params = match extract_params(&env, params) {
+    let pacing_params = match extract_params(&mut env, &params) {
         Some(p) => p,
         None => {
             error!("Failed to extract parameters");
@@ -175,7 +180,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeUp
         }
     };
 
-    let handles = HANDLES.lock();
+    let handles = get_handles().lock();
     if let Some(h) = handles.get(&handle) {
         *h.pacing_params.lock() = pacing_params.clone();
         *h.pacing_state.lock() = PepperPacingState::new(&pacing_params);
@@ -199,7 +204,7 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeSh
 
     info!("Shutting down PepperShaper");
 
-    let mut handles = HANDLES.lock();
+    let mut handles = get_handles().lock();
     for (_, handle) in handles.iter() {
         handle.active.store(false, std::sync::atomic::Ordering::Release);
     }
@@ -214,8 +219,10 @@ pub extern "system" fn Java_com_simplexray_an_chain_pepper_PepperShaper_nativeSh
 pub extern "C" fn JNI_OnUnload(_vm: jni::JavaVM, _reserved: *mut std::ffi::c_void) {
     info!("PepperShaper JNI unloading - cleaning up handles");
 
-    let mut handles = HANDLES.lock();
-    handles.clear();
+    if let Some(handles) = HANDLES.get() {
+        let mut handles = handles.lock();
+        handles.clear();
+    }
     NEXT_HANDLE_ID.store(1, std::sync::atomic::Ordering::Release);
     INITIALIZED.store(false, std::sync::atomic::Ordering::Release);
 

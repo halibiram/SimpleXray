@@ -1,0 +1,220 @@
+name: Rust Modules Build
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'SimpleXray/app/src/main/jni/**/*.rs'
+      - 'SimpleXray/app/src/main/jni/**/Cargo.toml'
+      - 'SimpleXray/app/src/main/jni/**/Cargo.lock'
+      - '.github/workflows/rust-build.yml'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'SimpleXray/app/src/main/jni/**/*.rs'
+      - 'SimpleXray/app/src/main/jni/**/Cargo.toml'
+      - 'SimpleXray/app/src/main/jni/**/Cargo.lock'
+      - '.github/workflows/rust-build.yml'
+  workflow_dispatch:
+
+env:
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  ANDROID_PLATFORM: "29"
+  RUST_VERSION: "stable"
+
+jobs:
+  build-rust-modules:
+    name: Build Rust Modules
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        target:
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+          - x86_64-linux-android
+          - i686-linux-android
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('SimpleXray/app/src/main/jni/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            SimpleXray/app/src/main/jni/xray-signal-handler/target
+            SimpleXray/app/src/main/jni/pepper-shaper/target
+            SimpleXray/app/src/main/jni/perf-net/target
+            SimpleXray/app/src/main/jni/quiche-client/target
+          key: ${{ runner.os }}-rust-${{ matrix.target }}-${{ hashFiles('SimpleXray/app/src/main/jni/**/Cargo.toml', 'SimpleXray/app/src/main/jni/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ matrix.target }}-
+      
+      - name: Install cargo-ndk
+        run: |
+          cargo install cargo-ndk --version 3.0.0 || cargo install cargo-ndk
+      
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+      
+      - name: Add Android targets
+        run: |
+          rustup target add ${{ matrix.target }}
+      
+      - name: Set up environment variables
+        run: |
+          echo "ANDROID_NDK=$ANDROID_NDK" >> $GITHUB_ENV
+          echo "ANDROID_PLATFORM=${{ env.ANDROID_PLATFORM }}" >> $GITHUB_ENV
+      
+      - name: Build xray-signal-handler
+        working-directory: SimpleXray/app/src/main/jni/xray-signal-handler
+        run: |
+          cargo ndk \
+            --target ${{ matrix.target }} \
+            --platform ${{ env.ANDROID_PLATFORM }} \
+            build \
+            --release \
+            --verbose
+        continue-on-error: false
+      
+      - name: Build pepper-shaper
+        working-directory: SimpleXray/app/src/main/jni/pepper-shaper
+        run: |
+          cargo ndk \
+            --target ${{ matrix.target }} \
+            --platform ${{ env.ANDROID_PLATFORM }} \
+            build \
+            --release \
+            --verbose
+        continue-on-error: false
+      
+      - name: Build perf-net
+        working-directory: SimpleXray/app/src/main/jni/perf-net
+        run: |
+          cargo ndk \
+            --target ${{ matrix.target }} \
+            --platform ${{ env.ANDROID_PLATFORM }} \
+            build \
+            --release \
+            --verbose
+        continue-on-error: false
+      
+      - name: Build quiche-client
+        working-directory: SimpleXray/app/src/main/jni/quiche-client
+        run: |
+          cargo ndk \
+            --target ${{ matrix.target }} \
+            --platform ${{ env.ANDROID_PLATFORM }} \
+            build \
+            --release \
+            --verbose
+        continue-on-error: false
+      
+      - name: Collect built libraries
+        run: |
+          mkdir -p rust-libs/${{ matrix.target }}
+          
+          # Copy xray-signal-handler
+          if [ -f SimpleXray/app/src/main/jni/xray-signal-handler/target/${{ matrix.target }}/release/libxray_signal_handler.so ]; then
+            cp SimpleXray/app/src/main/jni/xray-signal-handler/target/${{ matrix.target }}/release/libxray_signal_handler.so \
+               rust-libs/${{ matrix.target }}/libxray-signal-handler.so
+          fi
+          
+          # Copy pepper-shaper
+          if [ -f SimpleXray/app/src/main/jni/pepper-shaper/target/${{ matrix.target }}/release/libpepper_shaper.so ]; then
+            cp SimpleXray/app/src/main/jni/pepper-shaper/target/${{ matrix.target }}/release/libpepper_shaper.so \
+               rust-libs/${{ matrix.target }}/libpepper-shaper.so
+          fi
+          
+          # Copy perf-net
+          if [ -f SimpleXray/app/src/main/jni/perf-net/target/${{ matrix.target }}/release/libperf_net.so ]; then
+            cp SimpleXray/app/src/main/jni/perf-net/target/${{ matrix.target }}/release/libperf_net.so \
+               rust-libs/${{ matrix.target }}/libperf-net.so
+          fi
+          
+          # Copy quiche-client
+          if [ -f SimpleXray/app/src/main/jni/quiche-client/target/${{ matrix.target }}/release/libquiche_client.so ]; then
+            cp SimpleXray/app/src/main/jni/quiche-client/target/${{ matrix.target }}/release/libquiche_client.so \
+               rust-libs/${{ matrix.target }}/libquiche-client.so
+          fi
+          
+          # List all collected files
+          echo "Collected libraries for ${{ matrix.target }}:"
+          find rust-libs/${{ matrix.target }} -type f || echo "No libraries found"
+      
+      - name: Upload Rust libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-libs-${{ matrix.target }}
+          path: rust-libs/${{ matrix.target }}/*
+          retention-days: 30
+          if-no-files-found: error
+      
+      - name: Verify library sizes
+        run: |
+          echo "Library sizes for ${{ matrix.target }}:"
+          find rust-libs/${{ matrix.target }} -type f -exec ls -lh {} \; || echo "No libraries to verify"
+
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: build-rust-modules
+    if: always()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+      
+      - name: Create build summary
+        run: |
+          echo "# Rust Modules Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+            if [ -d "all-artifacts/rust-libs-$target" ]; then
+              lib_count=$(find all-artifacts/rust-libs-$target -name "*.so" | wc -l)
+              echo "| $target | ✅ Built ($lib_count libraries) |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| $target | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Built Modules" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- xray-signal-handler" >> $GITHUB_STEP_SUMMARY
+          echo "- pepper-shaper" >> $GITHUB_STEP_SUMMARY
+          echo "- perf-net" >> $GITHUB_STEP_SUMMARY
+          echo "- quiche-client" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All built libraries are available as downloadable artifacts." >> $GITHUB_STEP_SUMMARY
+

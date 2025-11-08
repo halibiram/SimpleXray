@@ -12,7 +12,6 @@ jni = { version = "0.21", default-features = false }
 ringbuffer = "0.15"
 crossbeam = "0.8"
 governor = "0.6"
-token-bucket = "0.3"
 nix = { version = "0.28", features = ["socket"] }
 libc = "0.2"
 android_logger = "0.13"
