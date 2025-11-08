@@ -19,26 +19,41 @@ The build workflow (`build-xray-boringssl.yml`) configures:
   - Implements AES-GCM, ChaCha20-Poly1305, SHA256/SHA512, RandomBytes
   - Provides `BoringSSLGCM` type implementing `cipher.AEAD` interface
 
-- **002-crypto-boringssl.patch** - Crypto wrapper with build tags for CGO/non-CGO
+- **002-crypto-boringssl-cgo.patch** - Crypto wrapper for CGO builds
 
-  - Creates `common/crypto/cipher.go` (CGO enabled) - BoringSSL wrapper functions
-  - Creates `common/crypto/cipher_nocgo.go` (CGO disabled) - Go stdlib fallback
-  - Provides `NewGCM`, `NewGCMWithNonceSize`, `NewGCMWithTagSize` functions
-  - Automatically selects BoringSSL or Go crypto based on CGO availability
+  - Creates `common/crypto/cipher.go` with `//go:build cgo` tag
+  - BoringSSL wrapper functions for GCM cipher operations
+  - Provides `NewGCM`, `NewGCMWithNonceSize`, `NewGCMWithTagSize`
 
-- **003-tls-boringssl.patch** - TLS wrapper with build tags for CGO/non-CGO
+- **002-crypto-boringssl-nocgo.patch** - Crypto wrapper for non-CGO builds
 
-  - Creates `common/crypto/tls.go` (CGO enabled) - BoringSSL TLS wrapper
-  - Creates `common/crypto/tls_nocgo.go` (CGO disabled) - Go stdlib fallback
-  - Provides `TLSConfig`, `Client`, `Server`, `Dial` wrapper functions
-  - Automatically selects BoringSSL or Go TLS based on CGO availability
+  - Creates `common/crypto/cipher_nocgo.go` with `//go:build !cgo` tag
+  - Fallback to Go stdlib cipher operations
+  - Same API as CGO version for compatibility
 
-- **004-x509-boringssl.patch** - X.509 wrapper with build tags for CGO/non-CGO
+- **003-tls-boringssl-cgo.patch** - TLS wrapper for CGO builds
 
-  - Creates `common/crypto/x509.go` (CGO enabled) - BoringSSL cert pool wrapper
-  - Creates `common/crypto/x509_nocgo.go` (CGO disabled) - Go stdlib fallback
-  - Provides `CertPool`, `NewCertPool`, `SystemCertPool` wrapper functions
-  - Automatically selects BoringSSL or Go x509 based on CGO availability
+  - Creates `common/crypto/tls.go` with `//go:build cgo` tag
+  - BoringSSL TLS wrapper functions
+  - Provides `TLSConfig`, `Client`, `Server`, `Dial`
+
+- **003-tls-boringssl-nocgo.patch** - TLS wrapper for non-CGO builds
+
+  - Creates `common/crypto/tls_nocgo.go` with `//go:build !cgo` tag
+  - Fallback to Go stdlib TLS
+  - Same API as CGO version for compatibility
+
+- **004-x509-boringssl-cgo.patch** - X.509 wrapper for CGO builds
+
+  - Creates `common/crypto/x509.go` with `//go:build cgo` tag
+  - BoringSSL certificate pool wrapper
+  - Provides `CertPool`, `NewCertPool`, `SystemCertPool`
+
+- **004-x509-boringssl-nocgo.patch** - X.509 wrapper for non-CGO builds
+
+  - Creates `common/crypto/x509_nocgo.go` with `//go:build !cgo` tag
+  - Fallback to Go stdlib x509
+  - Same API as CGO version for compatibility
 
 - **005-boringssl-tls-bridge.patch** - TLS connection bridge using BoringSSL
 
@@ -72,9 +87,12 @@ Patches are applied in order (001, 002, 003, ...).
 
 **All patches (MUST succeed):**
 - 001-boringssl-bridge.patch - CGO bridge for BoringSSL crypto primitives
-- 002-crypto-boringssl.patch - Crypto wrapper layer (CGO/non-CGO build tags)
-- 003-tls-boringssl.patch - TLS wrapper layer (CGO/non-CGO build tags)
-- 004-x509-boringssl.patch - X.509 wrapper layer (CGO/non-CGO build tags)
+- 002-crypto-boringssl-cgo.patch - Crypto wrapper (CGO build)
+- 002-crypto-boringssl-nocgo.patch - Crypto wrapper (non-CGO build)
+- 003-tls-boringssl-cgo.patch - TLS wrapper (CGO build)
+- 003-tls-boringssl-nocgo.patch - TLS wrapper (non-CGO build)
+- 004-x509-boringssl-cgo.patch - X.509 wrapper (CGO build)
+- 004-x509-boringssl-nocgo.patch - X.509 wrapper (non-CGO build)
 - 005-boringssl-tls-bridge.patch - TLS connection bridge using BoringSSL
 - 007-boringssl-handshake-trace.patch - Handshake tracing and debugging
 

@@ -1,0 +1,44 @@
+diff --git a/common/crypto/tls_nocgo.go b/common/crypto/tls_nocgo.go
+new file mode 100644
+index 0000000..4444444
+--- /dev/null
++++ b/common/crypto/tls_nocgo.go
+@@ -0,0 +1,30 @@
++//go:build !cgo
++// +build !cgo
++
++package crypto
++
++import (
++	"crypto/tls"
++	"net"
++)
++
++// TLSConfig wraps tls.Config, using Go stdlib when CGO is disabled
++type TLSConfig struct {
++	*tls.Config
++	UseBoringSSL bool
++}
++
++// NewTLSConfig creates a new TLS config using Go stdlib
++func NewTLSConfig(config *tls.Config) *TLSConfig {
++	return &TLSConfig{
++		Config:       config,
++		UseBoringSSL: false,
++	}
++}
++
++// Client wraps tls.Client using Go stdlib
++func Client(conn net.Conn, config *tls.Config) *tls.Conn {
++	return tls.Client(conn, config)
++}
++
++// Server wraps tls.Server using Go stdlib
++func Server(conn net.Conn, config *tls.Config) *tls.Conn {
++	return tls.Server(conn, config)
++}
++
++// Dial wraps tls.Dial using Go stdlib
++func Dial(network, addr string, config *tls.Config) (*tls.Conn, error) {
++	return tls.Dial(network, addr, config)
++}

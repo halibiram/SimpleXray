@@ -785,9 +785,12 @@ jobs:
           # Define critical patches that MUST succeed (ALL patches are now required)
           CRITICAL_PATCH_NAMES=(
             "001-boringssl-bridge.patch"
-            "002-crypto-boringssl.patch"
-            "003-tls-boringssl.patch"
-            "004-x509-boringssl.patch"
+            "002-crypto-boringssl-cgo.patch"
+            "002-crypto-boringssl-nocgo.patch"
+            "003-tls-boringssl-cgo.patch"
+            "003-tls-boringssl-nocgo.patch"
+            "004-x509-boringssl-cgo.patch"
+            "004-x509-boringssl-nocgo.patch"
             "005-boringssl-tls-bridge.patch"
             "007-boringssl-handshake-trace.patch"
           )
