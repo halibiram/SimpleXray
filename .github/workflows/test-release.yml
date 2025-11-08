@@ -31,6 +31,46 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: false
+
+      - name: Initialize QUICHE Submodule
+        run: |
+          echo "📦 Initializing QUICHE submodule..."
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          
+          # Ensure parent directory exists
+          mkdir -p "$(dirname "$QUICHE_DIR")"
+          
+          # Try submodule update first
+          if git submodule update --init --recursive "$QUICHE_DIR" 2>&1; then
+            echo "✅ QUICHE submodule updated via git submodule"
+          else
+            echo "⚠️  QUICHE submodule update failed, trying manual initialization..."
+            # Remove if exists but incomplete
+            if [ -d "$QUICHE_DIR" ] && [ ! -f "$QUICHE_DIR/.git" ]; then
+              echo "Removing incomplete QUICHE directory..."
+              rm -rf "$QUICHE_DIR"
+            fi
+            # Try manual clone if submodule update fails
+            if [ ! -d "$QUICHE_DIR" ]; then
+              echo "Cloning QUICHE repository manually..."
+              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
+                echo "❌ Failed to initialize QUICHE submodule"
+                echo "This is non-fatal - build will continue without QUICHE support"
+                # Don't exit - build can continue without QUICHE
+              }
+            fi
+          fi
+          
+          # Verify QUICHE submodule structure
+          if [ -d "$QUICHE_DIR/quiche" ] && [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
+            echo "✅ QUICHE submodule initialized correctly"
+          elif [ -d "$QUICHE_DIR" ]; then
+            echo "⚠️  QUICHE submodule directory exists but structure incomplete"
+            echo "   Build will continue but QUICHE support may be disabled"
+          else
+            echo "⚠️  QUICHE submodule not found - build will continue without QUICHE"
+          fi
 
       - name: Setup GitHub CLI
         run: |
@@ -337,6 +377,64 @@ jobs:
           echo "📋 Verifying native libraries:"
           find app/src/main/jniLibs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No .so files found"
           find app/src/main/jni/quiche-client/libs -name "libquiche.*" -type f 2>/dev/null | head -10 || echo "⚠️  No QUICHE libraries found"
+
+      - name: Copy BoringSSL Libraries from Artifacts for QUICHE
+        run: |
+          echo "📦 Copying BoringSSL libraries from artifacts for QUICHE..."
+          
+          # Check if QUICHE library exists - if not, we don't need BoringSSL
+          QUICHE_LIB="app/src/main/jni/quiche-client/libs/arm64-v8a/libquiche.a"
+          if [ ! -f "$QUICHE_LIB" ]; then
+            echo "⚠️  QUICHE library not found at $QUICHE_LIB"
+            echo "   QUICHE build will be skipped, BoringSSL not needed"
+            exit 0
+          fi
+          
+          echo "✅ QUICHE library found, checking for BoringSSL artifacts..."
+          
+          # BoringSSL path where Android.mk expects it
+          BORINGSSL_BUILD_DIR="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl/build"
+          
+          # Check for BoringSSL artifacts in downloaded artifacts
+          if [ -d "artifacts-temp/boringssl-arm64-v8a" ]; then
+            echo "✅ Found BoringSSL artifact for arm64-v8a"
+            
+            # Create directory structure
+            mkdir -p "$BORINGSSL_BUILD_DIR/crypto"
+            mkdir -p "$BORINGSSL_BUILD_DIR/ssl"
+            
+            # Copy BoringSSL libraries from artifact
+            if [ -f "artifacts-temp/boringssl-arm64-v8a/crypto/libcrypto.a" ]; then
+              cp artifacts-temp/boringssl-arm64-v8a/crypto/libcrypto.a "$BORINGSSL_BUILD_DIR/crypto/libcrypto.a"
+              echo "✅ Copied libcrypto.a to $BORINGSSL_BUILD_DIR/crypto/"
+            else
+              echo "❌ libcrypto.a not found in artifact"
+              exit 1
+            fi
+            
+            if [ -f "artifacts-temp/boringssl-arm64-v8a/ssl/libssl.a" ]; then
+              cp artifacts-temp/boringssl-arm64-v8a/ssl/libssl.a "$BORINGSSL_BUILD_DIR/ssl/libssl.a"
+              echo "✅ Copied libssl.a to $BORINGSSL_BUILD_DIR/ssl/"
+            else
+              echo "❌ libssl.a not found in artifact"
+              exit 1
+            fi
+            
+            # Verify libraries are in place
+            if [ -f "$BORINGSSL_BUILD_DIR/crypto/libcrypto.a" ] && [ -f "$BORINGSSL_BUILD_DIR/ssl/libssl.a" ]; then
+              echo "✅ BoringSSL libraries verified at expected paths:"
+              ls -lh "$BORINGSSL_BUILD_DIR/crypto/libcrypto.a" "$BORINGSSL_BUILD_DIR/ssl/libssl.a"
+            else
+              echo "❌ BoringSSL libraries verification failed"
+              exit 1
+            fi
+          else
+            echo "⚠️  BoringSSL artifact not found for arm64-v8a"
+            echo "   QUICHE build may fail without BoringSSL libraries"
+            echo "📋 Available artifacts:"
+            ls -la artifacts-temp/ 2>/dev/null | head -20 || echo "  No artifacts found"
+            exit 1
+          fi
 
       - name: Download Rules Files
         run: |
