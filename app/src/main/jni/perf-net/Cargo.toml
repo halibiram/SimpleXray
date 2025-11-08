@@ -13,7 +13,8 @@ libc = "0.2"
 nix = { version = "0.28", features = ["signal", "socket", "sched"] }
 tokio = { version = "1", features = ["full"] }
 mio = { version = "1", features = ["os-ext", "os-poll"] }
-ring = { version = "0.17", features = ["aws_lc_rs"] }
+ring = "0.17"
+aws-lc-rs = { version = "1.14", default-features = false, features = ["bindgen"] }
 rustls = "0.23"
 deadpool = "0.10"
 bb8 = "0.8"
