@@ -7,8 +7,7 @@ use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::jint;
 use log::{debug, error};
-use nix::sys::socket::{socket, setsockopt, getsockopt, AddressFamily, SockType, SockFlag, SockProtocol};
-use nix::sys::socket::sockopt::TcpFastOpen;
+use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol};
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::OnceLock;
@@ -40,17 +39,35 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // TCP_FASTOPEN option - available on Linux 3.7+
+    // Use libc directly as TcpFastOpen may not be in nix 0.28
     let opt: i32 = 1;
-    match setsockopt(fd, &TcpFastOpen, &opt) {
-        Ok(_) => {
+    #[cfg(target_os = "android")]
+    {
+        use libc::{IPPROTO_TCP, TCP_FASTOPEN};
+        let result = unsafe {
+            libc::setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+        };
+        if result == 0 {
             debug!("TCP Fast Open enabled for fd {}", fd);
             0
-        }
-        Err(e) => {
+        } else {
             // TFO may not be supported on all devices/Android versions
-            // Log as debug, not error, as it's best-effort
-            debug!("TCP Fast Open not available for fd {}: {}", fd, e);
+            debug!("TCP Fast Open not available for fd {}", fd);
             -1
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use nix::sys::socket::{setsockopt, sockopt::TcpFastOpen};
+        match setsockopt(fd, &TcpFastOpen, &opt) {
+            Ok(_) => {
+                debug!("TCP Fast Open enabled for fd {}", fd);
+                0
+            }
+            Err(e) => {
+                debug!("TCP Fast Open not available for fd {}: {}", fd, e);
+                -1
+            }
         }
     }
 }
@@ -94,9 +111,23 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     };
 
     let opt: i32 = 1;
-    let supported = match setsockopt(test_fd, &TcpFastOpen, &opt) {
-        Ok(_) => 1,
-        Err(_) => 0,
+    let supported = {
+        #[cfg(target_os = "android")]
+        {
+            use libc::{IPPROTO_TCP, TCP_FASTOPEN};
+            let result = unsafe {
+                libc::setsockopt(test_fd, IPPROTO_TCP, TCP_FASTOPEN, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+            };
+            if result == 0 { 1 } else { 0 }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::sys::socket::{setsockopt, sockopt::TcpFastOpen};
+            match setsockopt(test_fd, &TcpFastOpen, &opt) {
+                Ok(_) => 1,
+                Err(_) => 0,
+            }
+        }
     };
 
     // Close test socket
@@ -144,6 +175,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     }
 }
+
 
 
 

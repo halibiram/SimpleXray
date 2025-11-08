@@ -10,6 +10,14 @@ use log::{debug, error};
 use nix::sys::socket::{setsockopt, sockopt};
 use std::os::unix::io::RawFd;
 
+// Helper function to set socket option using libc (for options not in nix 0.28)
+#[cfg(target_os = "android")]
+fn set_sockopt_libc(fd: RawFd, level: i32, optname: i32, optval: *const libc::c_void, optlen: u32) -> i32 {
+    unsafe {
+        libc::setsockopt(fd, level, optname, optval, optlen as libc::socklen_t)
+    }
+}
+
 /// Set socket priority for QoS
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeSetSocketPriority(
@@ -31,14 +39,44 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // SO_PRIORITY (0-6, higher = more important)
-    match setsockopt(fd, &sockopt::Priority, &(priority as i32)) {
-        Ok(_) => {
+    // Use libc directly as Priority may not be in nix 0.28
+    #[cfg(target_os = "android")]
+    {
+        use libc::{SOL_SOCKET, SO_PRIORITY};
+        let optval = priority as i32;
+        let result = unsafe {
+            libc::setsockopt(fd, SOL_SOCKET, SO_PRIORITY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+        };
+        if result == 0 {
             debug!("Socket priority set to {} for fd {}", priority, fd);
             0
-        }
-        Err(e) => {
-            error!("Failed to set socket priority: {}", e);
+        } else {
+            error!("Failed to set socket priority");
             -1
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        // Try nix first, fallback to libc
+        match setsockopt(fd, &sockopt::Priority, &(priority as i32)) {
+            Ok(_) => {
+                debug!("Socket priority set to {} for fd {}", priority, fd);
+                0
+            }
+            Err(_) => {
+                use libc::{SOL_SOCKET, SO_PRIORITY};
+                let optval = priority as i32;
+                let result = unsafe {
+                    libc::setsockopt(fd, SOL_SOCKET, SO_PRIORITY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+                };
+                if result == 0 {
+                    debug!("Socket priority set to {} for fd {}", priority, fd);
+                    0
+                } else {
+                    error!("Failed to set socket priority");
+                    -1
+                }
+            }
         }
     }
 }
@@ -66,14 +104,43 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // IPTOS_LOWDELAY (0x10) for low latency
     // IPTOS_THROUGHPUT (0x08) for high throughput
     // IPTOS_RELIABILITY (0x04) for reliability
-    match setsockopt(fd, &sockopt::IpTos, &(tos as u8)) {
-        Ok(_) => {
+    // Use libc directly as IpTos may not be in nix 0.28
+    #[cfg(target_os = "android")]
+    {
+        use libc::{IPPROTO_IP, IP_TOS};
+        let optval = tos as u8;
+        let result = unsafe {
+            libc::setsockopt(fd, IPPROTO_IP, IP_TOS, &optval as *const _ as *const libc::c_void, std::mem::size_of::<u8>() as libc::socklen_t)
+        };
+        if result == 0 {
             debug!("IP TOS set to 0x{:02x} for fd {}", tos, fd);
             0
-        }
-        Err(e) => {
-            error!("Failed to set IP TOS: {}", e);
+        } else {
+            error!("Failed to set IP TOS");
             -1
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        match setsockopt(fd, &sockopt::IpTos, &(tos as u8)) {
+            Ok(_) => {
+                debug!("IP TOS set to 0x{:02x} for fd {}", tos, fd);
+                0
+            }
+            Err(_) => {
+                use libc::{IPPROTO_IP, IP_TOS};
+                let optval = tos as u8;
+                let result = unsafe {
+                    libc::setsockopt(fd, IPPROTO_IP, IP_TOS, &optval as *const _ as *const libc::c_void, std::mem::size_of::<u8>() as libc::socklen_t)
+                };
+                if result == 0 {
+                    debug!("IP TOS set to 0x{:02x} for fd {}", tos, fd);
+                    0
+                } else {
+                    error!("Failed to set IP TOS");
+                    -1
+                }
+            }
         }
     }
 }
@@ -95,16 +162,44 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let opt: i32 = 1;
 
     // TCP_NODELAY (disable Nagle's algorithm)
-    let result = match setsockopt(fd, &sockopt::TcpNoDelay, &opt) {
-        Ok(_) => 0,
-        Err(e) => {
-            error!("Failed to set TCP_NODELAY: {}", e);
-            -1
+    // Use libc directly as TcpNoDelay may not be in nix 0.28
+    let result = {
+        #[cfg(target_os = "android")]
+        {
+            use libc::{IPPROTO_TCP, TCP_NODELAY};
+            let result = unsafe {
+                libc::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+            };
+            if result == 0 { 0 } else { -1 }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            match setsockopt(fd, &sockopt::TcpNoDelay, &opt) {
+                Ok(_) => 0,
+                Err(_) => {
+                    use libc::{IPPROTO_TCP, TCP_NODELAY};
+                    let result = unsafe {
+                        libc::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+                    };
+                    if result == 0 { 0 } else { -1 }
+                }
+            }
         }
     };
 
+    if result != 0 {
+        error!("Failed to set TCP_NODELAY");
+    }
+
     // TCP_QUICKACK (quick ACK) - may not be available on all systems
-    let _ = setsockopt(fd, &sockopt::TcpQuickAck, &opt);
+    // Use libc directly as TcpQuickAck may not be in nix 0.28
+    #[cfg(target_os = "android")]
+    {
+        use libc::{IPPROTO_TCP, TCP_QUICKACK};
+        let _ = unsafe {
+            libc::setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+        };
+    }
 
     if result == 0 {
         debug!("TCP low latency enabled for fd {}", fd);

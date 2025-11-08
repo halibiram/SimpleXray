@@ -12,7 +12,8 @@ use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jint, jlong};
 use log::debug;
 use rustls::client::{ServerCertVerifier, ServerCertVerified};
-use rustls::{Certificate, Error};
+use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::Error;
 use std::sync::Arc;
 
 /// Dummy certificate verifier (accepts all certificates)
@@ -36,9 +37,9 @@ impl NoCertificateVerification {
 impl ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        _server_name: &rustls::pki_types::ServerName<'static>,
+        _end_entity: &CertificateDer<'static>,
+        _intermediates: &[CertificateDer<'static>],
+        _server_name: &ServerName<'static>,
         _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
         _now: std::time::SystemTime,

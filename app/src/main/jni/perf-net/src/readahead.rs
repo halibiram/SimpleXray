@@ -8,7 +8,7 @@ use jni::objects::JClass;
 use jni::sys::{jint, jlong};
 use log::{debug, error};
 use nix::sys::socket::{recv, MsgFlags};
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+// fcntl will be used conditionally based on target OS
 use std::os::unix::io::RawFd;
 
 /// Enable read-ahead for file descriptor
@@ -64,20 +64,51 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut buffer = vec![0u8; chunk_size as usize];
 
     // Get current socket flags
-    let flags = match fcntl(fd, FcntlArg::F_GETFL) {
-        Ok(f) => OFlag::from_bits_truncate(f),
-        Err(_) => {
-            error!("Failed to get socket flags");
-            return -1;
+    let (flags, was_nonblocking) = {
+        #[cfg(target_os = "android")]
+        {
+            use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
+            let flags = unsafe { fcntl(fd, F_GETFL) };
+            if flags < 0 {
+                error!("Failed to get socket flags");
+                return -1;
+            }
+            let was_nonblocking = (flags & O_NONBLOCK) != 0;
+            (flags, was_nonblocking)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::fcntl::{fcntl, FcntlArg, OFlag};
+            let flags = match fcntl(fd, FcntlArg::F_GETFL) {
+                Ok(f) => OFlag::from_bits_truncate(f),
+                Err(_) => {
+                    error!("Failed to get socket flags");
+                    return -1;
+                }
+            };
+            let was_nonblocking = flags.contains(OFlag::O_NONBLOCK);
+            (flags.bits(), was_nonblocking)
         }
     };
-    let was_nonblocking = flags.contains(OFlag::O_NONBLOCK);
 
     // Ensure non-blocking for peek
     if !was_nonblocking {
-        if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
-            error!("Failed to set non-blocking: {}", e);
-            return -1;
+        #[cfg(target_os = "android")]
+        {
+            use libc::{fcntl, F_SETFL, O_NONBLOCK};
+            let result = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+            if result < 0 {
+                error!("Failed to set non-blocking");
+                return -1;
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::fcntl::{fcntl, FcntlArg, OFlag};
+            if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK)) {
+                error!("Failed to set non-blocking: {}", e);
+                return -1;
+            }
         }
     }
 
@@ -103,7 +134,16 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Restore original blocking state
     if !was_nonblocking {
-        let _ = fcntl(fd, FcntlArg::F_SETFL(flags));
+        #[cfg(target_os = "android")]
+        {
+            use libc::{fcntl, F_SETFL};
+            let _ = unsafe { fcntl(fd, F_SETFL, flags) };
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::fcntl::{fcntl, FcntlArg, OFlag};
+            let _ = fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)));
+        }
     }
 
     if total_peeked > 0 {
@@ -112,6 +152,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     total_peeked as jint
 }
+
 
 
 

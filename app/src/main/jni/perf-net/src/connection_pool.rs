@@ -10,9 +10,8 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol, connect, setsockopt, sockopt};
-use nix::sys::socket::sockopt::{ReuseAddr, TcpNoDelay, KeepAlive};
+use nix::sys::socket::sockopt::{ReuseAddr, KeepAlive};
 use nix::unistd::close;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use std::os::unix::io::RawFd;
 use std::net::{SocketAddr, Ipv4Addr};
 use std::str::FromStr;
@@ -82,13 +81,40 @@ impl ConnectionPool {
         )?;
 
         // Set non-blocking
-        let flags = fcntl(fd, FcntlArg::F_GETFL)?;
-        let flags = OFlag::from_bits_truncate(flags);
-        fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
+        // Set non-blocking using libc (fcntl may not be in nix 0.28 without fs feature)
+        #[cfg(target_os = "android")]
+        {
+            use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
+            let flags = unsafe { fcntl(fd, F_GETFL) };
+            if flags >= 0 {
+                let _ = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::fcntl::{fcntl, FcntlArg, OFlag};
+            if let Ok(flags) = fcntl(fd, FcntlArg::F_GETFL) {
+                let flags = OFlag::from_bits_truncate(flags);
+                let _ = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK));
+            }
+        }
 
         // Set socket options
         let _ = setsockopt(fd, &ReuseAddr, &true);
-        let _ = setsockopt(fd, &TcpNoDelay, &true);
+        // TCP_NODELAY using libc (TcpNoDelay may not be in nix 0.28)
+        #[cfg(target_os = "android")]
+        {
+            use libc::{IPPROTO_TCP, TCP_NODELAY};
+            let optval: i32 = 1;
+            let _ = unsafe {
+                libc::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+            };
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::sys::socket::sockopt::TcpNoDelay;
+            let _ = setsockopt(fd, &TcpNoDelay, &true);
+        }
         let _ = setsockopt(fd, &KeepAlive, &true);
 
         Ok(fd)

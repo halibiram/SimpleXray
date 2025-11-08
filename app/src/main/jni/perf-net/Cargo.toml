@@ -10,7 +10,7 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 jni = { version = "0.21", default-features = false }
 libc = "0.2"
-nix = { version = "0.28", features = ["signal", "socket", "sched"] }
+nix = { version = "0.28", features = ["signal", "socket", "sched", "uio", "fs", "mman"] }
 tokio = { version = "1", features = ["full"] }
 mio = { version = "1", features = ["os-ext", "os-poll"] }
 ring = "0.17"

@@ -113,7 +113,11 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         )
     };
 
-    match aead::seal_in_place(&sealing_key, aead::Aad::empty(), output_slice, input_len as usize) {
+    // Copy input to output first
+    output_slice[..input_len as usize].copy_from_slice(input_slice);
+    
+    // Seal in place - ring 0.17 API
+    match aead::seal_in_place_append_tag(&sealing_key, aead::Aad::empty(), &mut output_slice[..input_len as usize]) {
         Ok(tag_len) => {
             debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
             (input_len + tag_len as jint) as jint

@@ -34,7 +34,22 @@ fn check_zerocopy_support() -> bool {
         };
 
         // Enable SO_ZEROCOPY option (required for MSG_ZEROCOPY)
-        let result = setsockopt(test_fd, &sockopt::SoZerocopy, &true);
+        // Use libc directly as SoZerocopy may not be in nix 0.28
+        let result = {
+            #[cfg(target_os = "android")]
+            {
+                use libc::{SOL_SOCKET, SO_ZEROCOPY};
+                let optval: i32 = 1;
+                let r = unsafe {
+                    libc::setsockopt(test_fd, SOL_SOCKET, SO_ZEROCOPY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+                };
+                if r == 0 { Ok(()) } else { Err(nix::errno::Errno::last()) }
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                setsockopt(test_fd, &sockopt::SoZerocopy, &true)
+            }
+        };
         let _ = nix::unistd::close(test_fd);
         
         let supported = result.is_ok();
@@ -145,8 +160,19 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Enable SO_ZEROCOPY on socket if not already enabled
     if check_zerocopy_support() {
-        use nix::sys::socket::{setsockopt, sockopt};
-        let _ = setsockopt(fd, &sockopt::SoZerocopy, &true);
+        #[cfg(target_os = "android")]
+        {
+            use libc::{SOL_SOCKET, SO_ZEROCOPY};
+            let optval: i32 = 1;
+            let _ = unsafe {
+                libc::setsockopt(fd, SOL_SOCKET, SO_ZEROCOPY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+            };
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            use nix::sys::socket::{setsockopt, sockopt};
+            let _ = setsockopt(fd, &sockopt::SoZerocopy, &true);
+        }
     }
 
     let flags = if check_zerocopy_support() {
@@ -206,7 +232,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Build iovec array
     let mut iovecs = Vec::new();
-    let len_elements = match env.get_int_array_elements(lengths, nix::libc::JNI_ABORT) {
+    let len_elements = match env.get_int_array_elements(lengths, jni::sys::JNI_ABORT) {
         Ok(elems) => elems,
         Err(_) => {
             error!("Failed to get lengths array elements");

@@ -93,8 +93,17 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // Set non-blocking (should already be set, but ensure it)
-    use nix::fcntl::{fcntl, FcntlArg, OFlag};
-    let _ = fcntl(fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
+    // Set non-blocking using libc (fcntl may not be in nix 0.28 without fs feature)
+    #[cfg(target_os = "android")]
+    {
+        use libc::{fcntl, F_SETFL, O_NONBLOCK};
+        let _ = unsafe { fcntl(fd, F_SETFL, O_NONBLOCK) };
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use nix::fcntl::{fcntl, FcntlArg, OFlag};
+        let _ = fcntl(fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
+    }
 
     let token = Token(ctx.next_token);
     ctx.next_token += 1;
