@@ -22,7 +22,7 @@ pub extern "C" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) -> ji
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("PerfJNI")
-            .with_min_level(log::Level::Debug),
+            .with_max_level(log::LevelFilter::Debug),
     );
 
     info!("Performance module JNI loaded (Rust)");
@@ -46,6 +46,7 @@ pub extern "C" fn JNI_OnUnload(_vm: JavaVM, _reserved: *mut std::ffi::c_void) {
 
     info!("Performance module JNI unloaded and cleaned up");
 }
+
 
 
 

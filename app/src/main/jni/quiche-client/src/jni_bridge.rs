@@ -40,7 +40,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("QuicheJNI")
-            .with_min_level(log::Level::Debug),
+            .with_max_level(log::LevelFilter::Debug),
     );
 
     let host = jstring_to_string(&env, server_host);
@@ -393,6 +393,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheCrypto_nativePrintCap
 ) {
     QuicheCrypto::print_capabilities();
 }
+
 
 
 

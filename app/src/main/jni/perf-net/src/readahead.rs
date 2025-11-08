@@ -31,7 +31,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             debug!("Read-ahead enabled for fd {}", fd);
             0
         }
-        Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => {
+        Err(nix::errno::Errno::EAGAIN) => {
             // No data available, but that's OK
             debug!("Read-ahead enabled for fd {} (no data yet)", fd);
             0
@@ -122,7 +122,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
                     break; // Partial peek
                 }
             }
-            Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => {
+            Err(nix::errno::Errno::EAGAIN) => {
                 break; // No more data available
             }
             Err(e) => {
