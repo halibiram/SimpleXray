@@ -137,10 +137,25 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // Set keep-alive parameters (Linux-specific)
-    // Note: These may not be available on all systems
-    let _ = setsockopt(fd, &sockopt::TcpKeepIdle, &keepidle);
-    let _ = setsockopt(fd, &sockopt::TcpKeepIntvl, &keepintvl);
-    let _ = setsockopt(fd, &sockopt::TcpKeepCnt, &keepcnt);
+    // Note: These may not be available on all systems or in nix 0.28
+    // Using libc directly for Android compatibility
+    #[cfg(target_os = "android")]
+    {
+        use libc::{setsockopt, SOL_TCP, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT};
+        unsafe {
+            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPIDLE as i32, &keepidle as *const _ as *const _, std::mem::size_of::<i32>() as u32);
+            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPINTVL as i32, &keepintvl as *const _ as *const _, std::mem::size_of::<i32>() as u32);
+            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPCNT as i32, &keepcnt as *const _ as *const _, std::mem::size_of::<i32>() as u32);
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        // For non-Android systems, try nix socket options if available
+        // These may not be available in nix 0.28
+        // let _ = setsockopt(fd, &sockopt::TcpKeepIdle, &keepidle);
+        // let _ = setsockopt(fd, &sockopt::TcpKeepIntvl, &keepintvl);
+        // let _ = setsockopt(fd, &sockopt::TcpKeepCnt, &keepcnt);
+    }
 
     debug!("TCP keep-alive optimized for fd {} (idle: {}, intvl: {}, cnt: {})", 
            fd, keepidle, keepintvl, keepcnt);
@@ -183,6 +198,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     }
 }
+
 
 
 

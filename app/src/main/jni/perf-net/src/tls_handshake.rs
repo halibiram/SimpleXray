@@ -28,7 +28,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // Create rustls client config
     let mut crypto = match RustlsClientConfig::builder()
         .with_safe_defaults()
-        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification::new(true, true, None)))
         .with_no_client_auth()
     {
         Ok(c) => c,

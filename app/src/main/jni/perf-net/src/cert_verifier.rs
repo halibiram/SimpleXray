@@ -24,7 +24,7 @@ pub struct NoCertificateVerification {
 }
 
 impl NoCertificateVerification {
-    fn new(allow_hostname_mismatch: bool, bypass_pinning: bool, hostname: Option<String>) -> Self {
+    pub fn new(allow_hostname_mismatch: bool, bypass_pinning: bool, hostname: Option<String>) -> Self {
         Self {
             allow_hostname_mismatch,
             bypass_pinning,
@@ -38,7 +38,7 @@ impl ServerCertVerifier for NoCertificateVerification {
         &self,
         _end_entity: &Certificate,
         _intermediates: &[Certificate],
-        _server_name: &rustls::ServerName,
+        _server_name: &rustls::pki_types::ServerName<'static>,
         _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
         _now: std::time::SystemTime,
