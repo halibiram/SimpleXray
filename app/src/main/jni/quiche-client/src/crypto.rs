@@ -45,12 +45,14 @@ impl QuicheCrypto {
             CryptoAlgorithm::ChaCha20Poly1305 => &aead::CHACHA20_POLY1305,
         };
 
-        let unbound_key = aead::UnboundKey::new(aead_alg, key)?;
+        let unbound_key = aead::UnboundKey::new(aead_alg, key)
+            .map_err(|e| format!("Failed to create unbound key: {:?}", e))?;
         let less_safe_key = aead::LessSafeKey::new(unbound_key);
         
         // LessSafeKey is not Clone, so we need to create two keys from the same UnboundKey
         // Since UnboundKey is not Clone either, we need to create it twice
-        let unbound_key2 = aead::UnboundKey::new(aead_alg, key)?;
+        let unbound_key2 = aead::UnboundKey::new(aead_alg, key)
+            .map_err(|e| format!("Failed to create unbound key: {:?}", e))?;
         self.sealing_key = Some(less_safe_key);
         self.opening_key = Some(aead::LessSafeKey::new(unbound_key2));
 
@@ -67,7 +69,8 @@ impl QuicheCrypto {
         let sealing_key = self.sealing_key.as_ref()
             .ok_or("Crypto not initialized")?;
 
-        if ciphertext.len() < plaintext.len() + sealing_key.algorithm().tag_len() {
+        let tag_len = sealing_key.algorithm().tag_len();
+        if ciphertext.len() < plaintext.len() + tag_len {
             return Err("Ciphertext buffer too small".into());
         }
 
@@ -77,16 +80,21 @@ impl QuicheCrypto {
         let nonce = aead::Nonce::try_assume_unique_for_key(nonce)
             .map_err(|_| "Invalid nonce length")?;
 
-        // seal_in_place_append_tag takes a slice containing the plaintext
-        // and appends the tag. The buffer must be large enough for plaintext + tag.
-        // We pass a slice that includes space for the tag.
-        let tag_len = sealing_key.seal_in_place_append_tag(
+        // seal_in_place_append_tag needs a Vec or similar that implements Extend
+        // We'll use a Vec for the in-place operation
+        let mut data = ciphertext[..plaintext.len()].to_vec();
+        sealing_key.seal_in_place_append_tag(
             nonce,
             aead::Aad::empty(),
-            &mut ciphertext[..plaintext.len()],
-        )?;
+            &mut data,
+        )
+        .map_err(|e| format!("Encryption failed: {:?}", e))?;
 
-        Ok(plaintext.len() + tag_len)
+        // Copy the result back to ciphertext (data now contains plaintext + tag)
+        let final_len = data.len();
+        ciphertext[..final_len].copy_from_slice(&data);
+
+        Ok(final_len)
     }
 
     pub fn decrypt(
@@ -105,7 +113,8 @@ impl QuicheCrypto {
             nonce,
             aead::Aad::empty(),
             &mut ciphertext[..plaintext_len],
-        )?;
+        )
+        .map_err(|e| format!("Decryption failed: {:?}", e))?;
 
         Ok(plaintext.len())
     }

@@ -7,11 +7,10 @@ use crate::client::QuicheClient;
 use std::sync::Arc;
 use parking_lot::Mutex;
 use std::os::unix::io::RawFd;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use log::{debug, error, info, warn};
-use crossbeam::channel;
+use log::{error, info, warn};
 
 #[derive(Clone, Debug)]
 pub struct ForwarderConfig {
@@ -187,7 +186,15 @@ impl QuicheTunForwarder {
                     // EOF
                     break;
                 }
-                Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => {
+                Ok(n) if n > 0 => {
+                    // Data read, already handled above
+                    continue;
+                }
+                Err(nix::errno::Errno::EAGAIN) => {
+                    // No data available
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(nix::errno::Errno::EWOULDBLOCK) => {
                     // No data available
                     thread::sleep(Duration::from_millis(1));
                 }
@@ -199,6 +206,7 @@ impl QuicheTunForwarder {
         }
     }
 }
+
 
 
 

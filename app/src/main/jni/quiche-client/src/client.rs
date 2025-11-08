@@ -3,7 +3,8 @@
  * High-performance QUIC client using Quinn
  */
 
-use quinn::{ClientConfig, Endpoint, Connection};
+use quinn::{Endpoint, Connection, ClientConfig};
+use quinn::crypto::rustls::QuicClientConfig;
 use std::sync::Arc;
 use std::net::ToSocketAddrs;
 use log::{info, warn};
@@ -165,16 +166,17 @@ impl QuicheClient {
         // For now, use default config (accepts any certificate)
         // In production, you should use proper certificate validation
         // rustls 0.23 uses dangerous() instead of with_safe_defaults()
-        let mut crypto = rustls::ClientConfig::builder()
+        let crypto = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
             .with_no_client_auth();
         
-        let client_config = ClientConfig::new(Arc::new(crypto));
+        let quic_crypto = QuicClientConfig::try_from(Arc::new(crypto))?;
+        let client_config = ClientConfig::new(Arc::new(quic_crypto));
 
         // Create endpoint
-        let endpoint = Endpoint::client("[::]:0".parse()?)?;
-        let endpoint = endpoint.with_default_client_config(client_config);
+        let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
+        endpoint.set_default_client_config(client_config);
 
         // Connect
         // quinn's connect accepts a string for server_name
@@ -232,7 +234,7 @@ impl QuicheClient {
         self.runtime.block_on(async {
             let mut send_stream = conn.open_uni().await?;
             send_stream.write_all(data).await?;
-            send_stream.finish().await?;
+            send_stream.finish()?;
             Ok(data.len())
         })
     }
@@ -248,6 +250,7 @@ use rustls::Error;
 
 // Dummy certificate verifier (accepts all certificates)
 // In production, use proper certificate validation
+#[derive(Debug)]
 struct NoCertificateVerification;
 
 impl ServerCertVerifier for NoCertificateVerification {

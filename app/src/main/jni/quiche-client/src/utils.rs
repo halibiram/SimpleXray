@@ -79,22 +79,24 @@ impl TimeUtils {
 pub struct NetUtils;
 
 impl NetUtils {
-    pub fn enable_udp_gso(sockfd: RawFd) -> Result<(), nix::Error> {
+    pub fn enable_udp_gso(_sockfd: RawFd) -> Result<(), nix::Error> {
         // UDP_SEGMENT = 103
         // SoZerocopy is not available in nix, skip for now
         // In production, use libc directly if needed
         Ok(())
     }
 
-    pub fn enable_udp_gro(sockfd: RawFd) -> Result<(), nix::Error> {
+    pub fn enable_udp_gro(_sockfd: RawFd) -> Result<(), nix::Error> {
         // UDP_GRO = 104 (not directly supported in nix, would need libc)
         // For now, just return Ok
         Ok(())
     }
 
     pub fn set_socket_buffers(sockfd: RawFd, sndbuf: usize, rcvbuf: usize) -> Result<(), nix::Error> {
-        setsockopt(sockfd, &sockopt::SndBuf, &(sndbuf as u32))?;
-        setsockopt(sockfd, &sockopt::RcvBuf, &(rcvbuf as u32))?;
+        use std::os::fd::BorrowedFd;
+        let fd = unsafe { BorrowedFd::borrow_raw(sockfd) };
+        setsockopt(fd, sockopt::SndBuf, &(sndbuf as u32))?;
+        setsockopt(fd, sockopt::RcvBuf, &(rcvbuf as u32))?;
         Ok(())
     }
 
@@ -109,14 +111,14 @@ impl NetUtils {
 pub struct MemUtils;
 
 impl MemUtils {
-    pub fn allocate_aligned(size: usize, alignment: usize) -> Result<*mut u8, std::alloc::AllocError> {
+    pub fn allocate_aligned(size: usize, alignment: usize) -> Result<*mut u8, String> {
         use std::alloc::{Layout, alloc};
         let layout = Layout::from_size_align(size, alignment)
-            .map_err(|_| std::alloc::AllocError)?;
+            .map_err(|e| format!("Invalid layout: {:?}", e))?;
         unsafe {
             let ptr = alloc(layout);
             if ptr.is_null() {
-                Err(std::alloc::AllocError)
+                Err("Allocation failed".to_string())
             } else {
                 Ok(ptr as *mut u8)
             }
@@ -137,17 +139,23 @@ impl MemUtils {
     }
 
     pub fn lock_memory(addr: *mut u8, len: usize) -> Result<(), nix::Error> {
-        use nix::sys::mman::{mlock, MlockFlags};
+        use nix::sys::mman::mlock;
+        use std::ptr::NonNull;
         unsafe {
-            mlock(addr as *const libc::c_void, len)?;
+            let non_null = NonNull::new(addr as *mut libc::c_void)
+                .ok_or(nix::errno::Errno::EINVAL)?;
+            mlock(non_null, len)?;
         }
         Ok(())
     }
 
     pub fn unlock_memory(addr: *mut u8, len: usize) -> Result<(), nix::Error> {
         use nix::sys::mman::munlock;
+        use std::ptr::NonNull;
         unsafe {
-            munlock(addr as *const libc::c_void, len)?;
+            let non_null = NonNull::new(addr as *mut libc::c_void)
+                .ok_or(nix::errno::Errno::EINVAL)?;
+            munlock(non_null, len)?;
         }
         Ok(())
     }

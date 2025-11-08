@@ -8,7 +8,7 @@ use jni::objects::{JClass, JByteArray};
 use jni::sys::{jboolean, jbooleanArray, jdoubleArray, jint, jlong, jlongArray};
 use std::sync::Arc;
 use parking_lot::Mutex;
-use log::{error, info};
+use log::error;
 
 use crate::client::{QuicheClient, QuicConfig, CongestionControl, CpuAffinity};
 use crate::tun_forwarder::{QuicheTunForwarder, ForwarderConfig};
@@ -20,9 +20,12 @@ fn jstring_to_string(env: &JNIEnv, jstr: jni::sys::jstring) -> String {
         return String::new();
     }
     
-    match env.get_string(jstr) {
-        Ok(s) => s.to_string_lossy().to_string(),
-        Err(_) => String::new(),
+    unsafe {
+        let jstring = jni::objects::JString::from_raw(jstr);
+        match env.get_string(&jstring) {
+            Ok(s) => s.to_string_lossy().to_string(),
+            Err(_) => String::new(),
+        }
     }
 }
 
@@ -161,7 +164,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
         return -1;
     }
 
-    let array_length = match env.get_array_length(data) {
+    let array_length = match env.get_array_length(&data) {
         Ok(len) => len,
         Err(_) => {
             error!("Failed to get array length");
@@ -169,7 +172,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
         }
     };
 
-    let src = match env.get_byte_array_elements(data, jni::objects::ReleaseMode::NoCopyBack) {
+    let src = match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
         Ok(elems) => elems,
         Err(_) => {
             error!("Failed to get byte array elements");
@@ -224,11 +227,11 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeGetMetri
         metrics.cwnd as f64,
     ];
 
-    if let Err(_) = env.set_double_array_region(result, 0, &values) {
+    if let Err(_) = env.set_double_array_region(&result, 0, &values) {
         return std::ptr::null_mut();
     }
 
-    result
+    result.into_raw() as jni::sys::jdoubleArray
 }
 
 /// Create TUN forwarder
@@ -351,11 +354,11 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeGe
         stats.bytes_sent as jlong,
     ];
 
-    if let Err(_) = env.set_long_array_region(result, 0, &values) {
+    if let Err(_) = env.set_long_array_region(&result, 0, &values) {
         return std::ptr::null_mut();
     }
 
-    result
+    result.into_raw() as jni::sys::jlongArray
 }
 
 /// Get crypto capabilities
@@ -378,11 +381,11 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheCrypto_nativeGetCapab
         jboolean::from(caps.has_sha_hardware),
     ];
 
-    if let Err(_) = env.set_boolean_array_region(result, 0, &values) {
+    if let Err(_) = env.set_boolean_array_region(&result, 0, &values) {
         return std::ptr::null_mut();
     }
 
-    result
+    result.into_raw() as jni::sys::jbooleanArray
 }
 
 /// Print crypto capabilities
