@@ -1,0 +1,20 @@
+[package]
+name = "xray-signal-handler"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "xray_signal_handler"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+jni = { version = "0.21", default-features = false }
+signal-hook = "0.3"
+nix = { version = "0.28", features = ["signal"] }
+libc = "0.2"
+android_logger = "0.13"
+log = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.13"
+

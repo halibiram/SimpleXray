@@ -428,12 +428,75 @@ tasks.register("copyQuicheLibraries") {
     }
 }
 
+// Build Rust native modules
+tasks.register("buildRustModules") {
+    doLast {
+        def rustModules = ["xray-signal-handler", "pepper-shaper", "perf-net", "quiche-client"]
+        def targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android", "i686-linux-android"]
+        def abiMap = [
+            "aarch64-linux-android": "arm64-v8a",
+            "armv7-linux-androideabi": "armeabi-v7a",
+            "x86_64-linux-android": "x86_64",
+            "i686-linux-android": "x86"
+        ]
+        
+        def androidPlatform = "29"
+        def ndkPath = android.ndkDirectory?.absolutePath ?: System.getenv("ANDROID_NDK") ?: "${System.getProperty("user.home")}/Android/Sdk/ndk/25.2.9519653"
+        
+        println("🔨 Building Rust modules...")
+        println("   NDK: ${ndkPath}")
+        println("   Platform: ${androidPlatform}")
+        
+        rustModules.each { module ->
+            println("   Building ${module}...")
+            targets.each { target ->
+                def abi = abiMap[target]
+                def moduleDir = file("src/main/jni/${module}")
+                def libName = module.replace("-", "_")
+                
+                if (!moduleDir.exists()) {
+                    println("   ⚠️  Module ${module} not found, skipping")
+                    return
+                }
+                
+                // Build Rust library
+                exec {
+                    workingDir moduleDir
+                    commandLine "cargo", "ndk",
+                        "--target", target,
+                        "--platform", androidPlatform,
+                        "build",
+                        "--release"
+                }
+                
+                // Copy library to jniLibs
+                def sourceLib = file("${moduleDir}/target/${target}/release/lib${libName}.so")
+                def destDir = file("src/main/jniLibs/${abi}")
+                def destLib = file("${destDir}/lib${libName}.so")
+                
+                if (sourceLib.exists()) {
+                    destDir.mkdirs()
+                    copy {
+                        from sourceLib
+                        into destDir
+                    }
+                    println("   ✅ ${module} (${abi}): ${destLib.absolutePath}")
+                } else {
+                    println("   ⚠️  ${module} (${abi}): Library not found at ${sourceLib.absolutePath}")
+                }
+            }
+        }
+        
+        println("✅ Rust modules build complete!")
+    }
+}
+
 // Run checks before build
 tasks.matching { task ->
     task.name.startsWith("externalNativeBuild") && 
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
-    task.dependsOn("checkBoringSSL", "copyQuicheLibraries")
+    task.dependsOn("checkBoringSSL", "copyQuicheLibraries", "buildRustModules")
 }
 
 // Run debug files check before debug builds
