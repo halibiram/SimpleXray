@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..6666666
 --- /dev/null
 +++ b/common/crypto/x509_nocgo.go
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,28 @@
 +//go:build !cgo
 +// +build !cgo
 +

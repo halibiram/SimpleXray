@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..4444444
 --- /dev/null
 +++ b/common/crypto/tls_nocgo.go
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +//go:build !cgo
 +// +build !cgo
 +
