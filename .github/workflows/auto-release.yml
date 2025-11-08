@@ -114,6 +114,9 @@ jobs:
 
       - name: Setup Keystore and Properties
         if: steps.check_tag.outputs.exists == 'false'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           echo "${{ secrets.SIGNING_KEYSTORE }}" > keystore.b64
           base64 -d keystore.b64 > ./store.jks
@@ -464,6 +467,9 @@ jobs:
 
       - name: Build Release APK
         if: steps.check_tag.outputs.exists == 'false'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           echo "🔨 Building release APK..."
           ./gradlew assembleRelease --stacktrace --warning-mode all || {
