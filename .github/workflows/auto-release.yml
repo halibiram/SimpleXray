@@ -768,15 +768,19 @@ jobs:
 
           # Only upload arm64-v8a APK (BoringSSL optimized for ARM64)
           if [ -f "release-artifacts/simplexray-arm64-v8a.apk" ]; then
+            APK_SIZE=$(stat -c%s "release-artifacts/simplexray-arm64-v8a.apk" 2>/dev/null || echo "0")
+            APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
+            echo "✅ APK found: simplexray-arm64-v8a.apk (${APK_SIZE_MB}MB)"
             gh release create "$TAG" \
               --title "SimpleXray $TAG" \
               --notes-file release_notes.md \
               release-artifacts/simplexray-arm64-v8a.apk
           else
-            echo "⚠️  APK not found, creating release without APK"
-            gh release create "$TAG" \
-              --title "SimpleXray $TAG" \
-              --notes-file release_notes.md
+            echo "❌ ERROR: APK not found in release-artifacts/"
+            echo "📁 Contents of release-artifacts/:"
+            ls -lah release-artifacts/ || echo "  Directory does not exist"
+            echo "❌ Cannot create release without APK - failing workflow"
+            exit 1
           fi
 
       - name: Send Release Notification to Telegram
