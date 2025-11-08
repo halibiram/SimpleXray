@@ -82,7 +82,7 @@ file("$rootDir/version.properties").withInputStream { versionProps.load(it) }
 
 android {
     namespace "com.simplexray.an"
-    compileSdk 36
+    compileSdk = 36
 
     defaultConfig {
         applicationId "com.simplexray.an"
@@ -102,8 +102,8 @@ android {
         def isRelease = gradle.startParameter.taskNames.any { it.contains("Release") }
         buildConfigField "boolean", "EXPERIMENTAL_ENABLED", "${!isRelease}"
 
-        targetSdk 35
-        minSdk 29
+        targetSdk = 35
+        minSdk = 29
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -132,21 +132,21 @@ android {
 
     signingConfigs {
         release {
-            enableV1Signing true
-            enableV2Signing true
-            enableV3Signing true
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
             // SEC: V4 signing disabled - may affect Android 11+ compatibility
         // TODO: Enable V4 signing for Android 11+ devices
         // UPGRADE-RISK: V4 signing required for Android 11+ - may cause installation issues
-            enableV4Signing false
+            enableV4Signing = false
         }
     }
 
     buildTypes {
         release {
             minifyEnabled true
-            shrinkResources true
-            signingConfig signingConfigs.release
+            shrinkResources = true
+            signingConfig = signingConfigs.release
             proguardFiles(
                     getDefaultProguardFile('proguard-android-optimize.txt'),
                     'proguard-rules.pro'
@@ -154,7 +154,7 @@ android {
         }
         debug {
             minifyEnabled false
-            signingConfig signingConfigs.release
+            signingConfig = signingConfigs.release
             debuggable true
         }
     }
@@ -232,7 +232,7 @@ android {
     // Legacy packaging options (kept for compatibility)
     packagingOptions {
         jniLibs {
-            useLegacyPackaging true
+            useLegacyPackaging = true
         }
     }
 
@@ -242,11 +242,11 @@ android {
         // Disables dependency metadata when building Android App Bundles.
         includeInBundle = false
     }
-    ndkVersion versionProps.NDK_VERSION
+    ndkVersion = versionProps.NDK_VERSION
 
     splits {
         abi {
-            enable true
+            enable = true
             reset()
             include "arm64-v8a"  // Only build arm64-v8a for faster builds
             universalApk false
