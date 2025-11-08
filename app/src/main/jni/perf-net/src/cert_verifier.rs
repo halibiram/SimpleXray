@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 /// Dummy certificate verifier (accepts all certificates)
 /// In production, use proper certificate validation
+#[derive(Debug)]
 pub struct NoCertificateVerification {
     allow_hostname_mismatch: bool,
     bypass_pinning: bool,

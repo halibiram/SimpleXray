@@ -235,7 +235,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Build iovec array
     let mut iovecs: Vec<libc::iovec> = Vec::new();
-    let len_elements = match env.get_int_array_elements(lengths, jni::sys::JNI_ABORT) {
+    let len_elements = match env.get_int_array_elements(lengths, jni::objects::ReleaseMode::NoCopyBack) {
         Ok(elems) => elems,
         Err(_) => {
             error!("Failed to get lengths array elements");
