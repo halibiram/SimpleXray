@@ -415,11 +415,65 @@ jobs:
             fi
           done
 
+      - name: Verify Keystore Setup
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          echo "🔍 Verifying keystore setup..."
+          if [ -f "./store.jks" ]; then
+            echo "✅ Keystore file exists ($(du -h ./store.jks | cut -f1))"
+          else
+            echo "❌ Keystore file missing!"
+            exit 1
+          fi
+          
+          if [ -f "./store.properties" ]; then
+            echo "✅ store.properties exists"
+            # Check if all required properties are set (without showing values)
+            grep -q "storeFile" ./store.properties && echo "✅ storeFile set" || (echo "❌ storeFile missing" && exit 1)
+            grep -q "storePassword" ./store.properties && echo "✅ storePassword set" || (echo "❌ storePassword missing" && exit 1)
+            grep -q "keyAlias" ./store.properties && echo "✅ keyAlias set" || (echo "❌ keyAlias missing" && exit 1)
+            grep -q "keyPassword" ./store.properties && echo "✅ keyPassword set" || (echo "❌ keyPassword missing" && exit 1)
+          else
+            echo "❌ store.properties missing!"
+            exit 1
+          fi
+
+      - name: Verify Native Libraries
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          echo "🔍 Verifying native libraries..."
+          echo "Xray libraries:"
+          find xray-libs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No Xray libraries found"
+          echo "Hysteria2 libraries:"
+          find hysteria2-libs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No Hysteria2 libraries found"
+          echo "jniLibs directory:"
+          find app/src/main/jniLibs -name "*.so" -type f 2>/dev/null | head -20 || echo "⚠️  No libraries in jniLibs"
+
+      - name: Check Build Environment
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          echo "🔍 Checking build environment..."
+          echo "Java version:"
+          java -version
+          echo "Gradle version:"
+          ./gradlew --version
+          echo "Android SDK:"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "NDK version (from version.properties):"
+          grep NDK_VERSION version.properties || echo "NDK_VERSION not found"
+
       - name: Build Release APK
         if: steps.check_tag.outputs.exists == 'false'
         run: |
           echo "🔨 Building release APK..."
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease --stacktrace --warning-mode all || {
+            echo "❌ Build failed!"
+            echo "Checking for build logs..."
+            find app/build -name "*.log" -type f 2>/dev/null | head -5
+            echo "Checking for error reports..."
+            find app/build -name "*error*" -type f 2>/dev/null | head -5
+            exit 1
+          }
           echo "✅ Build completed"
 
           # Verify string resources are included
