@@ -41,74 +41,101 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
-      - name: Find Latest Successful Release
-        id: find_release
+      - name: Find Successful Workflow Run with Artifacts
+        id: find_workflow
         run: |
-          RELEASE_TAG="${{ inputs.release_tag }}"
+          echo "🔍 Finding successful Auto Release workflow run with artifacts..."
           
-          if [ -z "$RELEASE_TAG" ]; then
-            echo "🔍 Finding latest successful release..."
-            # Get latest release tag
-            RELEASE_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || echo "")
+          # Get successful workflow runs for "Auto Release" workflow
+          WORKFLOW_RUNS=$(gh run list --workflow="Auto Release" --limit 20 --json databaseId,conclusion,createdAt,displayTitle --jq '.[] | select(.conclusion == "success") | "\(.databaseId)|\(.createdAt)|\(.displayTitle)"' || echo "")
+          
+          if [ -z "$WORKFLOW_RUNS" ]; then
+            echo "❌ No successful Auto Release workflow runs found"
+            exit 1
+          fi
+          
+          echo "📋 Found successful workflow runs:"
+          echo "$WORKFLOW_RUNS" | head -5
+          echo ""
+          
+          # Try to find a run with artifacts
+          FOUND_RUN_ID=""
+          for run_info in $WORKFLOW_RUNS; do
+            RUN_ID=$(echo "$run_info" | cut -d'|' -f1)
+            CREATED_AT=$(echo "$run_info" | cut -d'|' -f2)
+            TITLE=$(echo "$run_info" | cut -d'|' -f3)
             
-            if [ -z "$RELEASE_TAG" ]; then
-              echo "❌ No releases found"
-              exit 1
+            echo "  Checking run $RUN_ID ($CREATED_AT)..."
+            
+            # Check if this run has artifacts
+            ARTIFACTS=$(gh run view "$RUN_ID" --json artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
+            
+            if [ -n "$ARTIFACTS" ]; then
+              FOUND_RUN_ID="$RUN_ID"
+              echo "✅ Found successful run with artifacts: $RUN_ID"
+              echo "   Artifacts: $(echo "$ARTIFACTS" | tr '\n' ' ')"
+              break
+            else
+              echo "   No artifacts found"
             fi
-            
-            echo "✅ Found latest release: $RELEASE_TAG"
-          else
-            echo "✅ Using specified release: $RELEASE_TAG"
-          fi
+          done
           
-          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-          
-          # Verify release exists and has APK
-          RELEASE_INFO=$(gh release view "$RELEASE_TAG" --json assets,tagName,createdAt || echo "")
-          if [ -z "$RELEASE_INFO" ]; then
-            echo "❌ Release $RELEASE_TAG not found"
+          if [ -z "$FOUND_RUN_ID" ]; then
+            echo "❌ No successful workflow run with artifacts found"
             exit 1
           fi
           
-          # Check if APK exists in release
-          APK_ASSET=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | endswith(".apk")) | .name' | head -1)
-          if [ -z "$APK_ASSET" ]; then
-            echo "❌ No APK found in release $RELEASE_TAG"
-            echo "Available assets:"
-            echo "$RELEASE_INFO" | jq -r '.assets[] | .name'
-            exit 1
-          fi
+          echo "run_id=$FOUND_RUN_ID" >> $GITHUB_OUTPUT
           
-          echo "✅ Found APK: $APK_ASSET"
-          echo "apk_name=$APK_ASSET" >> $GITHUB_OUTPUT
+          # Get release tag from workflow run if available
+          RUN_INFO=$(gh run view "$FOUND_RUN_ID" --json displayTitle,headBranch --jq '{title: .displayTitle, branch: .headBranch}' 2>/dev/null || echo "")
+          echo "📋 Workflow run info:"
+          echo "$RUN_INFO"
 
-      - name: Download APK from Release
+      - name: Download Artifacts from Workflow Run
         run: |
-          RELEASE_TAG="${{ steps.find_release.outputs.release_tag }}"
-          APK_NAME="${{ steps.find_release.outputs.apk_name }}"
+          RUN_ID="${{ steps.find_workflow.outputs.run_id }}"
           
-          echo "📥 Downloading APK from release $RELEASE_TAG..."
+          echo "📥 Downloading artifacts from workflow run $RUN_ID..."
           
           mkdir -p release-artifacts
           
-          # Download APK from release
-          gh release download "$RELEASE_TAG" \
-            --pattern "$APK_NAME" \
-            --dir release-artifacts/ || {
-            echo "❌ Failed to download APK from release"
+          # Download all artifacts from the workflow run
+          gh run download "$RUN_ID" --dir release-artifacts/ || {
+            echo "❌ Failed to download artifacts from workflow run"
             exit 1
           }
           
-          # Verify APK was downloaded
-          if [ -f "release-artifacts/$APK_NAME" ]; then
-            APK_SIZE=$(stat -c%s "release-artifacts/$APK_NAME" 2>/dev/null || echo "0")
+          # Find APK file in downloaded artifacts
+          APK_FILE=$(find release-artifacts -name "*.apk" -type f | head -1)
+          
+          if [ -n "$APK_FILE" ]; then
+            APK_NAME=$(basename "$APK_FILE")
+            APK_SIZE=$(stat -c%s "$APK_FILE" 2>/dev/null || echo "0")
             APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
-            echo "✅ APK downloaded: $APK_NAME (${APK_SIZE_MB}MB)"
-            ls -lh release-artifacts/
+            echo "✅ APK found in artifacts: $APK_NAME (${APK_SIZE_MB}MB)"
+            echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
+            echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
           else
-            echo "❌ APK file not found after download"
-            exit 1
+            echo "⚠️  No APK file found in artifacts, but continuing..."
+            echo "📁 Artifacts downloaded:"
+            find release-artifacts -type f | head -10
+            # Try to find any file that might be the APK
+            APK_FILE=$(find release-artifacts -type f \( -name "*.apk" -o -name "*simplexray*" \) | head -1)
+            if [ -n "$APK_FILE" ]; then
+              APK_NAME=$(basename "$APK_FILE")
+              echo "✅ Using file: $APK_NAME"
+              echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
+              echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
+            else
+              echo "❌ No suitable APK file found"
+              exit 1
+            fi
           fi
+          
+          echo ""
+          echo "📦 All artifacts:"
+          ls -lh release-artifacts/
 
       - name: Read Version from Properties
         id: version
@@ -117,9 +144,8 @@ jobs:
             VERSION_NAME=$(grep 'APP_VERSION_NAME' version.properties | cut -d '=' -f 2)
             VERSION_CODE=$(grep 'APP_VERSION_CODE' version.properties | cut -d '=' -f 2)
           else
-            # Extract version from release tag
-            RELEASE_TAG="${{ steps.find_release.outputs.release_tag }}"
-            VERSION_NAME=$(echo "$RELEASE_TAG" | sed 's/^v//')
+            # Use current date as version if properties not found
+            VERSION_NAME=$(date +"%Y.%m.%d")
             VERSION_CODE="1"
           fi
           
@@ -154,30 +180,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEST_TAG="v${{ steps.version.outputs.test_version_name }}"
-          ORIGINAL_TAG="${{ steps.find_release.outputs.release_tag }}"
+          RUN_ID="${{ steps.find_workflow.outputs.run_id }}"
           VERSION_NAME="${{ steps.version.outputs.test_version_name }}"
           BUILD_CODE="${{ steps.version.outputs.version_code }}"
           COMMIT="${{ github.sha }}"
-          APK_NAME="${{ steps.find_release.outputs.apk_name }}"
+          APK_PATH="${{ steps.find_workflow.outputs.apk_path }}"
+          APK_NAME="${{ steps.find_workflow.outputs.apk_name }}"
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Create and push tag
-          git tag -a "$TEST_TAG" -m "Test Release $TEST_TAG (from $ORIGINAL_TAG)"
+          git tag -a "$TEST_TAG" -m "Test Release $TEST_TAG (from workflow run $RUN_ID)"
           git push origin "$TEST_TAG"
           
           # Create release notes
           cat > release_notes.md << EOF
           🧪 Test Release for version ${VERSION_NAME}
           
-          **Source Release:** ${ORIGINAL_TAG}
+          **Source Workflow Run:** ${RUN_ID}
           **Test Version:** ${TEST_VERSION_NAME}
           **Build Code:** ${BUILD_CODE}
           **Commit:** ${COMMIT}
           
-          **Note:** This is a test release created from the APK of ${ORIGINAL_TAG}.
-          No new build was performed - using the existing APK from the successful release.
+          **Note:** This is a test release created from artifacts of successful Auto Release workflow run ${RUN_ID}.
+          No new build was performed - using existing artifacts from the successful workflow run.
           
           **Download APK:**
           - \`${APK_NAME}\` - For most modern devices (ARM64) - BoringSSL optimized
@@ -191,21 +218,23 @@ jobs:
           - 🌊 Hysteria2 QUIC acceleration (standalone or chain mode)
           
           ---
-          🤖 Auto-generated test release from ${ORIGINAL_TAG}
+          🤖 Auto-generated test release from workflow run ${RUN_ID}
           EOF
           
           # Create release with APK
-          if [ -f "release-artifacts/$APK_NAME" ]; then
+          if [ -n "$APK_PATH" ] && [ -f "$APK_PATH" ]; then
             echo "📦 Creating test release with APK..."
             gh release create "$TEST_TAG" \
               --title "SimpleXray Test Release $TEST_TAG" \
               --notes-file release_notes.md \
               --prerelease \
-              release-artifacts/$APK_NAME
+              "$APK_PATH"
             
             echo "✅ Test release created: https://github.com/${{ github.repository }}/releases/tag/$TEST_TAG"
           else
-            echo "❌ APK file not found: release-artifacts/$APK_NAME"
+            echo "❌ APK file not found: $APK_PATH"
+            echo "📁 Available files in release-artifacts/:"
+            ls -lah release-artifacts/ || echo "Directory does not exist"
             exit 1
           fi
 
@@ -221,10 +250,10 @@ jobs:
           fi
           
           TEST_TAG="v${{ steps.version.outputs.test_version_name }}"
-          ORIGINAL_TAG="${{ steps.find_release.outputs.release_tag }}"
+          RUN_ID="${{ steps.find_workflow.outputs.run_id }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/$TEST_TAG"
           
-          TEXT="🧪 *Test Release Created*\n\n📦 *Version:* $TEST_TAG\n📋 *Source:* $ORIGINAL_TAG\n🔨 *Build:* ${{ steps.version.outputs.version_code }}\n\nℹ️ *Note:* This is a test release using the APK from $ORIGINAL_TAG. No new build was performed.\n\n🔗 [Download Test Release]($RELEASE_URL)"
+          TEXT="🧪 *Test Release Created*\n\n📦 *Version:* $TEST_TAG\n📋 *Source:* Workflow Run $RUN_ID\n🔨 *Build:* ${{ steps.version.outputs.version_code }}\n\nℹ️ *Note:* This is a test release using artifacts from successful workflow run. No new build was performed.\n\n🔗 [Download Test Release]($RELEASE_URL)"
           
           curl -s -X POST \
             -H "Content-Type: application/json" \
