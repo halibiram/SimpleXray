@@ -285,7 +285,6 @@ class LogViewModel(application: Application) :
                 }
 
                 // Read logcat with threadtime format for better categorization
-                val packageName = getApplication<Application>().packageName
                 val process = Runtime.getRuntime().exec(
                     arrayOf("logcat", "-v", "threadtime", "*:V")
                 )
@@ -300,12 +299,9 @@ class LogViewModel(application: Application) :
                             val line = bufferedReader.readLine() ?: break
                             if (!isActive) break
                             
-                            // Filter logs to show only app package and system errors
-                            if (line.contains(packageName) ||
-                                line.contains("AndroidRuntime") ||
-                                line.contains("System.err") ||
-                                line.contains("FATAL")) {
-
+                            // Add all log entries - filtering by level will be done in UI
+                            // Skip empty lines
+                            if (line.trim().isNotEmpty()) {
                                 systemLogsList.add(0, line)
                                 // Keep only last 1000 lines
                                 if (systemLogsList.size > 1000) {
