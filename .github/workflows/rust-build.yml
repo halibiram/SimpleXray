@@ -87,7 +87,7 @@ jobs:
           echo "ANDROID_PLATFORM=${{ env.ANDROID_PLATFORM }}" >> $GITHUB_ENV
       
       - name: Build xray-signal-handler
-        working-directory: SimpleXray/app/src/main/jni/xray-signal-handler
+        working-directory: app/src/main/jni/xray-signal-handler
         run: |
           cargo ndk \
             --target ${{ matrix.target }} \
@@ -98,7 +98,7 @@ jobs:
         continue-on-error: false
       
       - name: Build pepper-shaper
-        working-directory: SimpleXray/app/src/main/jni/pepper-shaper
+        working-directory: app/src/main/jni/pepper-shaper
         run: |
           cargo ndk \
             --target ${{ matrix.target }} \
@@ -109,7 +109,7 @@ jobs:
         continue-on-error: false
       
       - name: Build perf-net
-        working-directory: SimpleXray/app/src/main/jni/perf-net
+        working-directory: app/src/main/jni/perf-net
         run: |
           cargo ndk \
             --target ${{ matrix.target }} \
@@ -120,7 +120,7 @@ jobs:
         continue-on-error: false
       
       - name: Build quiche-client
-        working-directory: SimpleXray/app/src/main/jni/quiche-client
+        working-directory: app/src/main/jni/quiche-client
         run: |
           cargo ndk \
             --target ${{ matrix.target }} \
