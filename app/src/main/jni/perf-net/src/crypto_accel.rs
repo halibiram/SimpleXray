@@ -116,10 +116,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // Copy input to output first
     output_slice[..input_len as usize].copy_from_slice(input_slice);
     
-    // Seal in place - ring 0.17 API uses seal_in_place with in_out parameter
-    // The function modifies the slice in place and appends the tag
-    let in_out = &mut output_slice[..input_len as usize];
-    match aead::seal_in_place(&sealing_key, aead::Aad::empty(), in_out) {
+    // Seal in place - ring 0.17 API: seal_in_place(sealing_key, nonce, aad, in_out, in_prefix_len)
+    let in_out = &mut output_slice[..input_len as usize + 16];
+    match aead::seal_in_place(&sealing_key, nonce, aead::Aad::empty(), in_out, input_len as usize) {
         Ok(tag_len) => {
             debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
             (input_len + tag_len as jint) as jint

@@ -4,11 +4,9 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JByteArray};
+use jni::objects::{JClass, JObject};
 use jni::sys::{jint, jobject, jobjectArray, jintArray};
 use nix::sys::socket::{recv, send, MsgFlags, recvmsg};
-// IoVec is in nix::sys::uio (requires uio feature, which we added to Cargo.toml)
-use nix::sys::uio::IoVec;
 use std::os::unix::io::RawFd;
 use std::ptr;
 use log::{debug, error};
@@ -111,7 +109,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     
     let received = match recv(fd, unsafe { std::slice::from_raw_parts_mut(data_ptr, length as usize) }, flags) {
         Ok(bytes) => bytes,
-        Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => {
+        Err(nix::errno::Errno::EAGAIN) => {
             return 0; // No data available
         }
         Err(e) => {
@@ -188,7 +186,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     let sent = match send(fd, unsafe { std::slice::from_raw_parts(data_ptr, length as usize) }, flags) {
         Ok(bytes) => bytes,
-        Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => {
+        Err(nix::errno::Errno::EAGAIN) => {
             return 0; // Would block
         }
         Err(e) => {
@@ -236,7 +234,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // Build iovec array
-    let mut iovecs = Vec::new();
+    let mut iovecs: Vec<libc::iovec> = Vec::new();
     let len_elements = match env.get_int_array_elements(lengths, jni::sys::JNI_ABORT) {
         Ok(elems) => elems,
         Err(_) => {
@@ -268,10 +266,11 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             return -1;
         }
 
-        // Use IoVec from nix::sys::uio (requires uio feature)
-        iovecs.push(IoVec::from_mut_slice(unsafe {
-            std::slice::from_raw_parts_mut(buf_ptr, len as usize)
-        }));
+        // Use libc::iovec directly (nix 0.28 removed IoVec from sys::uio)
+        iovecs.push(libc::iovec {
+            iov_base: buf_ptr as *mut libc::c_void,
+            iov_len: len as usize,
+        });
     }
 
     drop(len_elements);
@@ -281,7 +280,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     match recvmsg(fd, &iovecs, flags, None) {
         Ok(received) => received as jint,
-        Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => 0,
+        Err(nix::errno::Errno::EAGAIN) => 0,
         Err(e) => {
             error!("recvmsg failed: {}", e);
             -1
