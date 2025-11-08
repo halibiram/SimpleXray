@@ -164,8 +164,9 @@ impl QuicheClient {
         // Create client config with rustls
         // For now, use default config (accepts any certificate)
         // In production, you should use proper certificate validation
+        // rustls 0.23 uses dangerous() instead of with_safe_defaults()
         let mut crypto = rustls::ClientConfig::builder()
-            .with_safe_defaults()
+            .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
             .with_no_client_auth();
         
@@ -242,7 +243,7 @@ impl QuicheClient {
 }
 
 use rustls::client::danger::{ServerCertVerifier, ServerCertVerified};
-use rustls::pki_types::CertificateDer;
+use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::Error;
 
 // Dummy certificate verifier (accepts all certificates)
