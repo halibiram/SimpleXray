@@ -12,6 +12,7 @@ use jni::objects::JClass;
 use jni::sys::{jint, jlong};
 use log::debug;
 use quinn::ClientConfig;
+use quinn::crypto::rustls::QuicClientConfig;
 use rustls::ClientConfig as RustlsClientConfig;
 use std::sync::Arc;
 use crate::cert_verifier::NoCertificateVerification;
@@ -33,7 +34,18 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // Set ALPN for HTTP3
     crypto.alpn_protocols = vec![b"h3".to_vec(), b"h3-29".to_vec()];
 
-    let client_config = ClientConfig::new(Arc::new(crypto));
+    // Convert rustls::ClientConfig to QuicClientConfig for Quinn
+    let quic_crypto = QuicClientConfig::try_from(Arc::new(crypto)).unwrap_or_else(|_| {
+        // Fallback: create a default QuicClientConfig
+        QuicClientConfig::try_from(Arc::new(
+            RustlsClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoCertificateVerification::new(true, true, None)))
+                .with_no_client_auth()
+        )).expect("Failed to create QuicClientConfig")
+    });
+    
+    let client_config = ClientConfig::new(Arc::new(quic_crypto));
     let config = Box::new(client_config);
     
     debug!("Created QUIC/HTTP3 context");

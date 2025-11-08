@@ -249,7 +249,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     match env.new_long_array(histogram.len() as i32) {
         Ok(result) => {
             let values: Vec<jlong> = histogram.iter().map(|&v| v as jlong).collect();
-            if let Err(_) = env.set_long_array_region(result, 0, &values) {
+            if let Err(_) = env.set_long_array_region(&result, 0, &values) {
                 return std::ptr::null_mut();
             }
             result.into_raw()

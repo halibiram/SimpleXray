@@ -14,7 +14,7 @@
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::{jint, jlong};
-use log::{debug, error};
+use log::debug;
 use rustls::ClientConfig as RustlsClientConfig;
 use std::sync::Arc;
 use crate::cert_verifier::NoCertificateVerification;

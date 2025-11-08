@@ -222,7 +222,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
                 };
 
                 let nfds = nfds.min(size as usize);
-                let arr = unsafe { match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
+                let mut arr = unsafe { match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
                     Ok(a) => a,
                     Err(_) => {
                         error!("Failed to get array elements");

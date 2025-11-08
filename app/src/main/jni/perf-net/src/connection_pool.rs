@@ -311,7 +311,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // connect expects RawFd
     let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
-    match connect(borrowed_fd, &sockaddr) {
+    match connect(borrowed_fd.as_raw_fd(), &sockaddr) {
         Ok(_) => {
             slot.connected = true;
             slot.remote_addr = host_str;
@@ -384,7 +384,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Convert RawFd to BorrowedFd for connect
     let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd as RawFd) };
-    match connect(borrowed_fd, &sockaddr) {
+    match connect(borrowed_fd.as_raw_fd(), &sockaddr) {
         Ok(_) => {
             slot.connected = true;
             slot.remote_addr = host_str;

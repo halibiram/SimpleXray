@@ -7,7 +7,7 @@ use jni::JNIEnv;
 use jni::objects::{JClass, JLongArray};
 use jni::sys::{jint, jlong};
 use log::debug;
-use nix::sys::mman::{munmap, ProtFlags};
+use nix::sys::mman::munmap;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 
@@ -52,11 +52,6 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let size = size as usize;
 
     // Map memory
-    use std::num::NonZeroUsize;
-    let size_nonzero = match NonZeroUsize::new(size) {
-        Some(s) => s,
-        None => return 0,
-    };
     
     // Use libc::mmap directly for anonymous mapping since nix 0.28 requires AsFd
     let ptr = unsafe {

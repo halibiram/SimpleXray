@@ -240,9 +240,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     {
         use libc::{setsockopt, SOL_TCP, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT};
         unsafe {
-            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPIDLE as i32, &keepidle as *const _ as *const _, std::mem::size_of::<i32>() as u32);
-            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPINTVL as i32, &keepintvl as *const _ as *const _, std::mem::size_of::<i32>() as u32);
-            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPCNT as i32, &keepcnt as *const _ as *const _, std::mem::size_of::<i32>() as u32);
+            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPIDLE as i32, &keepidle as *const _ as *const _, std::mem::size_of::<i32>() as i32);
+            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPINTVL as i32, &keepintvl as *const _ as *const _, std::mem::size_of::<i32>() as i32);
+            let _ = setsockopt(fd, SOL_TCP, TCP_KEEPCNT as i32, &keepcnt as *const _ as *const _, std::mem::size_of::<i32>() as i32);
         }
     }
     #[cfg(not(target_os = "android"))]

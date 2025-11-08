@@ -320,7 +320,12 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }).collect();
 
     match recvmsg(fd, &mut io_slices, None, flags) {
-        Ok(received) => received as jint,
+        Ok(received_msg) => {
+            // Extract bytes from RecvMsg - in nix 0.28, RecvMsg has bytes() method
+            // Calculate total bytes received from the message
+            let total_bytes = received_msg.bytes();
+            total_bytes as jint
+        },
         Err(nix::errno::Errno::EAGAIN) => 0,
         Err(e) => {
             error!("recvmsg failed: {}", e);
