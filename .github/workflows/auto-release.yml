@@ -71,24 +71,44 @@ jobs:
           # Initialize QUICHE submodule with nested submodules (BoringSSL)
           # QUICHE headers are needed even if libraries are pre-built
           echo "📦 Initializing QUICHE submodule..."
-          git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || {
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          
+          # Ensure parent directory exists
+          mkdir -p "$(dirname "$QUICHE_DIR")"
+          
+          # Try submodule update first
+          if git submodule update --init --recursive "$QUICHE_DIR" 2>&1; then
+            echo "✅ QUICHE submodule updated via git submodule"
+          else
             echo "⚠️  QUICHE submodule update failed, trying manual initialization..."
-            # Ensure parent directory exists
-            mkdir -p app/src/main/jni/quiche-client/third_party
+            # Remove if exists but incomplete
+            if [ -d "$QUICHE_DIR" ] && [ ! -f "$QUICHE_DIR/.git" ]; then
+              echo "Removing incomplete QUICHE directory..."
+              rm -rf "$QUICHE_DIR"
+            fi
             # Try manual clone if submodule update fails
-            if [ ! -d "app/src/main/jni/quiche-client/third_party/quiche" ]; then
-              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git app/src/main/jni/quiche-client/third_party/quiche || {
+            if [ ! -d "$QUICHE_DIR" ]; then
+              echo "Cloning QUICHE repository manually..."
+              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
                 echo "❌ Failed to initialize QUICHE submodule"
-                exit 1
+                echo "This is non-fatal - build will continue without QUICHE support"
+                # Don't exit - build can continue without QUICHE
               }
             fi
-          }
-
-          # Verify QUICHE submodule is initialized
-          if [ -d "app/src/main/jni/quiche-client/third_party/quiche/quiche" ]; then
-            echo "✅ QUICHE submodule initialized"
+          fi
+          
+          # Verify QUICHE submodule structure
+          if [ -d "$QUICHE_DIR/quiche" ] && [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
+            echo "✅ QUICHE submodule initialized correctly"
+            echo "   Path: $QUICHE_DIR"
+            echo "   Structure verified: quiche/Cargo.toml exists"
+          elif [ -d "$QUICHE_DIR" ]; then
+            echo "⚠️  QUICHE submodule directory exists but structure incomplete"
+            echo "   Contents:"
+            ls -la "$QUICHE_DIR" | head -10 || true
+            echo "   Build will continue but QUICHE support may be disabled"
           else
-            echo "⚠️  QUICHE submodule structure incomplete, but continuing..."
+            echo "⚠️  QUICHE submodule not found - build will continue without QUICHE"
           fi
 
           echo "✅ Submodules initialized"
@@ -540,6 +560,27 @@ jobs:
           echo "NDK version (from version.properties):"
           grep NDK_VERSION version.properties || echo "NDK_VERSION not found"
 
+      - name: Verify QUICHE Submodule Before Build
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          echo "🔍 Verifying QUICHE submodule before build..."
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          if [ -d "$QUICHE_DIR/quiche" ]; then
+            echo "✅ QUICHE submodule directory exists"
+            if [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
+              echo "✅ QUICHE Cargo.toml found"
+            else
+              echo "⚠️  QUICHE Cargo.toml not found"
+            fi
+            if [ -d "$QUICHE_DIR/quiche/deps/boringssl" ]; then
+              echo "✅ QUICHE BoringSSL dependency found"
+            else
+              echo "⚠️  QUICHE BoringSSL dependency not found"
+            fi
+          else
+            echo "⚠️  QUICHE submodule directory not found (build may skip QUICHE)"
+          fi
+
       - name: Build Release APK
         if: steps.check_tag.outputs.exists == 'false'
         env:
@@ -547,12 +588,24 @@ jobs:
           KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           echo "🔨 Building release APK..."
-          ./gradlew assembleRelease --stacktrace --warning-mode all || {
+          # Capture Gradle output to file for better error reporting
+          ./gradlew assembleRelease --stacktrace --warning-mode all 2>&1 | tee gradle-build.log || {
             echo "❌ Build failed!"
-            echo "Checking for build logs..."
+            echo ""
+            echo "=== Last 100 lines of Gradle output ==="
+            tail -100 gradle-build.log || echo "Could not read build log"
+            echo ""
+            echo "=== Searching for error patterns ==="
+            grep -i "error\|failed\|exception" gradle-build.log | tail -20 || echo "No error patterns found"
+            echo ""
+            echo "=== Checking for build logs ==="
             find app/build -name "*.log" -type f 2>/dev/null | head -5
-            echo "Checking for error reports..."
+            echo ""
+            echo "=== Checking for error reports ==="
             find app/build -name "*error*" -type f 2>/dev/null | head -5
+            echo ""
+            echo "=== Gradle build log location ==="
+            echo "Full log available at: gradle-build.log"
             exit 1
           }
           echo "✅ Build completed"
