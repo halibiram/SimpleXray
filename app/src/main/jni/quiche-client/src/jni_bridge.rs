@@ -15,24 +15,26 @@ use crate::tun_forwarder::{QuicheTunForwarder, ForwarderConfig};
 use crate::crypto::QuicheCrypto;
 
 // Helper to convert Java string to Rust string
-fn jstring_to_string(env: &JNIEnv, jstr: jni::sys::jstring) -> String {
+fn jstring_to_string(env: &mut JNIEnv, jstr: jni::sys::jstring) -> String {
     if jstr.is_null() {
         return String::new();
     }
     
     unsafe {
         let jstring = jni::objects::JString::from_raw(jstr);
-        match env.get_string(&jstring) {
+        let result = match env.get_string(&jstring) {
             Ok(s) => s.to_string_lossy().to_string(),
             Err(_) => String::new(),
-        }
+        };
+        drop(jstring);
+        result
     }
 }
 
 /// Create QUIC client
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     server_host: jni::sys::jstring,
     server_port: jint,
@@ -46,7 +48,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
             .with_max_level(log::LevelFilter::Debug),
     );
 
-    let host = jstring_to_string(&env, server_host);
+    let host = jstring_to_string(&mut env, server_host);
     let cc = match congestion_control {
         0 => CongestionControl::Reno,
         1 => CongestionControl::Cubic,
@@ -183,8 +185,8 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
     let client = unsafe { &*(client_handle as *const Arc<Mutex<QuicheClient>>) };
     let mut client = client.lock();
     
-    let data_slice = unsafe {
-        std::slice::from_raw_parts(src.as_ptr(), array_length as usize)
+    let data_slice: &[u8] = unsafe {
+        std::slice::from_raw_parts(src.as_ptr() as *const u8, array_length as usize)
     };
 
     let result = match client.send(data_slice) {

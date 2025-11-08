@@ -94,9 +94,9 @@ impl NetUtils {
 
     pub fn set_socket_buffers(sockfd: RawFd, sndbuf: usize, rcvbuf: usize) -> Result<(), nix::Error> {
         use std::os::fd::BorrowedFd;
-        let fd = unsafe { BorrowedFd::borrow_raw(sockfd) };
-        setsockopt(fd, sockopt::SndBuf, &(sndbuf as u32))?;
-        setsockopt(fd, sockopt::RcvBuf, &(rcvbuf as u32))?;
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(sockfd) };
+        setsockopt(&borrowed_fd, sockopt::SndBuf, &sndbuf)?;
+        setsockopt(&borrowed_fd, sockopt::RcvBuf, &rcvbuf)?;
         Ok(())
     }
 

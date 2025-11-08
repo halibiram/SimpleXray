@@ -181,11 +181,14 @@ impl QuicheClient {
         // Connect
         // quinn's connect accepts a string for server_name
         let new_conn = self.runtime.block_on(async {
-            endpoint.connect(server_addr, &self.config.server_host)?.await
+            let connecting = endpoint.connect(server_addr, &self.config.server_host)
+                .map_err(|e| -> Box<dyn std::error::Error> { format!("Connection failed: {:?}", e).into() })?;
+            connecting.await
+                .map_err(|e| -> Box<dyn std::error::Error> { format!("Connection handshake failed: {:?}", e).into() })
         })?;
 
         self.endpoint = Some(endpoint);
-        self.connection = Some(new_conn.connection.clone());
+        self.connection = Some(new_conn);
         self.connected.store(true, Ordering::Release);
 
         // Update metrics

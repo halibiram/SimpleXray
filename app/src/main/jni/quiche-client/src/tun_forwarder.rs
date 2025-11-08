@@ -164,6 +164,10 @@ impl QuicheTunForwarder {
             // Read from TUN
             use nix::unistd::read;
             match read(config.tun_fd, &mut buffer) {
+                Ok(0) => {
+                    // EOF
+                    break;
+                }
                 Ok(len) if len > 0 => {
                     let mut stats_guard = stats.lock();
                     stats_guard.packets_received += 1;
@@ -182,20 +186,12 @@ impl QuicheTunForwarder {
                         stats_guard.bytes_sent += len as u64;
                     }
                 }
-                Ok(0) => {
-                    // EOF
-                    break;
-                }
-                Ok(n) if n > 0 => {
-                    // Data read, already handled above
+                Ok(_) => {
+                    // Should not happen, but handle for exhaustiveness
                     continue;
                 }
                 Err(nix::errno::Errno::EAGAIN) => {
-                    // No data available
-                    thread::sleep(Duration::from_millis(1));
-                }
-                Err(nix::errno::Errno::EWOULDBLOCK) => {
-                    // No data available
+                    // No data available (EAGAIN and EWOULDBLOCK are the same on Linux)
                     thread::sleep(Duration::from_millis(1));
                 }
                 Err(e) => {
