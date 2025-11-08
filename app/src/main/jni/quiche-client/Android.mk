@@ -30,6 +30,8 @@ endif
 
 # BoringSSL is only needed if QUICHE is available
 ifeq ($(QUICHE_AVAILABLE),true)
+    # Try multiple BoringSSL paths
+    # 1. QUICHE deps path
     BORINGSSL_PATH := $(LOCAL_PATH)/third_party/quiche/quiche/deps/boringssl
     BORINGSSL_INCLUDE := $(BORINGSSL_PATH)/include
     BORINGSSL_CRYPTO_LIB := $(BORINGSSL_PATH)/build/crypto/libcrypto.a
@@ -39,13 +41,38 @@ ifeq ($(QUICHE_AVAILABLE),true)
     ifneq ($(wildcard $(BORINGSSL_INCLUDE)/openssl/evp.h),)
         BORINGSSL_AVAILABLE := true
     else
-        # Try alternative path (if BoringSSL is in a different location)
+        # 2. Try alternative path (third_party/boringssl)
         BORINGSSL_INCLUDE := $(LOCAL_PATH)/third_party/boringssl/include
         ifneq ($(wildcard $(BORINGSSL_INCLUDE)/openssl/evp.h),)
             BORINGSSL_AVAILABLE := true
         else
-            $(warning BoringSSL headers not found, skipping BoringSSL libraries)
-            BORINGSSL_AVAILABLE := false
+            # 3. Try perf-net/third_party/boringssl path (submodule location)
+            BORINGSSL_PATH := $(LOCAL_PATH)/../perf-net/third_party/boringssl
+            BORINGSSL_INCLUDE := $(BORINGSSL_PATH)/include
+            # BoringSSL libraries are in external/boringssl/build/$(TARGET_ARCH_ABI)/
+            BORINGSSL_CRYPTO_LIB := $(LOCAL_PATH)/../../../../../../external/boringssl/build/$(TARGET_ARCH_ABI)/libcrypto.a
+            BORINGSSL_SSL_LIB := $(LOCAL_PATH)/../../../../../../external/boringssl/build/$(TARGET_ARCH_ABI)/libssl.a
+            ifneq ($(wildcard $(BORINGSSL_INCLUDE)/openssl/evp.h),)
+                BORINGSSL_AVAILABLE := true
+            else
+                # 4. Try external/boringssl path (relative to quiche-client)
+                BORINGSSL_PATH := $(LOCAL_PATH)/../../../../../../external/boringssl
+                BORINGSSL_INCLUDE := $(BORINGSSL_PATH)/include
+                BORINGSSL_CRYPTO_LIB := $(BORINGSSL_PATH)/build/$(TARGET_ARCH_ABI)/libcrypto.a
+                BORINGSSL_SSL_LIB := $(BORINGSSL_PATH)/build/$(TARGET_ARCH_ABI)/libssl.a
+                ifneq ($(wildcard $(BORINGSSL_INCLUDE)/openssl/evp.h),)
+                    BORINGSSL_AVAILABLE := true
+                else
+                    $(warning BoringSSL headers not found, skipping BoringSSL libraries)
+                    $(warning   Checked paths:)
+                    $(warning     - $(LOCAL_PATH)/third_party/quiche/quiche/deps/boringssl/include)
+                    $(warning     - $(LOCAL_PATH)/third_party/boringssl/include)
+                    $(warning     - $(LOCAL_PATH)/../../perf-net/third_party/boringssl/include)
+                    $(warning     - $(BORINGSSL_INCLUDE))
+                    $(warning   QUICHE build will be skipped. This is OK for debug builds.)
+                    BORINGSSL_AVAILABLE := false
+                endif
+            endif
         endif
     endif
 
