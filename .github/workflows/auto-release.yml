@@ -61,10 +61,36 @@ jobs:
 
       - name: Initialize Valid Submodules
         run: |
-          # Only initialize the valid submodule (hev-socks5-tunnel)
-          # Use --recursive to initialize nested submodules (yaml, lwip, hev-task-system)
+          # Initialize required submodules
+          # Use --recursive to initialize nested submodules
           git submodule sync || true
+
+          # Initialize hev-socks5-tunnel with nested submodules (yaml, lwip, hev-task-system)
           git submodule update --init --recursive app/src/main/jni/hev-socks5-tunnel || true
+
+          # Initialize QUICHE submodule with nested submodules (BoringSSL)
+          # QUICHE headers are needed even if libraries are pre-built
+          echo "📦 Initializing QUICHE submodule..."
+          git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || {
+            echo "⚠️  QUICHE submodule update failed, trying manual initialization..."
+            # Ensure parent directory exists
+            mkdir -p app/src/main/jni/quiche-client/third_party
+            # Try manual clone if submodule update fails
+            if [ ! -d "app/src/main/jni/quiche-client/third_party/quiche" ]; then
+              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git app/src/main/jni/quiche-client/third_party/quiche || {
+                echo "❌ Failed to initialize QUICHE submodule"
+                exit 1
+              }
+            fi
+          }
+
+          # Verify QUICHE submodule is initialized
+          if [ -d "app/src/main/jni/quiche-client/third_party/quiche/quiche" ]; then
+            echo "✅ QUICHE submodule initialized"
+          else
+            echo "⚠️  QUICHE submodule structure incomplete, but continuing..."
+          fi
+
           echo "✅ Submodules initialized"
 
       - name: Read Versions
