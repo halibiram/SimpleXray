@@ -1,0 +1,252 @@
+name: Build QUICHE Native Client
+
+on:
+  workflow_call:
+    inputs:
+      quiche_version:
+        description: "QUICHE version/commit to build"
+        required: false
+        type: string
+        default: "latest"
+  workflow_dispatch:
+    inputs:
+      quiche_version:
+        description: "QUICHE version/commit to build"
+        required: false
+        default: "latest"
+      build_abis:
+        description: "Comma-separated ABIs to build"
+        required: false
+        default: "arm64-v8a,x86_64"
+
+jobs:
+  build:
+    name: Build QUICHE
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        abi: [arm64-v8a, x86_64]
+        include:
+          - abi: arm64-v8a
+            rust_target: aarch64-linux-android
+          - abi: x86_64
+            rust_target: x86_64-linux-android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Initialize QUICHE Submodule
+        run: |
+          echo "📦 Initializing QUICHE submodule..."
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          
+          if [ -d "$QUICHE_DIR" ] && [ -f "$QUICHE_DIR/Cargo.toml" ]; then
+            echo "✅ QUICHE submodule already exists"
+          else
+            echo "📥 Initializing QUICHE submodule..."
+            git submodule sync --recursive || true
+            git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || true
+            
+            # If submodule doesn't exist, clone it manually
+            if [ ! -d "$QUICHE_DIR" ] || [ ! -f "$QUICHE_DIR/Cargo.toml" ]; then
+              echo "⚠️  QUICHE submodule not found, cloning manually..."
+              mkdir -p "$(dirname "$QUICHE_DIR")"
+              git clone --depth=1 https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
+                echo "❌ Failed to clone QUICHE"
+                exit 1
+              }
+            fi
+          fi
+          
+          # Verify QUICHE structure
+          if [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
+            echo "✅ QUICHE structure verified"
+            echo "📁 QUICHE directory: $QUICHE_DIR"
+            ls -la "$QUICHE_DIR/quiche/" | head -10
+          else
+            echo "❌ QUICHE structure invalid"
+            echo "📁 Contents of $QUICHE_DIR:"
+            ls -la "$QUICHE_DIR" || echo "Directory does not exist"
+            exit 1
+          fi
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install cargo-ndk
+        run: |
+          if ! command -v cargo-ndk &> /dev/null; then
+            echo "📦 Installing cargo-ndk..."
+            cargo install cargo-ndk
+          else
+            echo "✅ cargo-ndk already installed"
+            cargo-ndk --version
+          fi
+
+      - name: Add Rust Android Targets
+        run: |
+          echo "📦 Adding Rust Android targets..."
+          rustup target add ${{ matrix.rust_target }} || true
+          rustup target list --installed | grep android || echo "⚠️  No Android targets found"
+
+      - name: Setup NDK
+        run: |
+          wget -qO android-ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q android-ndk.zip
+          rm android-ndk.zip
+          NDK_HOME=$(realpath android-ndk-*)
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "NDK version: $(cat $NDK_HOME/source.properties | grep Pkg.Revision | cut -d'=' -f2)"
+
+      - name: Configure cargo-ndk
+        run: |
+          # Set ANDROID_NDK_HOME for cargo-ndk
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          
+          # Verify cargo-ndk can find NDK
+          cargo ndk --help || {
+            echo "❌ cargo-ndk not working"
+            exit 1
+          }
+
+      - name: Build QUICHE for ${{ matrix.abi }}
+        run: |
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          OUTPUT_DIR="app/src/main/jni/quiche-client/libs"
+          
+          # Verify QUICHE directory exists
+          if [ ! -d "$QUICHE_DIR/quiche" ]; then
+            echo "❌ QUICHE directory not found at $QUICHE_DIR/quiche"
+            exit 1
+          fi
+          
+          cd "$QUICHE_DIR"
+          
+          # Checkout specific version if provided
+          QUICHE_VERSION="${{ inputs.quiche_version || 'latest' }}"
+          if [ "$QUICHE_VERSION" != "latest" ]; then
+            echo "📌 Checking out QUICHE version: $QUICHE_VERSION"
+            git fetch --tags || true
+            git checkout "$QUICHE_VERSION" 2>/dev/null || echo "⚠️  Version not found, using latest"
+          fi
+          
+          echo "QUICHE commit: $(git rev-parse HEAD)"
+          echo "Building for ${{ matrix.rust_target }} (${{ matrix.abi }})..."
+          
+          # Set optimization flags (removed target-cpu=native for cross-compilation)
+          export RUSTFLAGS="
+            -C opt-level=3
+            -C lto=fat
+            -C codegen-units=1
+            -C panic=abort
+            -C overflow-checks=off
+            -C debug-assertions=off
+          "
+          
+          # Build with cargo-ndk
+          echo "🔨 Building QUICHE..."
+          cargo ndk \
+            --target ${{ matrix.rust_target }} \
+            --platform 29 \
+            build \
+            --release \
+            --manifest-path quiche/Cargo.toml \
+            --features ffi,qlog \
+            --verbose
+          
+          # Verify build output
+          LIB_PATH="target/${{ matrix.rust_target }}/release/libquiche.a"
+          if [ ! -f "$LIB_PATH" ]; then
+            echo "❌ Build failed - library not found at $LIB_PATH"
+            echo "📁 Contents of target/${{ matrix.rust_target }}/release/:"
+            ls -la "target/${{ matrix.rust_target }}/release/" || echo "Directory does not exist"
+            exit 1
+          fi
+          
+          echo "✅ QUICHE built successfully"
+          ls -lh "$LIB_PATH"
+
+      - name: Copy Libraries to Output Directory
+        run: |
+          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
+          OUTPUT_DIR="app/src/main/jni/quiche-client/libs"
+          
+          mkdir -p "$OUTPUT_DIR/${{ matrix.abi }}"
+          
+          # Copy static library
+          if [ -f "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.a" ]; then
+            cp "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.a" "$OUTPUT_DIR/${{ matrix.abi }}/"
+            echo "✅ Copied libquiche.a to $OUTPUT_DIR/${{ matrix.abi }}/"
+          else
+            echo "❌ libquiche.a not found"
+            exit 1
+          fi
+          
+          # Copy shared library if it exists
+          if [ -f "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.so" ]; then
+            cp "$QUICHE_DIR/target/${{ matrix.rust_target }}/release/libquiche.so" "$OUTPUT_DIR/${{ matrix.abi }}/"
+            echo "✅ Copied libquiche.so to $OUTPUT_DIR/${{ matrix.abi }}/"
+          else
+            echo "⚠️  libquiche.so not found (static library only)"
+          fi
+          
+          # Verify output
+          echo "📦 Built libraries:"
+          ls -lh "$OUTPUT_DIR/${{ matrix.abi }}/"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiche-${{ matrix.abi }}
+          path: app/src/main/jni/quiche-client/libs/${{ matrix.abi }}/*
+          retention-days: 7
+          if-no-files-found: error
+
+  verify:
+    name: Verify QUICHE Binaries
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Verify Binaries
+        run: |
+          echo "📋 Verifying QUICHE libraries..."
+          
+          for abi in arm64-v8a x86_64; do
+            if [ -f "artifacts/quiche-$abi/libquiche.a" ]; then
+              SIZE=$(stat -c%s "artifacts/quiche-$abi/libquiche.a")
+              SIZE_MB=$((SIZE / 1024 / 1024))
+              echo "✅ $abi (static): ${SIZE_MB}MB"
+              
+              # Check if it's an archive file
+              file "artifacts/quiche-$abi/libquiche.a" || echo "⚠️  $abi: Not a valid archive"
+            else
+              echo "❌ $abi: Static library not found"
+            fi
+            
+            if [ -f "artifacts/quiche-$abi/libquiche.so" ]; then
+              SIZE=$(stat -c%s "artifacts/quiche-$abi/libquiche.so")
+              SIZE_MB=$((SIZE / 1024 / 1024))
+              echo "✅ $abi (shared): ${SIZE_MB}MB"
+              
+              # Check if binary is ELF
+              file "artifacts/quiche-$abi/libquiche.so" || echo "⚠️  $abi: Not a valid ELF file"
+            else
+              echo "ℹ️  $abi: Shared library not found (static only)"
+            fi
+          done
+          
+          echo ""
+          echo "📦 Library locations:"
+          find artifacts -name "libquiche.*" -exec ls -lh {} \;
+

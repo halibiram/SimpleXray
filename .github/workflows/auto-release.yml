@@ -36,13 +36,21 @@ jobs:
       (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
     secrets: inherit
 
+  build-quiche-libs:
+    name: Build QUICHE Native Client
+    uses: ./.github/workflows/build-quiche.yml
+    if: |
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    secrets: inherit
+
   build-and-release:
     name: Build and Auto Release
     runs-on: ubuntu-latest
-    needs: [build-xray-libs, build-hysteria2-libs]
+    needs: [build-xray-libs, build-hysteria2-libs, build-quiche-libs]
     if: always() &&
       (needs.build-xray-libs.result == 'success' || needs.build-xray-libs.result == 'skipped') &&
-      (needs.build-hysteria2-libs.result == 'success' || needs.build-hysteria2-libs.result == 'skipped')
+      (needs.build-hysteria2-libs.result == 'success' || needs.build-hysteria2-libs.result == 'skipped') &&
+      (needs.build-quiche-libs.result == 'success' || needs.build-quiche-libs.result == 'skipped')
 
     steps:
       - name: Checkout
@@ -154,6 +162,14 @@ jobs:
           pattern: hysteria2-*
           merge-multiple: false
 
+      - name: Download QUICHE Libraries
+        if: steps.check_tag.outputs.exists == 'false' && needs.build-quiche-libs.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          path: quiche-libs
+          pattern: quiche-*
+          merge-multiple: false
+
       - name: Replace Xray Binaries
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result == 'success'
         run: |
@@ -215,6 +231,39 @@ jobs:
             echo "❌ Resource directory missing!"
             exit 1
           fi
+
+      - name: Copy QUICHE Libraries
+        if: steps.check_tag.outputs.exists == 'false' && needs.build-quiche-libs.result == 'success'
+        run: |
+          echo "📦 Copying QUICHE libraries..."
+
+          # Ensure quiche-client libs directory exists
+          mkdir -p app/src/main/jni/quiche-client/libs
+
+          # Copy QUICHE libraries for each ABI
+          for abi in arm64-v8a x86_64; do
+            if [ -d "quiche-libs/quiche-$abi" ]; then
+              mkdir -p app/src/main/jni/quiche-client/libs/$abi
+              
+              # Copy static library
+              if [ -f "quiche-libs/quiche-$abi/libquiche.a" ]; then
+                cp quiche-libs/quiche-$abi/libquiche.a app/src/main/jni/quiche-client/libs/$abi/
+                echo "✅ Copied libquiche.a for $abi"
+              fi
+              
+              # Copy shared library if it exists
+              if [ -f "quiche-libs/quiche-$abi/libquiche.so" ]; then
+                cp quiche-libs/quiche-$abi/libquiche.so app/src/main/jni/quiche-client/libs/$abi/
+                echo "✅ Copied libquiche.so for $abi"
+              fi
+            else
+              echo "⚠️  QUICHE libraries not found for $abi"
+            fi
+          done
+
+          # Verify libraries
+          echo "📋 Verifying QUICHE libraries:"
+          find app/src/main/jni/quiche-client/libs -name "libquiche.*" -type f 2>/dev/null | head -10 || echo "⚠️  No QUICHE libraries found"
 
       - name: Build Xray-core from Source (Fallback)
         if: steps.check_tag.outputs.exists == 'false' && needs.build-xray-libs.result != 'success'
@@ -428,7 +477,7 @@ jobs:
             echo "❌ Keystore file missing!"
             exit 1
           fi
-          
+
           if [ -f "./store.properties" ]; then
             echo "✅ store.properties exists"
             # Check if all required properties are set (without showing values)
