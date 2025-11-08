@@ -1493,17 +1493,12 @@ class TProxyService : VpnService() {
             }
         }
         
-        // Build Reality config from Xray config if available
-        val realityConfig = try {
-            extractRealityConfigFromXray(prefs.selectedConfigPath)
-        } catch (e: Exception) {
-            AppLogger.d("TProxyService: Could not extract Reality config: ${e.message}")
-            null
-        }
-        
+        // Don't extract Reality config - let Xray-core handle it directly from the original config
+        // This ensures the original Xray config is used without modification
+
         return ChainConfig(
             name = "TProxy Chain",
-            realityConfig = realityConfig,
+            realityConfig = null,  // Use original Xray config instead of extracting
             pepperParams = PepperParams(
                 mode = PepperMode.BURST_FRIENDLY,
                 maxBurstBytes = 64 * 1024,
