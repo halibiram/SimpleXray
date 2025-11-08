@@ -1,0 +1,233 @@
+name: "Test Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to use (e.g., v1.10.184). Leave empty to use latest successful release"
+        required: false
+        type: string
+      test_version_suffix:
+        description: "Test version suffix (e.g., -test1, -beta1)"
+        required: false
+        type: string
+        default: "-test"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  create-test-release:
+    name: Create Test Release from Latest APK
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitHub CLI
+        run: |
+          type -p curl >/dev/null || (apt update && apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+          && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+          && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+          && apt update \
+          && apt install gh -y
+
+      - name: Authenticate GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Find Latest Successful Release
+        id: find_release
+        run: |
+          RELEASE_TAG="${{ inputs.release_tag }}"
+          
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "🔍 Finding latest successful release..."
+            # Get latest release tag
+            RELEASE_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || echo "")
+            
+            if [ -z "$RELEASE_TAG" ]; then
+              echo "❌ No releases found"
+              exit 1
+            fi
+            
+            echo "✅ Found latest release: $RELEASE_TAG"
+          else
+            echo "✅ Using specified release: $RELEASE_TAG"
+          fi
+          
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          
+          # Verify release exists and has APK
+          RELEASE_INFO=$(gh release view "$RELEASE_TAG" --json assets,tagName,createdAt || echo "")
+          if [ -z "$RELEASE_INFO" ]; then
+            echo "❌ Release $RELEASE_TAG not found"
+            exit 1
+          fi
+          
+          # Check if APK exists in release
+          APK_ASSET=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | endswith(".apk")) | .name' | head -1)
+          if [ -z "$APK_ASSET" ]; then
+            echo "❌ No APK found in release $RELEASE_TAG"
+            echo "Available assets:"
+            echo "$RELEASE_INFO" | jq -r '.assets[] | .name'
+            exit 1
+          fi
+          
+          echo "✅ Found APK: $APK_ASSET"
+          echo "apk_name=$APK_ASSET" >> $GITHUB_OUTPUT
+
+      - name: Download APK from Release
+        run: |
+          RELEASE_TAG="${{ steps.find_release.outputs.release_tag }}"
+          APK_NAME="${{ steps.find_release.outputs.apk_name }}"
+          
+          echo "📥 Downloading APK from release $RELEASE_TAG..."
+          
+          mkdir -p release-artifacts
+          
+          # Download APK from release
+          gh release download "$RELEASE_TAG" \
+            --pattern "$APK_NAME" \
+            --dir release-artifacts/ || {
+            echo "❌ Failed to download APK from release"
+            exit 1
+          }
+          
+          # Verify APK was downloaded
+          if [ -f "release-artifacts/$APK_NAME" ]; then
+            APK_SIZE=$(stat -c%s "release-artifacts/$APK_NAME" 2>/dev/null || echo "0")
+            APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
+            echo "✅ APK downloaded: $APK_NAME (${APK_SIZE_MB}MB)"
+            ls -lh release-artifacts/
+          else
+            echo "❌ APK file not found after download"
+            exit 1
+          fi
+
+      - name: Read Version from Properties
+        id: version
+        run: |
+          if [ -f "version.properties" ]; then
+            VERSION_NAME=$(grep 'APP_VERSION_NAME' version.properties | cut -d '=' -f 2)
+            VERSION_CODE=$(grep 'APP_VERSION_CODE' version.properties | cut -d '=' -f 2)
+          else
+            # Extract version from release tag
+            RELEASE_TAG="${{ steps.find_release.outputs.release_tag }}"
+            VERSION_NAME=$(echo "$RELEASE_TAG" | sed 's/^v//')
+            VERSION_CODE="1"
+          fi
+          
+          TEST_SUFFIX="${{ inputs.test_version_suffix }}"
+          TEST_VERSION_NAME="${VERSION_NAME}${TEST_SUFFIX}"
+          
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "test_version_name=$TEST_VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "tag=v${TEST_VERSION_NAME}" >> $GITHUB_OUTPUT
+          
+          echo "📋 Version Information:"
+          echo "  Original Version: $VERSION_NAME"
+          echo "  Test Version: $TEST_VERSION_NAME"
+          echo "  Test Tag: v${TEST_VERSION_NAME}"
+
+      - name: Check if Test Tag Exists
+        id: check_tag
+        run: |
+          TEST_TAG="v${{ steps.version.outputs.test_version_name }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/${TEST_TAG}$"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "⚠️  Tag $TEST_TAG already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✅ Tag $TEST_TAG does not exist, proceeding"
+          fi
+
+      - name: Create Test Release
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TEST_TAG="v${{ steps.version.outputs.test_version_name }}"
+          ORIGINAL_TAG="${{ steps.find_release.outputs.release_tag }}"
+          VERSION_NAME="${{ steps.version.outputs.test_version_name }}"
+          BUILD_CODE="${{ steps.version.outputs.version_code }}"
+          COMMIT="${{ github.sha }}"
+          APK_NAME="${{ steps.find_release.outputs.apk_name }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create and push tag
+          git tag -a "$TEST_TAG" -m "Test Release $TEST_TAG (from $ORIGINAL_TAG)"
+          git push origin "$TEST_TAG"
+          
+          # Create release notes
+          cat > release_notes.md << EOF
+          🧪 Test Release for version ${VERSION_NAME}
+          
+          **Source Release:** ${ORIGINAL_TAG}
+          **Test Version:** ${TEST_VERSION_NAME}
+          **Build Code:** ${BUILD_CODE}
+          **Commit:** ${COMMIT}
+          
+          **Note:** This is a test release created from the APK of ${ORIGINAL_TAG}.
+          No new build was performed - using the existing APK from the successful release.
+          
+          **Download APK:**
+          - \`${APK_NAME}\` - For most modern devices (ARM64) - BoringSSL optimized
+          
+          **Features:**
+          - 🔒 BoringSSL integration (replaces OpenSSL)
+          - ⚡ Hardware-accelerated crypto (AES-GCM, ChaCha20-Poly1305)
+          - 🚀 TLS 1.3 with Chrome mobile fingerprint mimic
+          - 📡 QUIC/HTTP3 support
+          - 🎯 Xray-core built with BoringSSL (3-40x faster crypto performance)
+          - 🌊 Hysteria2 QUIC acceleration (standalone or chain mode)
+          
+          ---
+          🤖 Auto-generated test release from ${ORIGINAL_TAG}
+          EOF
+          
+          # Create release with APK
+          if [ -f "release-artifacts/$APK_NAME" ]; then
+            echo "📦 Creating test release with APK..."
+            gh release create "$TEST_TAG" \
+              --title "SimpleXray Test Release $TEST_TAG" \
+              --notes-file release_notes.md \
+              --prerelease \
+              release-artifacts/$APK_NAME
+            
+            echo "✅ Test release created: https://github.com/${{ github.repository }}/releases/tag/$TEST_TAG"
+          else
+            echo "❌ APK file not found: release-artifacts/$APK_NAME"
+            exit 1
+          fi
+
+      - name: Send Test Release Notification to Telegram
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
+          
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "⚠️  Telegram secrets not configured, skipping notification"
+            exit 0
+          fi
+          
+          TEST_TAG="v${{ steps.version.outputs.test_version_name }}"
+          ORIGINAL_TAG="${{ steps.find_release.outputs.release_tag }}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/$TEST_TAG"
+          
+          TEXT="🧪 *Test Release Created*\n\n📦 *Version:* $TEST_TAG\n📋 *Source:* $ORIGINAL_TAG\n🔨 *Build:* ${{ steps.version.outputs.version_code }}\n\nℹ️ *Note:* This is a test release using the APK from $ORIGINAL_TAG. No new build was performed.\n\n🔗 [Download Test Release]($RELEASE_URL)"
+          
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\": \"$CHAT_ID\", \"text\": \"$TEXT\", \"parse_mode\": \"Markdown\"}" \
+            "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" || echo "⚠️  Failed to send Telegram notification"
+
