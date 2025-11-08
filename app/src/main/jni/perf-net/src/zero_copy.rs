@@ -237,13 +237,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut iovecs: Vec<libc::iovec> = Vec::new();
     // Convert jintArray to JIntArray for JNI 0.21
     let lengths_array = unsafe { JIntArray::from_raw(lengths) };
-    let len_elements = match env.get_int_array_elements(lengths_array, jni::objects::ReleaseMode::NoCopyBack) {
-        Ok(elems) => elems,
-        Err(_) => {
-            error!("Failed to get lengths array elements");
-            return -1;
-        }
-    };
+    
+    // JNI 0.21 doesn't have get_int_array_elements, use get_int_array_region instead
+    let mut len_values = vec![0i32; num_buffers as usize];
+    if let Err(_) = env.get_int_array_region(lengths_array, 0, &mut len_values) {
+        error!("Failed to get lengths array region");
+        return -1;
+    }
 
     for i in 0..num_buffers {
         let buffer = match env.get_object_array_element(buffers, i) {
@@ -262,7 +262,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             }
         };
 
-        let len = len_elements[i as usize];
+        let len = len_values[i as usize];
         if len < 0 {
             error!("Invalid length at index {}: {}", i, len);
             return -1;
@@ -274,8 +274,6 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             iov_len: len as usize,
         });
     }
-
-    drop(len_elements);
 
     let fd = fd as RawFd;
     let flags = MsgFlags::MSG_DONTWAIT;
