@@ -226,6 +226,13 @@ android {
         warningsAsErrors = false
     }
 
+    packaging {
+        jniLibs {
+            extractNativeLibs = true
+        }
+    }
+    
+    // Legacy packaging options (kept for compatibility)
     packagingOptions {
         jniLibs {
             useLegacyPackaging true

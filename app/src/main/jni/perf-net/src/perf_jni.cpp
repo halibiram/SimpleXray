@@ -123,6 +123,7 @@ extern void cleanupConnectionPools();
 
 // Cleanup on JNI unload to prevent memory leaks
 void JNI_OnUnload(JavaVM* vm, void* reserved) {
+    (void)vm;      // Unused parameter, required by JNI interface
     (void)reserved;
     // Clear global pointer to prevent use after unload
     g_jvm = nullptr;
