@@ -388,12 +388,52 @@ tasks.register("checkBoringSSL") {
     }
 }
 
+// Copy QUICHE libraries from artifacts to quiche-client/libs/
+tasks.register("copyQuicheLibraries") {
+    doLast {
+        def quicheClientLibsDir = file("src/main/jni/quiche-client/libs")
+        def artifactsDir = file("../artifacts")
+        
+        def abis = ["arm64-v8a", "x86_64"]
+        def copiedCount = 0
+        
+        abis.each { abi ->
+            def sourceLib = file("${artifactsDir}/quiche-${abi}/libquiche.a")
+            def targetDir = file("${quicheClientLibsDir}/${abi}")
+            def targetLib = file("${targetDir}/libquiche.a")
+            
+            if (sourceLib.exists()) {
+                targetDir.mkdirs()
+                copy {
+                    from sourceLib
+                    into targetDir
+                }
+                println("✅ Copied ${sourceLib.name} to ${targetDir.absolutePath}")
+                copiedCount++
+            } else {
+                println("⚠️  QUICHE library not found at ${sourceLib.absolutePath}")
+                println("   Expected location: artifacts/quiche-${abi}/libquiche.a")
+            }
+        }
+        
+        if (copiedCount > 0) {
+            println("✅ QUICHE libraries copied: ${copiedCount}/${abis.size()} ABIs")
+        } else {
+            println("⚠️  WARNING: No QUICHE libraries found in artifacts directory")
+            println("   QUICHE native build will be skipped")
+            println("   To build QUICHE:")
+            println("   1. Run: cd app/src/main/jni/quiche-client && ./build-quiche-android.sh")
+            println("   2. Or download from CI artifacts")
+        }
+    }
+}
+
 // Run checks before build
 tasks.matching { task ->
     task.name.startsWith("externalNativeBuild") && 
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
-    task.dependsOn("checkBoringSSL")
+    task.dependsOn("checkBoringSSL", "copyQuicheLibraries")
 }
 
 // Run debug files check before debug builds

@@ -584,6 +584,9 @@ class Preferences(context: Context) {
         const val BACKGROUND_TRAFFIC_LOGGING_ENABLED: String = "BackgroundTrafficLoggingEnabled"
         const val LATENCY_PROBE_ENDPOINT: String = "LatencyProbeEndpoint"
         const val VPN_SERVICE_WAS_RUNNING: String = "VpnServiceWasRunning"
+        const val USE_QUICHE_TUN: String = "UseQuicheTun"
+        const val QUICHE_SERVER_HOST: String = "QuicheServerHost"
+        const val QUICHE_SERVER_PORT: String = "QuicheServerPort"
         private const val TAG = "Preferences"
     }
     
@@ -620,5 +623,29 @@ class Preferences(context: Context) {
         get() = getBooleanPref(VPN_SERVICE_WAS_RUNNING, false)
         set(value) {
             setValueInProvider(VPN_SERVICE_WAS_RUNNING, value)
+        }
+
+    /**
+     * QUICHE TUN forwarder settings
+     */
+    var useQuicheTun: Boolean
+        get() = getBooleanPref(USE_QUICHE_TUN, false)
+        set(value) {
+            setValueInProvider(USE_QUICHE_TUN, value)
+        }
+
+    var quicheServerHost: String?
+        get() = getPrefData(QUICHE_SERVER_HOST).first
+        set(value) {
+            setValueInProvider(QUICHE_SERVER_HOST, value)
+        }
+
+    var quicheServerPort: Int?
+        get() {
+            val value = getPrefData(QUICHE_SERVER_PORT).first
+            return value?.toIntOrNull()
+        }
+        set(value) {
+            setValueInProvider(QUICHE_SERVER_PORT, value?.toString())
         }
 }
