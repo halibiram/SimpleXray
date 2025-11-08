@@ -46,8 +46,34 @@ jobs:
         run: |
           echo "🔍 Finding successful Auto Release workflow run with artifacts..."
           
-          # Get successful workflow runs for "Auto Release" workflow
-          WORKFLOW_RUNS=$(gh run list --workflow="Auto Release" --limit 20 --json databaseId,conclusion,createdAt,displayTitle --jq '.[] | select(.conclusion == "success") | "\(.databaseId)|\(.createdAt)|\(.displayTitle)"' || echo "")
+          # Get workflow file name
+          WORKFLOW_FILE=".github/workflows/auto-release.yml"
+          
+          # Get successful workflow runs for auto-release workflow
+          # Try different ways to find the workflow
+          WORKFLOW_RUNS=$(gh run list --workflow="$WORKFLOW_FILE" --limit 20 --json databaseId,conclusion,createdAt,displayTitle --jq '.[] | select(.conclusion == "success") | "\(.databaseId)|\(.createdAt)|\(.displayTitle)"' 2>/dev/null || echo "")
+          
+          # If not found, try to find by workflow name pattern
+          if [ -z "$WORKFLOW_RUNS" ]; then
+            echo "⚠️  Not found by file name, trying to find by workflow runs..."
+            # List all workflows to find the right one
+            ALL_WORKFLOWS=$(gh workflow list --limit 50 --json name,id,path --jq '.[] | "\(.name)|\(.id)|\(.path)"' || echo "")
+            echo "📋 Available workflows:"
+            echo "$ALL_WORKFLOWS" | head -10
+            
+            # Try to find workflow with "release" in name
+            RELEASE_WORKFLOW_ID=$(echo "$ALL_WORKFLOWS" | grep -i "release\|auto" | head -1 | cut -d'|' -f2 || echo "")
+            if [ -n "$RELEASE_WORKFLOW_ID" ]; then
+              echo "✅ Found workflow ID: $RELEASE_WORKFLOW_ID"
+              WORKFLOW_RUNS=$(gh run list --workflow="$RELEASE_WORKFLOW_ID" --limit 20 --json databaseId,conclusion,createdAt,displayTitle --jq '.[] | select(.conclusion == "success") | "\(.databaseId)|\(.createdAt)|\(.displayTitle)"' 2>/dev/null || echo "")
+            fi
+          fi
+          
+          # If still not found, try to get all successful runs and filter
+          if [ -z "$WORKFLOW_RUNS" ]; then
+            echo "⚠️  Trying to find any successful runs..."
+            WORKFLOW_RUNS=$(gh run list --limit 50 --json databaseId,conclusion,createdAt,displayTitle,workflowName --jq '.[] | select(.conclusion == "success" and (.workflowName | test("release|auto"; "i"))) | "\(.databaseId)|\(.createdAt)|\(.displayTitle)"' 2>/dev/null || echo "")
+          fi
           
           if [ -z "$WORKFLOW_RUNS" ]; then
             echo "❌ No successful Auto Release workflow runs found"
