@@ -197,6 +197,24 @@ class TProxyService : VpnService() {
         // VPN Session Lifecycle Logging
         AppLogger.d("TProxyService: onStartCommand called - intent=${intent?.action}, flags=$flags, startId=$startId, tunFd=${if (tunFd != null) "valid" else "null"}")
         
+        // CRITICAL: Start foreground immediately to prevent ForegroundServiceDidNotStartInTimeException
+        // Android requires startForeground() to be called within 5 seconds of startForegroundService()
+        // We must call it before any potentially long-running operations
+        try {
+            val channelName = if (intent?.action == ACTION_START) {
+                val prefs = Preferences(this)
+                if (prefs.disableVpn) "nosocks" else "chain"
+            } else {
+                "chain"
+            }
+            initNotificationChannel(channelName)
+            createNotification(channelName)
+            AppLogger.d("TProxyService: Foreground notification started immediately")
+        } catch (e: Exception) {
+            AppLogger.e("TProxyService: Failed to start foreground notification: ${e.message}", e)
+            // Continue anyway - better to have a delayed notification than crash
+        }
+        
         // Handle null intent (service restart after being killed by system)
         if (intent == null) {
             AppLogger.w("TProxyService: Restarted with null intent, attempting state recovery")
@@ -301,12 +319,6 @@ class TProxyService : VpnService() {
                 logFileManager.clearLogs()
                 val prefs = Preferences(this)
                 if (prefs.disableVpn) {
-                    // Even in core-only mode, ensure foreground notification is shown
-                    // This prevents the service from being killed when app goes to background
-                    @Suppress("SameParameterValue") val channelName = "nosocks"
-                    initNotificationChannel(channelName)
-                    createNotification(channelName)
-                    
                     // Start monitoring even in core-only mode (to detect service issues)
                     startConnectionMonitoring()
                     
@@ -1244,9 +1256,9 @@ class TProxyService : VpnService() {
             val successIntent = Intent(ACTION_START)
             successIntent.setPackage(application.packageName)
             sendBroadcast(successIntent)
-            @Suppress("SameParameterValue") val channelName = "chain"
-            initNotificationChannel(channelName)
-            createNotification(channelName)
+            
+            // Note: Foreground notification is already started in onStartCommand()
+            // No need to call createNotification() again here
             
             // Start monitoring VPN connection to detect if it's lost when app goes to background
             startConnectionMonitoring()
