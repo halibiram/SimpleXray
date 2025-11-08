@@ -33,7 +33,7 @@ pub use crypto_accel::*;
 pub use epoll_loop::*;
 pub use kernel_pacing::*;
 pub use mtu_tuning::*;
-pub use quic_optimizer::*;
+// pub use quic_optimizer::*; // Module not fully implemented yet
 pub use ring_buffer::*;
 pub use jit_warmup::*;
 pub use readahead::*;

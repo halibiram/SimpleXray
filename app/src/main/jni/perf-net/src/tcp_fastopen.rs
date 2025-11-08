@@ -115,15 +115,16 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         #[cfg(target_os = "android")]
         {
             use libc::{IPPROTO_TCP, TCP_FASTOPEN};
+            let raw_fd = test_fd.as_raw_fd();
             let result = unsafe {
-                libc::setsockopt(test_fd, IPPROTO_TCP, TCP_FASTOPEN, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+                libc::setsockopt(raw_fd, IPPROTO_TCP, TCP_FASTOPEN, &opt as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
             };
             if result == 0 { 1 } else { 0 }
         }
         #[cfg(not(target_os = "android"))]
         {
             use nix::sys::socket::{setsockopt, sockopt::TcpFastOpen};
-            match setsockopt(test_fd, &TcpFastOpen, &opt) {
+            match setsockopt(&test_fd, TcpFastOpen, &opt) {
                 Ok(_) => 1,
                 Err(_) => 0,
             }
@@ -131,7 +132,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     };
 
     // Close test socket
-    let _ = nix::unistd::close(test_fd);
+    let _ = nix::unistd::close(test_fd.as_raw_fd());
 
     // Update cache
     TFO_SUPPORTED.store(supported, Ordering::Release);

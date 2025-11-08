@@ -4,9 +4,9 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JByteArray};
+use jni::objects::{JClass, JObject, JByteArray, JByteBuffer};
 use jni::sys::{jboolean, jint, jobject};
-use ring::aead;
+use ring::aead::{self, Aad};
 use log::{debug, error};
 
 /// Check if NEON is available
@@ -49,31 +49,72 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     output_offset: jint,
     key: JObject,
 ) -> jint {
-    let input_ptr = match env.get_direct_buffer_address(input) {
-        Ok(Some(ptr)) => ptr,
-        _ => {
+    // Convert JObject to JByteBuffer
+    let input_buffer = match JByteBuffer::from(input) {
+        Ok(buf) => buf,
+        Err(_) => {
             error!("Invalid input buffer");
             return -1;
         }
     };
-
-    let output_ptr = match env.get_direct_buffer_address(output) {
-        Ok(Some(ptr)) => ptr,
-        _ => {
+    let output_buffer = match JByteBuffer::from(output) {
+        Ok(buf) => buf,
+        Err(_) => {
             error!("Invalid output buffer");
             return -1;
         }
     };
-
-    let key_ptr = match env.get_direct_buffer_address(key) {
-        Ok(Some(ptr)) => ptr,
-        _ => {
+    let key_buffer = match JByteBuffer::from(key) {
+        Ok(buf) => buf,
+        Err(_) => {
             error!("Invalid key buffer");
             return -1;
         }
     };
 
-    let key_capacity = match env.get_direct_buffer_capacity(key) {
+    let input_ptr = match env.get_direct_buffer_address(&input_buffer) {
+        Ok(ptr) => {
+            if ptr.is_null() {
+                error!("Invalid input buffer");
+                return -1;
+            }
+            ptr
+        },
+        Err(_) => {
+            error!("Invalid input buffer");
+            return -1;
+        }
+    };
+
+    let output_ptr = match env.get_direct_buffer_address(&output_buffer) {
+        Ok(ptr) => {
+            if ptr.is_null() {
+                error!("Invalid output buffer");
+                return -1;
+            }
+            ptr
+        },
+        Err(_) => {
+            error!("Invalid output buffer");
+            return -1;
+        }
+    };
+
+    let key_ptr = match env.get_direct_buffer_address(&key_buffer) {
+        Ok(ptr) => {
+            if ptr.is_null() {
+                error!("Invalid key buffer");
+                return -1;
+            }
+            ptr
+        },
+        Err(_) => {
+            error!("Invalid key buffer");
+            return -1;
+        }
+    };
+
+    let key_capacity = match env.get_direct_buffer_capacity(&key_buffer) {
         Ok(cap) => cap,
         Err(_) => {
             error!("Failed to get key capacity");
@@ -119,14 +160,15 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     output_slice[..input_len as usize].copy_from_slice(input_slice);
 
     // Create nonce and sealing key - ring 0.17 API
-    // Note: nonce must be recreated for each operation (quiche-client pattern)
+    // Use LessSafeKey which doesn't require nonce sequence
+    use ring::aead::LessSafeKey;
+    let key = LessSafeKey::new(unbound_key);
     let nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
-    let sealing_key = aead::SealingKey::new(unbound_key, nonce);
-
-    // Ring 0.17 API: seal_in_place function signature
-    // Following quiche-client pattern exactly
-    let nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
-    match aead::seal_in_place(sealing_key, nonce, aead::Aad::empty(), output_slice, input_len as usize) {
+    
+    // Ring 0.17 API: seal_in_place_append_tag
+    // Pass only the plaintext part, it will append the tag
+    let plaintext_slice = &mut output_slice[..input_len as usize];
+    match key.seal_in_place_append_tag(nonce, Aad::empty(), plaintext_slice) {
         Ok(tag_len) => {
             debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
             (input_len + tag_len as jint) as jint

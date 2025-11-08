@@ -85,9 +85,10 @@ impl ConnectionPool {
         #[cfg(target_os = "android")]
         {
             use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
-            let flags = unsafe { fcntl(fd, F_GETFL) };
+            let raw_fd = fd.as_raw_fd();
+            let flags = unsafe { fcntl(raw_fd, F_GETFL) };
             if flags >= 0 {
-                let _ = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+                let _ = unsafe { fcntl(raw_fd, F_SETFL, flags | O_NONBLOCK) };
             }
         }
         #[cfg(not(target_os = "android"))]
@@ -100,24 +101,25 @@ impl ConnectionPool {
         }
 
         // Set socket options
-        let _ = setsockopt(fd, &ReuseAddr, &true);
+        let _ = setsockopt(&fd, ReuseAddr, &true);
         // TCP_NODELAY using libc (TcpNoDelay may not be in nix 0.28)
         #[cfg(target_os = "android")]
         {
             use libc::{IPPROTO_TCP, TCP_NODELAY};
             let optval: i32 = 1;
+            let raw_fd = fd.as_raw_fd();
             let _ = unsafe {
-                libc::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+                libc::setsockopt(raw_fd, IPPROTO_TCP, TCP_NODELAY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
             };
         }
         #[cfg(not(target_os = "android"))]
         {
             use nix::sys::socket::sockopt::TcpNoDelay;
-            let _ = setsockopt(fd, &TcpNoDelay, &true);
+            let _ = setsockopt(&fd, TcpNoDelay, &true);
         }
-        let _ = setsockopt(fd, &KeepAlive, &true);
+        let _ = setsockopt(&fd, KeepAlive, &true);
 
-        Ok(fd)
+        Ok(fd.as_raw_fd())
     }
 
     fn find_slot_by_fd(&self, fd: RawFd) -> Option<usize> {
@@ -246,7 +248,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let host_str = match env.get_string(host) {
+    let host_str = match env.get_string(&host) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => {
             error!("Failed to get host string");
@@ -295,8 +297,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // Connect - resolve hostname to IP
-    let addr = match host_str.parse::<Ipv4Addr>() {
-        Ok(ip) => SocketAddr::new(std::net::IpAddr::V4(ip), port as u16),
+    let ip_addr = match host_str.parse::<Ipv4Addr>() {
+        Ok(ip) => ip,
         Err(_) => {
             // Try DNS resolution (simplified - in production use proper DNS)
             error!("DNS resolution not implemented, use IP address: {}", host_str);
@@ -304,7 +306,15 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     };
 
-    match connect(fd, &addr) {
+    // Convert to nix::SockaddrIn for connect
+    use nix::sys::socket::{SockaddrIn, InetAddr};
+    use std::os::fd::BorrowedFd;
+    let inet_addr = InetAddr::new(ip_addr, port as u16);
+    let sockaddr = SockaddrIn::new(inet_addr);
+
+    // Convert RawFd to BorrowedFd for connect
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+    match connect(borrowed_fd, &sockaddr) {
         Ok(_) => {
             slot.connected = true;
             slot.remote_addr = host_str;
@@ -340,7 +350,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let host_str = match env.get_string(host) {
+    let host_str = match env.get_string(&host) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => return -1,
     };
@@ -365,12 +375,20 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return 0;
     }
 
-    let addr = match host_str.parse::<Ipv4Addr>() {
-        Ok(ip) => SocketAddr::new(std::net::IpAddr::V4(ip), port as u16),
+    let ip_addr = match host_str.parse::<Ipv4Addr>() {
+        Ok(ip) => ip,
         Err(_) => return -1,
     };
 
-    match connect(fd as RawFd, &addr) {
+    // Convert to nix::SockaddrIn for connect
+    use nix::sys::socket::{SockaddrIn, InetAddr};
+    use std::os::fd::BorrowedFd;
+    let inet_addr = InetAddr::new(ip_addr, port as u16);
+    let sockaddr = SockaddrIn::new(inet_addr);
+
+    // Convert RawFd to BorrowedFd for connect
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd as RawFd) };
+    match connect(borrowed_fd, &sockaddr) {
         Ok(_) => {
             slot.connected = true;
             slot.remote_addr = host_str;

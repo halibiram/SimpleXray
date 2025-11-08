@@ -55,13 +55,15 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut result = 0;
 
     // Set send buffer
-    if let Err(e) = setsockopt(fd, &sockopt::SndBuf, &(send_buffer as u32)) {
+    use std::os::fd::BorrowedFd;
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+    if let Err(e) = setsockopt(borrowed_fd, sockopt::SndBuf, send_buffer as u32) {
         error!("Failed to set send buffer: {}", e);
         result = -1;
     }
 
     // Set receive buffer
-    if let Err(e) = setsockopt(fd, &sockopt::RcvBuf, &(recv_buffer as u32)) {
+    if let Err(e) = setsockopt(borrowed_fd, sockopt::RcvBuf, recv_buffer as u32) {
         error!("Failed to set recv buffer: {}", e);
         result = -1;
     }

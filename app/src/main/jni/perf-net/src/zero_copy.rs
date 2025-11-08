@@ -4,7 +4,7 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JIntArray};
+use jni::objects::{JClass, JObject, JIntArray, JByteBuffer, JObjectArray};
 use jni::sys::{jint, jobject, jobjectArray, jintArray};
 use nix::sys::socket::{recv, send, MsgFlags, recvmsg};
 use std::os::unix::io::RawFd;
@@ -42,17 +42,18 @@ fn check_zerocopy_support() -> bool {
                 const SO_ZEROCOPY: i32 = 60; // Linux 4.14+
                 use libc::SOL_SOCKET;
                 let optval: i32 = 1;
+                let raw_fd = test_fd.as_raw_fd();
                 let r = unsafe {
-                    libc::setsockopt(test_fd, SOL_SOCKET, SO_ZEROCOPY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
+                    libc::setsockopt(raw_fd, SOL_SOCKET, SO_ZEROCOPY, &optval as *const _ as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t)
                 };
                 if r == 0 { Ok(()) } else { Err(nix::errno::Errno::last()) }
             }
             #[cfg(not(target_os = "android"))]
             {
-                setsockopt(test_fd, &sockopt::SoZerocopy, &true)
+                setsockopt(&test_fd, sockopt::SoZerocopy, &true)
             }
         };
-        let _ = nix::unistd::close(test_fd);
+        let _ = nix::unistd::close(test_fd.as_raw_fd());
         
         let supported = result.is_ok();
         if supported {
@@ -79,15 +80,30 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let buf_ptr = match env.get_direct_buffer_address(buffer) {
-        Ok(Some(ptr)) => ptr,
-        Ok(None) | Err(_) => {
+    // Convert JObject to JByteBuffer
+    let buffer_byte = match JByteBuffer::from(buffer) {
+        Ok(buf) => buf,
+        Err(_) => {
             error!("Not a direct buffer");
             return -1;
         }
     };
 
-    let capacity = match env.get_direct_buffer_capacity(buffer) {
+    let buf_ptr = match env.get_direct_buffer_address(&buffer_byte) {
+        Ok(ptr) => {
+            if ptr.is_null() {
+                error!("Not a direct buffer");
+                return -1;
+            }
+            ptr
+        },
+        Err(_) => {
+            error!("Not a direct buffer");
+            return -1;
+        }
+    };
+
+    let capacity = match env.get_direct_buffer_capacity(&buffer_byte) {
         Ok(cap) => cap,
         Err(_) => {
             error!("Failed to get buffer capacity");
@@ -95,7 +111,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     };
 
-    if capacity < 0 || offset + length > capacity {
+    if offset + length > capacity as i32 {
         error!("Buffer overflow: capacity={}, offset={}, length={}", capacity, offset, length);
         return -1;
     }
@@ -136,15 +152,30 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let buf_ptr = match env.get_direct_buffer_address(buffer) {
-        Ok(Some(ptr)) => ptr,
-        Ok(None) | Err(_) => {
+    // Convert JObject to JByteBuffer
+    let buffer_byte = match JByteBuffer::from(buffer) {
+        Ok(buf) => buf,
+        Err(_) => {
             error!("Not a direct buffer");
             return -1;
         }
     };
 
-    let capacity = match env.get_direct_buffer_capacity(buffer) {
+    let buf_ptr = match env.get_direct_buffer_address(&buffer_byte) {
+        Ok(ptr) => {
+            if ptr.is_null() {
+                error!("Not a direct buffer");
+                return -1;
+            }
+            ptr
+        },
+        Err(_) => {
+            error!("Not a direct buffer");
+            return -1;
+        }
+    };
+
+    let capacity = match env.get_direct_buffer_capacity(&buffer_byte) {
         Ok(cap) => cap,
         Err(_) => {
             error!("Failed to get buffer capacity");
@@ -152,7 +183,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     };
 
-    if capacity < 0 || offset + length > capacity {
+    if offset + length > capacity as i32 {
         error!("Buffer overflow: capacity={}, offset={}, length={}", capacity, offset, length);
         return -1;
     }
@@ -174,7 +205,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         #[cfg(not(target_os = "android"))]
         {
             use nix::sys::socket::{setsockopt, sockopt};
-            let _ = setsockopt(fd, &sockopt::SoZerocopy, &true);
+            use std::os::fd::BorrowedFd;
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+            let _ = setsockopt(borrowed_fd, sockopt::SoZerocopy, &true);
         }
     }
 
@@ -212,7 +245,11 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let num_buffers = match env.get_array_length(buffers) {
+    // Convert raw pointers to JNI types
+    let buffers_array = unsafe { JObjectArray::from_raw(buffers) };
+    let lengths_array = unsafe { JIntArray::from_raw(lengths) };
+
+    let num_buffers = match env.get_array_length(&buffers_array) {
         Ok(len) => len,
         Err(_) => {
             error!("Failed to get buffers array length");
@@ -220,7 +257,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     };
 
-    let num_lengths = match env.get_array_length(lengths) {
+    let num_lengths = match env.get_array_length(&lengths_array) {
         Ok(len) => len,
         Err(_) => {
             error!("Failed to get lengths array length");
@@ -235,18 +272,16 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Build iovec array
     let mut iovecs: Vec<libc::iovec> = Vec::new();
-    // Convert jintArray to JIntArray for JNI 0.21
-    let lengths_array = unsafe { JIntArray::from_raw(lengths) };
     
     // JNI 0.21 doesn't have get_int_array_elements, use get_int_array_region instead
     let mut len_values = vec![0i32; num_buffers as usize];
-    if let Err(_) = env.get_int_array_region(lengths_array, 0, &mut len_values) {
+    if let Err(_) = env.get_int_array_region(&lengths_array, 0, &mut len_values) {
         error!("Failed to get lengths array region");
         return -1;
     }
 
     for i in 0..num_buffers {
-        let buffer = match env.get_object_array_element(buffers, i) {
+        let buffer = match env.get_object_array_element(&buffers_array, i) {
             Ok(buf) => buf,
             Err(_) => {
                 error!("Failed to get buffer at index {}", i);
@@ -254,9 +289,24 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             }
         };
 
-        let buf_ptr = match env.get_direct_buffer_address(buffer) {
-            Ok(Some(ptr)) => ptr,
-            Ok(None) | Err(_) => {
+        // Convert JObject to JByteBuffer
+        let buffer_byte = match JByteBuffer::from(buffer) {
+            Ok(buf) => buf,
+            Err(_) => {
+                error!("Not a direct buffer at index {}", i);
+                return -1;
+            }
+        };
+
+        let buf_ptr = match env.get_direct_buffer_address(&buffer_byte) {
+            Ok(ptr) => {
+                if ptr.is_null() {
+                    error!("Not a direct buffer at index {}", i);
+                    return -1;
+                }
+                ptr
+            },
+            Err(_) => {
                 error!("Not a direct buffer at index {}", i);
                 return -1;
             }
@@ -278,7 +328,15 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let fd = fd as RawFd;
     let flags = MsgFlags::MSG_DONTWAIT;
 
-    match recvmsg(fd, &iovecs, flags, None) {
+    // Convert libc::iovec to nix::IoSliceMut
+    use std::os::unix::io::IoSliceMut;
+    let mut io_slices: Vec<IoSliceMut> = iovecs.iter().map(|iov| {
+        unsafe {
+            IoSliceMut::new(std::slice::from_raw_parts_mut(iov.iov_base as *mut u8, iov.iov_len))
+        }
+    }).collect();
+
+    match recvmsg(fd, &mut io_slices, flags, None) {
         Ok(received) => received as jint,
         Err(nix::errno::Errno::EAGAIN) => 0,
         Err(e) => {
@@ -316,10 +374,16 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     match env.call_static_method(
         byte_buffer_class,
-        allocate_direct_method,
+        "allocateDirect",
+        "(I)Ljava/nio/ByteBuffer;",
         &[jni::objects::JValue::Int(capacity)],
     ) {
-        Ok(jval) => jval.l().unwrap_or(ptr::null_mut()),
+        Ok(jval) => {
+            match jval.l() {
+                Ok(obj) => obj.into_raw(),
+                Err(_) => ptr::null_mut(),
+            }
+        },
         Err(_) => ptr::null_mut(),
     }
 }

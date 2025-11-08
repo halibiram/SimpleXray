@@ -42,13 +42,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 ) -> jlong {
     let mut ctx_guard = EPOLL_CONTEXT.lock();
     if let Some(ref ctx) = *ctx_guard {
-        return ctx.as_ptr() as jlong;
+        return ctx.data_ptr() as jlong;
     }
 
     match EpollContext::new() {
         Ok(ctx) => {
             let ctx = Arc::new(Mutex::new(ctx));
-            let handle = ctx.as_ptr() as jlong;
+            let handle = ctx.data_ptr() as jlong;
             *ctx_guard = Some(ctx);
             debug!("Epoll initialized");
             handle
@@ -125,8 +125,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
     }
 
-    let wrapper = FdWrapper(fd);
-    match ctx.poll.registry().register(&wrapper, token, interest) {
+    let mut wrapper = FdWrapper(fd);
+    match ctx.poll.registry().register(&mut wrapper, token, interest) {
         Ok(_) => {
             ctx.registered_fds.insert(fd, token);
             debug!("Added fd {} to epoll", fd);
@@ -169,8 +169,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             }
         }
 
-        let wrapper = FdWrapper(fd);
-        match ctx.poll.registry().deregister(&wrapper) {
+        let mut wrapper = FdWrapper(fd);
+        match ctx.poll.registry().deregister(&mut wrapper) {
             Ok(_) => {
                 debug!("Removed fd {} from epoll", fd);
                 0
@@ -222,9 +222,10 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     match ctx.poll.poll(&mut events, timeout) {
         Ok(_) => {
-            let nfds = events.len();
+            let nfds = events.iter().count();
             if nfds > 0 && !out_events.is_null() {
-                let size = match env.get_array_length(out_events) {
+                let out_events_array = unsafe { jni::objects::JLongArray::from_raw(out_events) };
+                let size = match env.get_array_length(&out_events_array) {
                     Ok(s) => s,
                     Err(_) => {
                         error!("Failed to get array length");
@@ -233,7 +234,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
                 };
 
                 let nfds = nfds.min(size as usize);
-                let mut arr = match env.get_long_array_elements(out_events, jni::objects::ReleaseMode::CopyBack) {
+                let mut arr = match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
                     Ok(a) => a,
                     Err(_) => {
                         error!("Failed to get array elements");

@@ -53,13 +53,19 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let size = size as usize;
 
     // Map memory
+    use std::num::NonZeroUsize;
+    let size_nonzero = match NonZeroUsize::new(size) {
+        Some(s) => s,
+        None => return 0,
+    };
+    
     let ptr = unsafe {
         mmap(
-            ptr::null_mut(),
-            size,
+            None,
+            size_nonzero,
             ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
             MapFlags::MAP_PRIVATE | MapFlags::MAP_ANONYMOUS,
-            -1,
+            None,
             0,
         )
     };
@@ -68,10 +74,12 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         Ok(addr) => {
             let mut regions = batch.mapped_regions.lock();
             let mut total = batch.total_mapped.lock();
-            regions.insert(addr, size);
+            // Convert NonNull to *mut for storage
+            let addr_ptr = addr.as_ptr();
+            regions.insert(addr_ptr, size);
             *total += size;
             debug!("Mapped {} bytes, total: {}", size, *total);
-            addr as jlong
+            addr_ptr as jlong
         }
         Err(_) => 0,
     }
@@ -92,12 +100,12 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     let batch = unsafe { &*(handle as *const MMapBatch) };
 
-    let addr_len = match env.get_array_length(addresses) {
+    let addr_len = match env.get_array_length(&addresses) {
         Ok(len) => len,
         Err(_) => return -1,
     };
 
-    let size_len = match env.get_array_length(sizes) {
+    let size_len = match env.get_array_length(&sizes) {
         Ok(len) => len,
         Err(_) => return -1,
     };
@@ -106,12 +114,12 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let addrs = match env.get_long_array_elements(addresses, jni::objects::ReleaseMode::NoCopyBack) {
+    let addrs = match env.get_array_elements(&addresses, jni::objects::ReleaseMode::NoCopyBack) {
         Ok(arr) => arr,
         Err(_) => return -1,
     };
 
-    let lens = match env.get_long_array_elements(sizes, jni::objects::ReleaseMode::NoCopyBack) {
+    let lens = match env.get_array_elements(&sizes, jni::objects::ReleaseMode::NoCopyBack) {
         Ok(arr) => arr,
         Err(_) => {
             drop(addrs);
@@ -127,10 +135,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         let ptr = unsafe { addrs.get_unchecked(i as usize) } as *mut libc::c_void;
         let len = unsafe { lens.get_unchecked(i as usize) } as usize;
 
-        if let Ok(_) = unsafe { munmap(ptr, len) } {
-            unmapped += 1;
-            if let Some(size) = regions.remove(&ptr) {
-                *total -= size;
+        // Convert *mut to NonNull for munmap
+        if let Some(ptr_nonnull) = std::ptr::NonNull::new(ptr) {
+            if let Ok(_) = unsafe { munmap(ptr_nonnull, len) } {
+                unmapped += 1;
+                if let Some(size) = regions.remove(&ptr) {
+                    *total -= size;
+                }
             }
         }
     }
@@ -158,7 +169,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Unmap all remaining regions
     for (&ptr, &size) in regions.iter() {
-        let _ = unsafe { munmap(ptr, size) };
+        if let Some(ptr_nonnull) = std::ptr::NonNull::new(ptr) {
+            let _ = unsafe { munmap(ptr_nonnull, size) };
+        }
     }
 
     drop(regions);
@@ -166,6 +179,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     debug!("Batch mapper destroyed");
 }
+
 
 
 

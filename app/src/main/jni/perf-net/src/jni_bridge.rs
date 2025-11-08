@@ -5,7 +5,6 @@
 
 use jni::JNIEnv;
 use jni::JavaVM;
-use jni::objects::JClass;
 use jni::sys::{jint, JNI_VERSION_1_6};
 use log::info;
 

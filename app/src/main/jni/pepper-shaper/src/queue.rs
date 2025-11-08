@@ -10,9 +10,13 @@ const CACHE_LINE_SIZE: usize = 64;
 
 /// Lock-free ring buffer with cache locality
 pub struct PepperRingBuffer {
+    #[allow(dead_code)]
     write_pos: AtomicU64,
+    #[allow(dead_code)]
     write_seq: AtomicU32,
+    #[allow(dead_code)]
     read_pos: AtomicU64,
+    #[allow(dead_code)]
     read_seq: AtomicU32,
     capacity: usize,
     data: *mut u8,
@@ -45,6 +49,7 @@ impl PepperRingBuffer {
 
     /// Enqueue data (lock-free)
     /// Returns bytes written, 0 if full
+    #[allow(dead_code)]
     pub fn enqueue(&self, data: &[u8]) -> usize {
         if data.is_empty() {
             return 0;
@@ -105,6 +110,7 @@ impl PepperRingBuffer {
 
     /// Dequeue data (lock-free)
     /// Returns bytes read, 0 if empty
+    #[allow(dead_code)]
     pub fn dequeue(&self, data: &mut [u8]) -> usize {
         if data.is_empty() {
             return 0;
@@ -163,6 +169,7 @@ impl PepperRingBuffer {
     }
 
     /// Get available space
+    #[allow(dead_code)]
     pub fn available(&self) -> usize {
         let write_pos = self.write_pos.load(Ordering::Relaxed);
         let write_seq = self.write_seq.load(Ordering::Acquire);
@@ -183,6 +190,7 @@ impl PepperRingBuffer {
     }
 
     /// Get used space
+    #[allow(dead_code)]
     pub fn used(&self) -> usize {
         let write_pos = self.write_pos.load(Ordering::Relaxed);
         let write_seq = self.write_seq.load(Ordering::Acquire);

@@ -150,25 +150,28 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         timing.key_schedule_derive = get_timestamp_ms();
     }
 
-    let client_random_len = match env.get_array_length(client_random) {
+    let client_random_len = match env.get_array_length(&client_random) {
         Ok(len) => len as usize,
         Err(_) => return -1,
     };
-    let mut client_random_bytes = vec![0u8; client_random_len];
-    if let Err(_) = env.get_byte_array_region(client_random, 0, &mut client_random_bytes) {
+    let mut client_random_bytes = vec![0i8; client_random_len];
+    if let Err(_) = env.get_byte_array_region(&client_random, 0, &mut client_random_bytes) {
         return -1;
     }
 
-    let secret_len = match env.get_array_length(secret) {
+    let secret_len = match env.get_array_length(&secret) {
         Ok(len) => len as usize,
         Err(_) => return -1,
     };
-    let mut secret_bytes = vec![0u8; secret_len];
-    if let Err(_) = env.get_byte_array_region(secret, 0, &mut secret_bytes) {
+    let mut secret_bytes = vec![0i8; secret_len];
+    if let Err(_) = env.get_byte_array_region(&secret, 0, &mut secret_bytes) {
         return -1;
     }
 
-    write_keylog_entry("CLIENT_HANDSHAKE_TRAFFIC_SECRET", &client_random_bytes, &secret_bytes);
+    // Convert i8 to u8 for keylog
+    let client_random_u8: Vec<u8> = client_random_bytes.iter().map(|&b| b as u8).collect();
+    let secret_u8: Vec<u8> = secret_bytes.iter().map(|&b| b as u8).collect();
+    write_keylog_entry("CLIENT_HANDSHAKE_TRAFFIC_SECRET", &client_random_u8, &secret_u8);
     0
 }
 
@@ -186,25 +189,28 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         timing.traffic_secret_update = get_timestamp_ms();
     }
 
-    let client_random_len = match env.get_array_length(client_random) {
+    let client_random_len = match env.get_array_length(&client_random) {
         Ok(len) => len as usize,
         Err(_) => return -1,
     };
-    let mut client_random_bytes = vec![0u8; client_random_len];
-    if let Err(_) = env.get_byte_array_region(client_random, 0, &mut client_random_bytes) {
+    let mut client_random_bytes = vec![0i8; client_random_len];
+    if let Err(_) = env.get_byte_array_region(&client_random, 0, &mut client_random_bytes) {
         return -1;
     }
 
-    let secret_len = match env.get_array_length(secret) {
+    let secret_len = match env.get_array_length(&secret) {
         Ok(len) => len as usize,
         Err(_) => return -1,
     };
-    let mut secret_bytes = vec![0u8; secret_len];
-    if let Err(_) = env.get_byte_array_region(secret, 0, &mut secret_bytes) {
+    let mut secret_bytes = vec![0i8; secret_len];
+    if let Err(_) = env.get_byte_array_region(&secret, 0, &mut secret_bytes) {
         return -1;
     }
 
-    write_keylog_entry("CLIENT_TRAFFIC_SECRET_0", &client_random_bytes, &secret_bytes);
+    // Convert i8 to u8 for keylog
+    let client_random_u8: Vec<u8> = client_random_bytes.iter().map(|&b| b as u8).collect();
+    let secret_u8: Vec<u8> = secret_bytes.iter().map(|&b| b as u8).collect();
+    write_keylog_entry("CLIENT_TRAFFIC_SECRET_0", &client_random_u8, &secret_u8);
     0
 }
 

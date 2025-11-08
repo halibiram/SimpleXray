@@ -216,7 +216,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     let rb = unsafe { &*(handle as *const RingBuffer) };
 
-    let array_length = match env.get_array_length(data) {
+    let array_length = match env.get_array_length(&data) {
         Ok(len) => len,
         Err(_) => {
             error!("Failed to get array length");
@@ -230,7 +230,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let mut src = match env.get_byte_array_elements(data, jni::objects::ReleaseMode::NoCopyBack) {
+    let mut src = match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
         Ok(elems) => elems,
         Err(_) => {
             error!("Failed to get byte array elements");
@@ -266,7 +266,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     let rb = unsafe { &*(handle as *const RingBuffer) };
 
-    let array_length = match env.get_array_length(data) {
+    let array_length = match env.get_array_length(&data) {
         Ok(len) => len,
         Err(_) => {
             error!("Failed to get array length");
@@ -280,7 +280,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let mut dst = match env.get_byte_array_elements(data, jni::objects::ReleaseMode::CopyBack) {
+    let mut dst = match env.get_array_elements(&data, jni::objects::ReleaseMode::CopyBack) {
         Ok(elems) => elems,
         Err(_) => {
             error!("Failed to get byte array elements");

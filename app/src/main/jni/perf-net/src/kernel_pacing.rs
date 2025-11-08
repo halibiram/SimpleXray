@@ -25,7 +25,7 @@ struct PacingFIFO {
     running: Arc<std::sync::atomic::AtomicBool>,
 }
 
-static PACING_FIFOS: Mutex<HashMap<u64, Arc<Mutex<PacingFIFO>>>> = Mutex::new(HashMap::new());
+static PACING_FIFOS: Mutex<HashMap<u64, Arc<Mutex<PacingFIFO>>>> = Mutex::new(std::collections::HashMap::new());
 static NEXT_FIFO_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Initialize internal pacing FIFO
@@ -75,7 +75,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1; // Queue full
     }
 
-    let array_length = match env.get_array_length(data) {
+    let array_length = match env.get_array_length(&data) {
         Ok(len) => len,
         Err(_) => return -1,
     };
@@ -85,7 +85,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     let mut packet_data = vec![0u8; length as usize];
-    let src = match env.get_byte_array_elements(data, jni::objects::ReleaseMode::NoCopyBack) {
+    let src = match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
         Ok(elems) => elems,
         Err(_) => return -1,
     };

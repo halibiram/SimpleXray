@@ -16,9 +16,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use queue::PepperRingBuffer;
-use pacing::{PepperPacingState, PepperPacingParams, can_send, update_after_send, get_time_ns};
+use pacing::{PepperPacingState, PepperPacingParams};
 
 /// Shaper handle with ring buffers and pacing
+#[allow(dead_code)]
 struct PepperShaperHandle {
     read_fd: i32,
     write_fd: i32,

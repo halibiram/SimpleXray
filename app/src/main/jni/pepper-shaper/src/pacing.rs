@@ -8,14 +8,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Pacing parameters
 #[derive(Clone)]
 pub struct PepperPacingParams {
+    #[allow(dead_code)]
     pub target_rate_bps: u64,      // Target rate in bits per second (0 = unlimited)
     pub max_burst_bytes: u64,      // Maximum burst size in bytes
+    #[allow(dead_code)]
     pub loss_aware_backoff: bool,   // Enable loss-aware backoff
+    #[allow(dead_code)]
     pub enable_pacing: bool,        // Enable pacing
+    #[allow(dead_code)]
     pub min_pacing_interval_ns: u64, // Minimum interval between packets (nanoseconds)
 }
 
 /// Pacing state
+#[allow(dead_code)]
 pub struct PepperPacingState {
     next_send_time_ns: u64,    // Next allowed send time
     tokens: u64,                // Token bucket tokens
@@ -42,6 +47,7 @@ impl PepperPacingState {
 }
 
 /// Check if packet can be sent now (pacing gate)
+#[allow(dead_code)]
 pub fn can_send(
     state: &mut PepperPacingState,
     params: &PepperPacingParams,
@@ -84,6 +90,7 @@ pub fn can_send(
 }
 
 /// Update pacing state after sending
+#[allow(dead_code)]
 pub fn update_after_send(
     state: &mut PepperPacingState,
     params: &PepperPacingParams,
@@ -121,6 +128,7 @@ pub fn update_after_send(
 }
 
 /// Update loss and RTT estimates
+#[allow(dead_code)]
 pub fn update_metrics(state: &mut PepperPacingState, loss_rate: f32, rtt_ns: u64) {
     state.loss_rate = loss_rate;
     state.rtt_ns = rtt_ns;

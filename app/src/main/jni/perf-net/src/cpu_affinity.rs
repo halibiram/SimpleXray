@@ -23,8 +23,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut cpus_set = 0;
 
     // Convert bitmask to CpuSet
+    let cpu_mask_u64 = cpu_mask as u64;
     for i in 0..cpu_count.min(64) {
-        if cpu_mask & (1u64 << i) != 0 {
+        if cpu_mask_u64 & (1u64 << i) != 0 {
             if let Err(e) = cpuset.set(i) {
                 error!("Failed to set CPU {}: {}", i, e);
                 return -1;

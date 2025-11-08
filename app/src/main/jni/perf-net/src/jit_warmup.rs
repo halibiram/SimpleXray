@@ -29,7 +29,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // Prefetch some memory to warm up cache
     unsafe {
         let layout = Layout::from_size_align(4096, 64).unwrap();
-        if let Ok(ptr) = alloc(layout).as_mut() {
+        let ptr = alloc(layout);
+        if !ptr.is_null() {
             for i in (0..4096).step_by(64) {
                 std::ptr::read_volatile(ptr.add(i));
             }
@@ -74,6 +75,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     debug!("CPU boost not available (requires root)");
     -1 // Not critical if it fails
 }
+
 
 
 

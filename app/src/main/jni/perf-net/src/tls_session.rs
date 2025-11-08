@@ -72,12 +72,12 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     host: JString,
     ticket_data: JByteArray,
 ) -> jint {
-    let host_str = match env.get_string(host) {
+    let host_str = match env.get_string(&host) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => return -1,
     };
 
-    let ticket_len = match env.get_array_length(ticket_data) {
+    let ticket_len = match env.get_array_length(&ticket_data) {
         Ok(len) => len as usize,
         Err(_) => return -1,
     };
@@ -86,8 +86,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let mut bytes = vec![0u8; ticket_len];
-    if let Err(_) = env.get_byte_array_region(ticket_data, 0, &mut bytes) {
+    let mut bytes = vec![0i8; ticket_len];
+    if let Err(_) = env.get_byte_array_region(&ticket_data, 0, &mut bytes) {
         return -1;
     }
 
@@ -101,9 +101,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         remove_oldest_entry(&mut cache);
     }
 
-    // Store ticket
+    // Store ticket - convert i8 to u8
     let ticket = TlsSessionTicket {
-        ticket_data: bytes.clone(),
+        ticket_data: bytes.iter().map(|&b| b as u8).collect(),
         timestamp: get_current_time_ms(),
         ref_count: 1,
     };
@@ -121,7 +121,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
     host: JString,
 ) -> jbyteArray {
-    let host_str = match env.get_string(host) {
+    let host_str = match env.get_string(&host) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => return std::ptr::null_mut(),
     };
@@ -167,6 +167,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     cache.clear();
     debug!("TLS session cache cleared");
 }
+
 
 
 
