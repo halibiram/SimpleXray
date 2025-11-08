@@ -37,7 +37,7 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
     JNIEnv* env,
-    jclass clazz,
+    jclass /* clazz */,
     jstring server_host,
     jint server_port,
     jint congestion_control,
@@ -67,8 +67,8 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
  */
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeConnect(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong client_handle) {
 
     auto* client = reinterpret_cast<QuicheClient*>(client_handle);
@@ -84,8 +84,8 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeConnect(
  */
 JNIEXPORT void JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeDisconnect(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong client_handle) {
 
     auto* client = reinterpret_cast<QuicheClient*>(client_handle);
@@ -99,8 +99,8 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeDisconnect(
  */
 JNIEXPORT void JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeDestroy(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong client_handle) {
 
     auto* client = reinterpret_cast<QuicheClient*>(client_handle);
@@ -114,8 +114,8 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeDestroy(
  */
 JNIEXPORT jboolean JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeIsConnected(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong client_handle) {
 
     auto* client = reinterpret_cast<QuicheClient*>(client_handle);
@@ -134,7 +134,7 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeIsConnected(
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
     JNIEnv* env,
-    jclass clazz,
+    jclass /* clazz */,
     jlong client_handle,
     jbyteArray data) {
 
@@ -161,7 +161,7 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
 JNIEXPORT jdoubleArray JNICALL
 Java_com_simplexray_an_quiche_QuicheClient_nativeGetMetrics(
     JNIEnv* env,
-    jclass clazz,
+    jclass /* clazz */,
     jlong client_handle) {
 
     auto* client = reinterpret_cast<QuicheClient*>(client_handle);
@@ -194,8 +194,8 @@ Java_com_simplexray_an_quiche_QuicheClient_nativeGetMetrics(
  */
 JNIEXPORT jlong JNICALL
 Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeCreate(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jint tun_fd,
     jlong client_handle,
     jint batch_size,
@@ -229,8 +229,8 @@ Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeCreate(
  */
 JNIEXPORT jint JNICALL
 Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeStart(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong forwarder_handle) {
 
     auto* forwarder = reinterpret_cast<QuicheTunForwarder*>(forwarder_handle);
@@ -246,8 +246,8 @@ Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeStart(
  */
 JNIEXPORT void JNICALL
 Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeStop(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong forwarder_handle) {
 
     auto* forwarder = reinterpret_cast<QuicheTunForwarder*>(forwarder_handle);
@@ -261,8 +261,8 @@ Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeStop(
  */
 JNIEXPORT void JNICALL
 Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeDestroy(
-    JNIEnv* env,
-    jclass clazz,
+    JNIEnv* /* env */,
+    jclass /* clazz */,
     jlong forwarder_handle) {
 
     auto* forwarder = reinterpret_cast<QuicheTunForwarder*>(forwarder_handle);
@@ -279,7 +279,7 @@ Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeDestroy(
 JNIEXPORT jlongArray JNICALL
 Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeGetStats(
     JNIEnv* env,
-    jclass clazz,
+    jclass /* clazz */,
     jlong forwarder_handle) {
 
     auto* forwarder = reinterpret_cast<QuicheTunForwarder*>(forwarder_handle);
@@ -310,16 +310,16 @@ Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeGetStats(
 JNIEXPORT jbooleanArray JNICALL
 Java_com_simplexray_an_quiche_QuicheCrypto_nativeGetCapabilities(
     JNIEnv* env,
-    jclass clazz) {
+    jclass /* clazz */) {
 
     CryptoCapabilities caps = QuicheCrypto::GetCapabilities();
 
     jbooleanArray result = env->NewBooleanArray(4);
     jboolean values[4] = {
-        caps.has_aes_hardware ? JNI_TRUE : JNI_FALSE,
-        caps.has_pmull_hardware ? JNI_TRUE : JNI_FALSE,
-        caps.has_neon ? JNI_TRUE : JNI_FALSE,
-        caps.has_sha_hardware ? JNI_TRUE : JNI_FALSE
+        static_cast<jboolean>(caps.has_aes_hardware ? JNI_TRUE : JNI_FALSE),
+        static_cast<jboolean>(caps.has_pmull_hardware ? JNI_TRUE : JNI_FALSE),
+        static_cast<jboolean>(caps.has_neon ? JNI_TRUE : JNI_FALSE),
+        static_cast<jboolean>(caps.has_sha_hardware ? JNI_TRUE : JNI_FALSE)
     };
 
     env->SetBooleanArrayRegion(result, 0, 4, values);
@@ -331,8 +331,8 @@ Java_com_simplexray_an_quiche_QuicheCrypto_nativeGetCapabilities(
  */
 JNIEXPORT void JNICALL
 Java_com_simplexray_an_quiche_QuicheCrypto_nativePrintCapabilities(
-    JNIEnv* env,
-    jclass clazz) {
+    JNIEnv* /* env */,
+    jclass /* clazz */) {
 
     CryptoPerf::PrintCapabilities();
 }

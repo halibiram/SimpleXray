@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 #define LOG_TAG "TunForwarder"
 
@@ -234,12 +235,12 @@ void QuicheTunForwarder::ForwardingLoop() {
 
     // Prepare for batch receiving
     const size_t batch_size = config_.batch_size;
-    struct mmsghdr msgs[batch_size];
-    struct iovec iovecs[batch_size];
-    PacketBuffer* packets[batch_size];
+    std::vector<struct mmsghdr> msgs(batch_size);
+    std::vector<struct iovec> iovecs(batch_size);
+    std::vector<PacketBuffer*> packets(batch_size);
 
-    memset(msgs, 0, sizeof(msgs));
-    memset(iovecs, 0, sizeof(iovecs));
+    memset(msgs.data(), 0, msgs.size() * sizeof(msgs[0]));
+    memset(iovecs.data(), 0, iovecs.size() * sizeof(iovecs[0]));
 
     // Pre-allocate buffers for batch
     for (size_t i = 0; i < batch_size; i++) {
@@ -252,7 +253,7 @@ void QuicheTunForwarder::ForwardingLoop() {
         iovecs[i].iov_base = packets[i]->data;
         iovecs[i].iov_len = packets[i]->capacity;
 
-        msgs[i].msg_hdr.msg_iov = &iovecs[i];
+        msgs[i].msg_hdr.msg_iov = iovecs.data() + i;
         msgs[i].msg_hdr.msg_iovlen = 1;
     }
 
@@ -261,7 +262,7 @@ void QuicheTunForwarder::ForwardingLoop() {
 
     while (running_.load()) {
         // Receive batch of packets from TUN
-        int received = ReceiveTunPacketsBatch(msgs, batch_size);
+        int received = ReceiveTunPacketsBatch(msgs.data(), batch_size);
 
         if (received > 0) {
             // Update packet lengths
@@ -271,7 +272,7 @@ void QuicheTunForwarder::ForwardingLoop() {
             }
 
             // Process batch
-            ProcessPacketBatch(msgs, received);
+            ProcessPacketBatch(msgs.data(), received);
 
             // Update stats
             stats_.packets_received += received;

@@ -12,6 +12,8 @@
 #include <sys/time.h>
 #include <sys/mman.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <cstring>
 #include <cstdio>
 #include <cstdarg>
@@ -171,6 +173,7 @@ int NetUtils::SetNonBlocking(int sockfd) {
 }
 
 int NetUtils::GetMTU(const char* interface) {
+    (void)interface;  // Unused parameter
     // TODO: Implement via netlink or ioctl
     return 1500;  // Default MTU
 }

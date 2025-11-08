@@ -159,7 +159,8 @@ private:
     size_t key_len_ = 0;
 
     // Nonce counter (for automatic nonce generation)
-    uint64_t nonce_counter_ = 0;
+    // Note: Currently unused, reserved for future automatic nonce generation
+    [[maybe_unused]] uint64_t nonce_counter_ = 0;
 };
 
 /**

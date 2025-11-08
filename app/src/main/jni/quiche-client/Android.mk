@@ -125,7 +125,7 @@ ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
     LOCAL_CFLAGS += -march=armv8-a+crypto+aes+simd
     LOCAL_CFLAGS += -mtune=cortex-a76
     LOCAL_CFLAGS += -DOPENSSL_ARM_NEON
-    LOCAL_CFLAGS += -DOPENSSL_AARCH64
+    # OPENSSL_AARCH64 is defined by BoringSSL headers, don't redefine
 endif
 
 ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)

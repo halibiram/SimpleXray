@@ -15,6 +15,7 @@
 #include <sched.h>
 #include <cstring>
 #include <cstdio>
+#include <vector>
 
 #define LOG_TAG "QuicheClient"
 
@@ -269,16 +270,16 @@ int QuicheClient::Connect() {
     }
 
     // Send initial packet
-    uint8_t out[config_.max_udp_payload_size];
+    std::vector<uint8_t> out(config_.max_udp_payload_size);
     quiche_send_info send_info;
 
-    ssize_t written = quiche_conn_send(conn_, out, sizeof(out), &send_info);
+    ssize_t written = quiche_conn_send(conn_, out.data(), out.size(), &send_info);
     if (written < 0) {
         LOGE(LOG_TAG, "quiche_conn_send() failed: %zd", written);
         return -1;
     }
 
-    ssize_t sent = send(socket_fd_, out, written, 0);
+    ssize_t sent = send(socket_fd_, out.data(), written, 0);
     if (sent != written) {
         LOGE(LOG_TAG, "send() failed: %zd", sent);
         return -1;
@@ -345,19 +346,20 @@ ssize_t QuicheClient::Send(const uint8_t* data, size_t len) {
     }
 
     // Send via QUIC stream (stream ID 0)
-    ssize_t sent = quiche_conn_stream_send(conn_, 0, data, len, true);
+    uint64_t error_code = 0;
+    ssize_t sent = quiche_conn_stream_send(conn_, 0, data, len, true, &error_code);
     if (sent < 0) {
-        LOGE(LOG_TAG, "quiche_conn_stream_send() failed: %zd", sent);
+        LOGE(LOG_TAG, "quiche_conn_stream_send() failed: %zd, error: %llu", sent, (unsigned long long)error_code);
         return sent;
     }
 
     // Flush packets
-    uint8_t out[config_.max_udp_payload_size];
+    std::vector<uint8_t> out(config_.max_udp_payload_size);
     quiche_send_info send_info;
 
-    ssize_t written = quiche_conn_send(conn_, out, sizeof(out), &send_info);
+    ssize_t written = quiche_conn_send(conn_, out.data(), out.size(), &send_info);
     if (written > 0) {
-        send(socket_fd_, out, written, 0);
+        send(socket_fd_, out.data(), written, 0);
         metrics_.bytes_sent += written;
         metrics_.packets_sent++;
     }
@@ -400,7 +402,11 @@ ssize_t QuicheClient::Receive(uint8_t* buffer, size_t len) {
 
     // Read stream data
     bool fin = false;
-    ssize_t stream_recv = quiche_conn_stream_recv(conn_, 0, buffer, len, &fin);
+    uint64_t error_code = 0;
+    ssize_t stream_recv = quiche_conn_stream_recv(conn_, 0, buffer, len, &fin, &error_code);
+    if (stream_recv < 0 && error_code != 0) {
+        LOGE(LOG_TAG, "quiche_conn_stream_recv() error: %llu", (unsigned long long)error_code);
+    }
 
     return stream_recv;
 }
@@ -430,11 +436,11 @@ void QuicheClient::ProcessEvents() {
     }
 
     // Send pending packets
-    uint8_t out[config_.max_udp_payload_size];
+    std::vector<uint8_t> out(config_.max_udp_payload_size);
     quiche_send_info send_info;
 
     while (true) {
-        ssize_t written = quiche_conn_send(conn_, out, sizeof(out), &send_info);
+        ssize_t written = quiche_conn_send(conn_, out.data(), out.size(), &send_info);
         if (written == QUICHE_ERR_DONE) {
             break;
         }
@@ -443,7 +449,7 @@ void QuicheClient::ProcessEvents() {
             break;
         }
 
-        send(socket_fd_, out, written, 0);
+        send(socket_fd_, out.data(), written, 0);
     }
 }
 
@@ -452,9 +458,15 @@ QuicMetrics QuicheClient::GetMetrics() const {
         quiche_stats stats;
         quiche_conn_stats(conn_, &stats);
 
-        metrics_.rtt_us = stats.rtt;
-        metrics_.cwnd = stats.cwnd;
-        metrics_.bytes_in_flight = stats.delivery_rate;
+        // Get path stats for the first path (idx 0)
+        if (stats.paths_count > 0) {
+            quiche_path_stats path_stats;
+            if (quiche_conn_path_stats(conn_, 0, &path_stats) == 0) {
+                metrics_.rtt_us = path_stats.rtt;
+                metrics_.cwnd = path_stats.cwnd;
+                metrics_.bytes_in_flight = path_stats.delivery_rate;
+            }
+        }
     }
 
     return metrics_;
