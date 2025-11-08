@@ -234,7 +234,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Connect pooled socket
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocket(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     pool_type: jint,
     slot_index: jint,
@@ -321,7 +321,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         }
         Err(nix::errno::Errno::EINPROGRESS) => {
             slot.connected = false;
-            slot.remote_addr = host_str;
+            slot.remote_addr = host_str.clone();
             slot.remote_port = port as u16;
             debug!("Pooled socket connecting (non-blocking): {}:{}", host_str, port);
             0
@@ -336,7 +336,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Connect pooled socket by file descriptor
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeConnectPooledSocketByFd(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     pool_type: jint,
     fd: jint,
