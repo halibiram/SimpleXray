@@ -86,7 +86,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    // Use ring for AES-GCM encryption
+    // Use ring for AES-GCM encryption (following quiche-client pattern)
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr as *const u8, 16) };
     let unbound_key = match aead::UnboundKey::new(&aead::AES_128_GCM, key_bytes) {
         Ok(k) => k,
@@ -95,10 +95,6 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             return -1;
         }
     };
-
-    // Create nonce (in production, use proper nonce)
-    let nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
-    let sealing_key = aead::SealingKey::new(unbound_key, nonce);
 
     let input_slice = unsafe {
         std::slice::from_raw_parts(
@@ -114,12 +110,19 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         )
     };
 
-    // Copy input to output first
+    if output_slice.len() < input_len as usize + aead::AES_128_GCM.tag_len() {
+        error!("Output buffer too small");
+        return -1;
+    }
+
+    // Copy input to output first (seal_in_place expects plaintext at the start)
     output_slice[..input_len as usize].copy_from_slice(input_slice);
-    
-    // Seal in place - ring 0.17 API: seal_in_place(sealing_key, nonce, aad, in_out, in_prefix_len)
-    // Note: nonce must be recreated for each operation
+
+    // Create nonce and sealing key (nonce must be recreated for each operation)
     let nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
+    let sealing_key = aead::SealingKey::new(unbound_key, nonce);
+
+    // Seal in place - ring 0.17 API matches quiche-client usage
     match aead::seal_in_place(&sealing_key, nonce, aead::Aad::empty(), output_slice, input_len as usize) {
         Ok(tag_len) => {
             debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
