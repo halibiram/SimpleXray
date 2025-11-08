@@ -134,9 +134,10 @@ jobs:
         run: |
           if ! command -v cargo-ndk &> /dev/null; then
             echo "📦 Installing cargo-ndk..."
-            cargo install cargo-ndk
+            cargo install cargo-ndk --force
           else
-            echo "✅ cargo-ndk already installed"
+            echo "✅ cargo-ndk already installed, updating..."
+            cargo install cargo-ndk --force
             cargo-ndk --version
           fi
 
