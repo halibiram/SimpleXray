@@ -7,6 +7,9 @@ on:
       - "app/src/main/jni/**/*.rs"
       - "app/src/main/jni/**/Cargo.toml"
       - "app/src/main/jni/**/Cargo.lock"
+      - "rush.json"
+      - "common/config/rush/**"
+      - "**/rush.json"
       - ".github/workflows/rust-build.yml"
   pull_request:
     branches: [main, master, develop]
@@ -14,6 +17,9 @@ on:
       - "app/src/main/jni/**/*.rs"
       - "app/src/main/jni/**/Cargo.toml"
       - "app/src/main/jni/**/Cargo.lock"
+      - "rush.json"
+      - "common/config/rush/**"
+      - "**/rush.json"
       - ".github/workflows/rust-build.yml"
   workflow_dispatch:
 
