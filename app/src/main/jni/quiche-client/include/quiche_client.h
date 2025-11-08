@@ -214,7 +214,7 @@ private:
     std::unique_ptr<QuicheCrypto> crypto_;
 
     // Connection ID
-    uint8_t scid_[quiche::MAX_CONN_ID_LEN];
+    uint8_t scid_[QUICHE_MAX_CONN_ID_LEN];
     size_t scid_len_ = 0;
 };
 

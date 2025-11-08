@@ -242,7 +242,7 @@ int QuicheClient::Connect() {
     freeaddrinfo(res);
 
     // Generate connection ID
-    scid_len_ = quiche::MAX_CONN_ID_LEN;
+    scid_len_ = QUICHE_MAX_CONN_ID_LEN;
     for (size_t i = 0; i < scid_len_; i++) {
         scid_[i] = rand() % 256;
     }
