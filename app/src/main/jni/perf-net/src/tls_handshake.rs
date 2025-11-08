@@ -27,17 +27,10 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 ) -> jlong {
     // Create rustls client config
     // rustls 0.23 uses with_root_certificates instead of with_safe_defaults
-    let mut crypto = match RustlsClientConfig::builder()
+    let mut crypto = RustlsClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification::new(true, true, None)))
-        .with_no_client_auth()
-    {
-        Ok(c) => c,
-        Err(_) => {
-            error!("Failed to create rustls client config");
-            return 0;
-        }
-    };
+        .with_no_client_auth();
 
     // Set ALPN for Chrome mobile (h2 first, then http/1.1)
     crypto.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
@@ -85,7 +78,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Set SNI (Server Name Indication)
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeSetSNI(
-    _env: JNIEnv,
+    mut _env: JNIEnv,
     _class: JClass,
     ssl_ptr: jlong,
     hostname: JString,

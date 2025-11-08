@@ -10,7 +10,7 @@ use mio::{Events, Poll, Token, Interest};
 use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::Mutex;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::RawFd;
 use log::{debug, error};
 
 const MAX_EVENTS: usize = 256;
@@ -155,7 +155,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut ctx = ctx.lock();
     let fd = fd as RawFd;
 
-    if let Some(token) = ctx.registered_fds.remove(&fd) {
+    if let Some(_token) = ctx.registered_fds.remove(&fd) {
         use mio::unix::SourceFd;
         let mut source_fd = SourceFd(&fd);
         match ctx.poll.registry().deregister(&mut source_fd) {
@@ -222,7 +222,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
                 };
 
                 let nfds = nfds.min(size as usize);
-                let mut arr = unsafe { match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
+                let arr = unsafe { match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
                     Ok(a) => a,
                     Err(_) => {
                         error!("Failed to get array elements");

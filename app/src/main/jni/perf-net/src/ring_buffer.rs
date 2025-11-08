@@ -202,7 +202,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Write to ring buffer (lock-free)
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeRingBufferWrite(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     data: JByteArray,
@@ -230,11 +230,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let mut src = match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
-        Ok(elems) => elems,
-        Err(_) => {
-            error!("Failed to get byte array elements");
-            return -1;
+    let src = unsafe {
+        match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
+            Ok(elems) => elems,
+            Err(_) => {
+                error!("Failed to get byte array elements");
+                return -1;
+            }
         }
     };
 
@@ -252,7 +254,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Read from ring buffer (lock-free)
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeRingBufferRead(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     data: JByteArray,
@@ -280,11 +282,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let mut dst = match env.get_array_elements(&data, jni::objects::ReleaseMode::CopyBack) {
-        Ok(elems) => elems,
-        Err(_) => {
-            error!("Failed to get byte array elements");
-            return -1;
+    let dst = unsafe {
+        match env.get_array_elements(&data, jni::objects::ReleaseMode::CopyBack) {
+            Ok(elems) => elems,
+            Err(_) => {
+                error!("Failed to get byte array elements");
+                return -1;
+            }
         }
     };
 

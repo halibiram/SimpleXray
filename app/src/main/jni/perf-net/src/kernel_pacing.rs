@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use std::collections::{VecDeque, HashMap};
 use std::thread;
 use std::time::{Duration, Instant};
-use log::{debug, error};
+use log::debug;
 
 struct PacingPacket {
     data: Vec<u8>,
@@ -53,7 +53,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Enqueue packet for pacing
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeEnqueuePacket(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     fd: jint,
@@ -86,9 +86,11 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     let mut packet_data = vec![0u8; length as usize];
-    let src = match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
-        Ok(elems) => elems,
-        Err(_) => return -1,
+    let src = unsafe {
+        match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
+            Ok(elems) => elems,
+            Err(_) => return -1,
+        }
     };
 
     unsafe {

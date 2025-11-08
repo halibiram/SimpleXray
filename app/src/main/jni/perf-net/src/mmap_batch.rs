@@ -7,10 +7,9 @@ use jni::JNIEnv;
 use jni::objects::{JClass, JLongArray};
 use jni::sys::{jint, jlong};
 use log::debug;
-use nix::sys::mman::{mmap, munmap, MapFlags, ProtFlags};
+use nix::sys::mman::{munmap, ProtFlags};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::ptr;
 
 struct MappedRegion {
     ptr: *mut libc::c_void,
@@ -81,7 +80,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             let mut regions = batch.mapped_regions.lock();
             let mut total = batch.total_mapped.lock();
             // Convert NonNull to *mut for storage
-            let addr_ptr = addr.as_ptr();
+            let addr_ptr = addr.as_ptr() as *mut libc::c_void;
             regions.insert(addr_ptr, size);
             *total += size;
             debug!("Mapped {} bytes, total: {}", size, *total);
@@ -94,7 +93,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Batch unmap memory regions
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeBatchUnmap(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     addresses: JLongArray,
@@ -120,13 +119,16 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let addrs = match env.get_array_elements(&addresses, jni::objects::ReleaseMode::NoCopyBack) {
-        Ok(arr) => arr,
-        Err(_) => return -1,
+    let addrs = unsafe {
+        match env.get_array_elements(&addresses, jni::objects::ReleaseMode::NoCopyBack) {
+            Ok(arr) => arr,
+            Err(_) => return -1,
+        }
     };
 
-    let lens = match env.get_array_elements(&sizes, jni::objects::ReleaseMode::NoCopyBack) {
-        Ok(arr) => arr,
+    let lens = unsafe {
+        match env.get_array_elements(&sizes, jni::objects::ReleaseMode::NoCopyBack) {
+            Ok(arr) => arr,
         Err(_) => {
             drop(addrs);
             return -1;

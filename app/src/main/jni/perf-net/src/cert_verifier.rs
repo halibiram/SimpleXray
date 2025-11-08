@@ -89,7 +89,7 @@ struct VerifyContext {
 /// Create certificate verifier context
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeCreateCertVerifier(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     allow_hostname_mismatch: jboolean,
     bypass_pinning: jboolean,

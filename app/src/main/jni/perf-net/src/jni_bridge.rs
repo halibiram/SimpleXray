@@ -3,7 +3,6 @@
  * Main entry point for Java/Kotlin integration
  */
 
-use jni::JNIEnv;
 use jni::JavaVM;
 use jni::sys::{jint, JNI_VERSION_1_6};
 use log::info;

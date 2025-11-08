@@ -8,12 +8,13 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JString, JLongArray, JByteArray};
+use jni::objects::{JClass, JString, JByteArray};
 use jni::sys::{jint, jlong, jlongArray};
 use log::{debug, error};
 use parking_lot::Mutex;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use hashbrown::HashMap;
 
@@ -94,6 +95,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
     filepath: JString,
 ) -> jint {
+    let mut env = env;
     let path = match env.get_string(&filepath) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => {

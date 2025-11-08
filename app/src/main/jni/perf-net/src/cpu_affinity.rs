@@ -98,7 +98,6 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
 ) -> jint {
     use std::fs;
-    use std::io::Write;
 
     // Try to write to scaling_governor (usually requires root)
     let path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor";

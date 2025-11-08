@@ -6,7 +6,7 @@
 use jni::JNIEnv;
 use jni::objects::{JClass, JByteArray, JString};
 use jni::sys::{jint, jbyteArray};
-use log::{debug, warn};
+use log::debug;
 use parking_lot::Mutex;
 use hashbrown::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -117,7 +117,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Get TLS session ticket
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeGetTLSTicket(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     host: JString,
 ) -> jbyteArray {
@@ -149,7 +149,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         Ok(result) => {
             // Convert Vec<u8> to &[i8] for JNI
             let ticket_data_i8: Vec<i8> = ticket.ticket_data.iter().map(|&b| b as i8).collect();
-            if let Err(_) = env.set_byte_array_region(result, 0, &ticket_data_i8) {
+            if let Err(_) = env.set_byte_array_region(&result, 0, &ticket_data_i8) {
                 return std::ptr::null_mut();
             }
             debug!("Retrieved TLS ticket for {}", host_str);

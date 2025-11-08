@@ -5,17 +5,14 @@
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jlong};
-use std::sync::Arc;
+use jni::sys::jint;
 use parking_lot::Mutex;
-use std::collections::HashMap;
-use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol, connect, setsockopt, sockopt};
+use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol, connect, setsockopt};
 use nix::sys::socket::sockopt::{ReuseAddr, KeepAlive};
 use nix::unistd::close;
 use std::os::unix::io::RawFd;
 use std::os::fd::{AsRawFd, BorrowedFd};
-use std::net::{SocketAddr, Ipv4Addr};
-use std::str::FromStr;
+use std::net::Ipv4Addr;
 use log::{debug, error};
 
 const MAX_POOL_SIZE: usize = 16;
@@ -309,12 +306,12 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     // Convert to nix::SockaddrIn for connect
     use nix::sys::socket::SockaddrIn;
-    use nix::sys::socket::InetAddr;
-    let inet_addr = InetAddr::new(ip_addr, port as u16);
-    let sockaddr = SockaddrIn::new(inet_addr);
+    let octets = ip_addr.octets();
+    let sockaddr = SockaddrIn::new(octets[0], octets[1], octets[2], octets[3], port as u16);
 
-    // connect expects RawFd, not BorrowedFd
-    match connect(fd, &sockaddr) {
+    // connect expects RawFd
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+    match connect(borrowed_fd, &sockaddr) {
         Ok(_) => {
             slot.connected = true;
             slot.remote_addr = host_str;
@@ -381,10 +378,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     };
 
     // Convert to nix::SockaddrIn for connect
-    use nix::sys::socket::{SockaddrIn, InetAddr};
-    use std::os::fd::BorrowedFd;
-    let inet_addr = InetAddr::new(ip_addr, port as u16);
-    let sockaddr = SockaddrIn::new(inet_addr);
+    use nix::sys::socket::SockaddrIn;
+    let octets = ip_addr.octets();
+    let sockaddr = SockaddrIn::new(octets[0], octets[1], octets[2], octets[3], port as u16);
 
     // Convert RawFd to BorrowedFd for connect
     let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd as RawFd) };

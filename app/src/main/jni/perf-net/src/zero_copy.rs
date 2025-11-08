@@ -21,7 +21,7 @@ static ZEROCOPY_SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new(
 /// Check if MSG_ZEROCOPY is supported by the kernel
 fn check_zerocopy_support() -> bool {
     *ZEROCOPY_SUPPORTED.get_or_init(|| {
-        use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol, setsockopt, sockopt};
+        use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol};
         
         let test_fd = match socket(
             AddressFamily::Inet,
@@ -279,13 +279,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         };
 
         // Convert JObject to JByteBuffer
-        let buffer_byte = match JByteBuffer::from(buffer) {
-            Ok(buf) => buf,
-            Err(_) => {
-                error!("Not a direct buffer at index {}", i);
-                return -1;
-            }
-        };
+        let buffer_byte = JByteBuffer::from(buffer);
 
         let buf_ptr = match env.get_direct_buffer_address(&buffer_byte) {
             Ok(ptr) => {
@@ -352,17 +346,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         Err(_) => return ptr::null_mut(),
     };
 
-    let allocate_direct_method = match env.get_static_method_id(
-        byte_buffer_class,
-        "allocateDirect",
-        "(I)Ljava/nio/ByteBuffer;",
-    ) {
-        Ok(mid) => mid,
-        Err(_) => return ptr::null_mut(),
-    };
-
     match env.call_static_method(
-        &byte_buffer_class,
+        byte_buffer_class,
         "allocateDirect",
         "(I)Ljava/nio/ByteBuffer;",
         &[jni::objects::JValue::Int(capacity)],

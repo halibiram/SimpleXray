@@ -218,7 +218,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 ) -> jint {
     let fd = fd as RawFd;
 
-    let keepalive: i32 = 1;
+    let keepalive: bool = true;
     let keepidle: i32 = 60;    // 60 seconds before first probe
     let keepintvl: i32 = 10;   // 10 seconds between probes
     let keepcnt: i32 = 3;      // 3 probes before timeout

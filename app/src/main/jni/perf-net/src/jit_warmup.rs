@@ -4,8 +4,8 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JByteArray};
-use jni::sys::{jint, jlong};
+use jni::objects::JClass;
+use jni::sys::jint;
 use log::{debug, warn};
 use std::alloc::{alloc, Layout};
 

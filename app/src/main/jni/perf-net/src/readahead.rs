@@ -67,7 +67,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let (flags, was_nonblocking) = {
         #[cfg(target_os = "android")]
         {
-            use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
+            use libc::{fcntl, F_GETFL, O_NONBLOCK};
             let flags = unsafe { fcntl(fd, F_GETFL) };
             if flags < 0 {
                 error!("Failed to get socket flags");

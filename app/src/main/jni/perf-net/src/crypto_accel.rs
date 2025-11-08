@@ -4,8 +4,8 @@
  */
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JByteArray, JByteBuffer};
-use jni::sys::{jboolean, jint, jobject};
+use jni::objects::{JClass, JObject, JByteBuffer};
+use jni::sys::{jboolean, jint};
 use ring::aead::{self, Aad};
 use log::{debug, error};
 
@@ -148,13 +148,21 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
     
     // Ring 0.17 API: seal_in_place_append_tag
-    // Pass only the plaintext part, it will append the tag
-    let plaintext_slice = &mut output_slice[..input_len as usize];
-    match key.seal_in_place_append_tag(nonce, Aad::empty(), plaintext_slice) {
+    // Need to use Vec since seal_in_place_append_tag requires Extend trait
+    let mut plaintext_vec: Vec<u8> = output_slice[..input_len as usize].to_vec();
+    match key.seal_in_place_append_tag(nonce, Aad::empty(), &mut plaintext_vec) {
         Ok(_) => {
             let tag_len = aead::AES_128_GCM.tag_len();
-            debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
-            (input_len + tag_len as jint) as jint
+            let total_len = plaintext_vec.len();
+            // Copy back to output buffer
+            if total_len <= output_slice.len() {
+                output_slice[..total_len].copy_from_slice(&plaintext_vec);
+                debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
+                total_len as jint
+            } else {
+                error!("Output buffer too small after encryption");
+                -1
+            }
         }
         Err(_) => {
             error!("AES-128-GCM encrypt failed");
