@@ -609,10 +609,29 @@ jobs:
             exit 1
           }
           echo "✅ Build completed"
+          
+          # Verify APK was actually generated
+          echo "📋 Verifying APK was generated..."
+          APK_EXISTS=false
+          if [ -f "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" ]; then
+            APK_EXISTS=true
+            APK_SIZE=$(stat -c%s "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" 2>/dev/null || echo "0")
+            APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
+            echo "✅ APK found: simplexray-arm64-v8a.apk (${APK_SIZE_MB}MB)"
+          else
+            echo "❌ APK not found at expected location: app/build/outputs/apk/release/simplexray-arm64-v8a.apk"
+            echo "📁 Searching for APKs in build directory:"
+            find app/build -name "*.apk" -type f 2>/dev/null | head -10 || echo "  No APKs found"
+            echo "📁 Build output structure:"
+            ls -la app/build/outputs/apk/ 2>/dev/null || echo "  app/build/outputs/apk/ does not exist"
+            ls -la app/build/outputs/ 2>/dev/null || echo "  app/build/outputs/ does not exist"
+            echo "❌ Build completed but APK was not generated!"
+            exit 1
+          fi
 
           # Verify string resources are included
-          echo "📋 Verifying string resources in APK..."
-          if [ -f "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" ]; then
+          if [ "$APK_EXISTS" = true ]; then
+            echo "📋 Verifying string resources in APK..."
             unzip -q -o app/build/outputs/apk/release/simplexray-arm64-v8a.apk -d /tmp/apk-check
             if [ -f "/tmp/apk-check/res/values/strings.xml" ] || [ -f "/tmp/apk-check/resources.arsc" ]; then
               echo "✅ String resources found in APK"
@@ -624,19 +643,47 @@ jobs:
               echo "⚠️  Warning: String resources may not be included in APK"
             fi
             rm -rf /tmp/apk-check
-          else
-            echo "⚠️  APK not found at expected location"
-            echo "📁 Available APKs:"
-            find app/build/outputs/apk -name "*.apk" -type f || echo "No APKs found"
           fi
 
       - name: Find and Copy APKs
         if: steps.check_tag.outputs.exists == 'false'
         run: |
+          echo "🔍 Searching for APK files..."
           mkdir -p release-artifacts
-          find app/build -name "*.apk" -type f -exec cp {} release-artifacts/ \;
-          echo "=== APKs copied to release-artifacts/ ==="
-          ls -lah release-artifacts/
+          
+          # Search in multiple possible locations
+          APK_FOUND=false
+          
+          # Check the expected location first
+          if [ -f "app/build/outputs/apk/release/simplexray-arm64-v8a.apk" ]; then
+            cp app/build/outputs/apk/release/simplexray-arm64-v8a.apk release-artifacts/
+            echo "✅ Found APK at expected location"
+            APK_FOUND=true
+          fi
+          
+          # Also search for any APK files
+          APK_COUNT=$(find app/build -name "*.apk" -type f 2>/dev/null | wc -l)
+          if [ "$APK_COUNT" -gt 0 ]; then
+            echo "📦 Found $APK_COUNT APK file(s):"
+            find app/build -name "*.apk" -type f -exec ls -lh {} \;
+            find app/build -name "*.apk" -type f -exec cp {} release-artifacts/ \;
+            APK_FOUND=true
+          else
+            echo "⚠️  No APK files found in app/build"
+            echo "📁 Checking build output directories:"
+            ls -la app/build/outputs/apk/ 2>/dev/null || echo "  app/build/outputs/apk/ does not exist"
+            ls -la app/build/outputs/ 2>/dev/null || echo "  app/build/outputs/ does not exist"
+            ls -la app/build/ 2>/dev/null || echo "  app/build/ does not exist"
+          fi
+          
+          echo "=== APKs in release-artifacts/ ==="
+          ls -lah release-artifacts/ || echo "⚠️  release-artifacts/ is empty"
+          
+          if [ "$APK_FOUND" = false ]; then
+            echo "❌ ERROR: No APK files found after build!"
+            echo "This indicates the build may have failed or APK generation was skipped."
+            exit 1
+          fi
 
       - name: Create Release
         if: steps.check_tag.outputs.exists == 'false'
