@@ -44,56 +44,75 @@ jobs:
           echo "📦 Initializing QUICHE submodule with all nested submodules..."
           QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
           
+          # First, ensure the parent directory exists
+          mkdir -p "$(dirname "$QUICHE_DIR")"
+          
           # Initialize QUICHE submodule recursively to get BoringSSL and other deps
           echo "📥 Initializing QUICHE submodule recursively..."
           git submodule sync --recursive || true
-          git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || true
-          
-          # If submodule doesn't exist, clone it manually with all submodules
-          if [ ! -d "$QUICHE_DIR" ] || [ ! -f "$QUICHE_DIR/.git" ]; then
-            echo "⚠️  QUICHE submodule not found, cloning manually with submodules..."
-            mkdir -p "$(dirname "$QUICHE_DIR")"
+          git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || {
+            echo "⚠️  Submodule update failed, trying manual clone..."
+            # If submodule update fails, clone manually
+            if [ -d "$QUICHE_DIR" ]; then
+              rm -rf "$QUICHE_DIR"
+            fi
             git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
               echo "❌ Failed to clone QUICHE"
               exit 1
             }
-          else
-            # Ensure nested submodules are initialized
-            cd "$QUICHE_DIR"
-            git submodule update --init --recursive || {
-              echo "⚠️  Failed to initialize nested submodules, trying manual clone..."
-              cd "$(dirname "$QUICHE_DIR")"
-              rm -rf "$QUICHE_DIR"
-              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
-                echo "❌ Failed to clone QUICHE with submodules"
-                exit 1
-              }
-            }
+          }
+          
+          # Verify QUICHE directory exists
+          if [ ! -d "$QUICHE_DIR" ]; then
+            echo "❌ QUICHE directory does not exist after initialization"
+            echo "📁 Parent directory contents:"
+            ls -la "$(dirname "$QUICHE_DIR")" || echo "Parent directory does not exist"
+            exit 1
           fi
+          
+          # Ensure we're in the repo root for submodule operations
+          cd "$QUICHE_DIR"
+          
+          # Ensure nested submodules are initialized (especially BoringSSL)
+          echo "📥 Initializing nested submodules..."
+          git submodule update --init --recursive || {
+            echo "⚠️  Nested submodule update failed, trying to fix..."
+            # Try to initialize BoringSSL specifically
+            if [ -f ".gitmodules" ]; then
+              git submodule sync --recursive
+              git submodule update --init --recursive
+            fi
+          }
+          
+          # Go back to repo root
+          cd "$GITHUB_WORKSPACE"
           
           # Verify QUICHE structure
           if [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
             echo "✅ QUICHE structure verified"
             echo "📁 QUICHE directory: $QUICHE_DIR"
-            ls -la "$QUICHE_DIR/quiche/" | head -10
+            echo "📁 QUICHE contents:"
+            ls -la "$QUICHE_DIR" | head -15
             
             # Verify BoringSSL submodule exists (required for QUICHE build)
             if [ -d "$QUICHE_DIR/quiche/deps/boringssl" ] && [ -f "$QUICHE_DIR/quiche/deps/boringssl/CMakeLists.txt" ]; then
-              echo "✅ BoringSSL submodule found"
+              echo "✅ BoringSSL submodule found and initialized"
+              echo "📁 BoringSSL CMakeLists.txt exists"
             else
-              echo "⚠️  BoringSSL submodule missing, initializing..."
-              cd "$QUICHE_DIR"
-              git submodule update --init --recursive quiche/deps/boringssl || {
-                echo "❌ Failed to initialize BoringSSL submodule"
-                echo "📁 Contents of quiche/deps:"
-                ls -la quiche/deps/ 2>/dev/null || echo "deps directory does not exist"
-                exit 1
-              }
+              echo "⚠️  BoringSSL submodule missing or incomplete"
+              echo "📁 Contents of $QUICHE_DIR/quiche/deps:"
+              ls -la "$QUICHE_DIR/quiche/deps/" 2>/dev/null || echo "deps directory does not exist"
+              echo "📁 Contents of $QUICHE_DIR/quiche:"
+              ls -la "$QUICHE_DIR/quiche/" 2>/dev/null || echo "quiche directory does not exist"
+              echo "❌ BoringSSL is required for QUICHE build"
+              exit 1
             fi
           else
-            echo "❌ QUICHE structure invalid"
+            echo "❌ QUICHE structure invalid - quiche/Cargo.toml not found"
             echo "📁 Contents of $QUICHE_DIR:"
-            ls -la "$QUICHE_DIR" || echo "Directory does not exist"
+            ls -la "$QUICHE_DIR" || echo "QUICHE directory does not exist"
+            echo "📁 Looking for Cargo.toml files:"
+            find "$QUICHE_DIR" -name "Cargo.toml" -type f 2>/dev/null | head -5 || echo "No Cargo.toml files found"
             exit 1
           fi
 
