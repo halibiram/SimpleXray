@@ -129,9 +129,10 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let lens = unsafe {
         match env.get_array_elements(&sizes, jni::objects::ReleaseMode::NoCopyBack) {
             Ok(arr) => arr,
-        Err(_) => {
-            drop(addrs);
-            return -1;
+            Err(_) => {
+                drop(addrs);
+                return -1;
+            }
         }
     };
 
