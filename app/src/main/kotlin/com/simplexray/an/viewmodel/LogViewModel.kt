@@ -285,9 +285,10 @@ class LogViewModel(application: Application) :
                 }
 
                 // Read logcat with threadtime format for better categorization
-                val process = Runtime.getRuntime().exec(
-                    arrayOf("logcat", "-v", "threadtime", "*:V")
-                )
+                // Use ProcessBuilder for better error handling
+                val processBuilder = ProcessBuilder("logcat", "-v", "threadtime", "*:V")
+                processBuilder.redirectErrorStream(true)
+                val process = processBuilder.start()
                 logcatProcess = process
 
                 val reader = process.inputStream.bufferedReader()
@@ -295,22 +296,57 @@ class LogViewModel(application: Application) :
 
                 try {
                     reader.use { bufferedReader ->
+                        var updateCounter = 0
                         while (isActive) {
                             val line = bufferedReader.readLine() ?: break
                             if (!isActive) break
                             
-                            // Add all log entries - filtering by level will be done in UI
                             // Skip empty lines
-                            if (line.trim().isNotEmpty()) {
-                                systemLogsList.add(0, line)
-                                // Keep only last 1000 lines
-                                if (systemLogsList.size > 1000) {
-                                    systemLogsList.removeAt(systemLogsList.lastIndex)
-                                }
+                            if (line.trim().isEmpty()) {
+                                continue
+                            }
+                            
+                            // Filter out touch/input events and other noise
+                            val upperLine = line.uppercase()
+                            val shouldSkip = upperLine.contains("ONTOUCHEVENT", ignoreCase = true) ||
+                                    upperLine.contains("ACTION_DOWN", ignoreCase = true) ||
+                                    upperLine.contains("ACTION_UP", ignoreCase = true) ||
+                                    upperLine.contains("ACTION_MOVE", ignoreCase = true) ||
+                                    upperLine.contains("TOUCHEVENT", ignoreCase = true) ||
+                                    upperLine.contains("TOUCH EVENT", ignoreCase = true) ||
+                                    upperLine.contains("DISPATCHTOUCHEVENT", ignoreCase = true) ||
+                                    upperLine.contains("NAVSTUBVIEW", ignoreCase = true) ||
+                                    upperLine.contains("GESTURESTUBVIEW", ignoreCase = true) ||
+                                    upperLine.contains("SHORTCUTICON", ignoreCase = true) ||
+                                    upperLine.contains("TASKSTACKVIEWTOUCHHANDLER", ignoreCase = true) ||
+                                    upperLine.contains("SWIPEDETECTOR", ignoreCase = true) ||
+                                    upperLine.contains("DIGESTGENERATOR", ignoreCase = true) ||
+                                    (upperLine.contains("VIEW") && upperLine.contains("ONTOUCH", ignoreCase = true))
+                            
+                            if (shouldSkip) {
+                                continue
+                            }
+                            
+                            // Add log entry
+                            systemLogsList.add(0, line)
+                            // Keep only last 2000 lines for better performance
+                            if (systemLogsList.size > 2000) {
+                                systemLogsList.removeAt(systemLogsList.lastIndex)
+                            }
+                            
+                            // Update UI every 10 lines to improve performance
+                            updateCounter++
+                            if (updateCounter >= 10) {
+                                updateCounter = 0
                                 withContext(Dispatchers.Main) {
                                     _systemLogEntries.value = systemLogsList.toList()
                                 }
                             }
+                        }
+                        
+                        // Final update
+                        withContext(Dispatchers.Main) {
+                            _systemLogEntries.value = systemLogsList.toList()
                         }
                     }
                 } catch (e: CancellationException) {

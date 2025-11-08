@@ -469,24 +469,6 @@ tasks.register("buildRustModules") {
         println("   NDK: ${ndkPath}")
         println("   Platform: ${androidPlatform}")
         
-        // Check if we should use WSL for modules that require CMake (perf-net, quiche-client)
-        def useWSL = false
-        def wslAvailable = false
-        if (System.getProperty("os.name").toLowerCase().contains("windows")) {
-            try {
-                def wslCheck = new ProcessBuilder("wsl", "-d", "Ubuntu", "--", "echo", "WSL_OK")
-                    .redirectErrorStream(true)
-                    .start()
-                def exitCode = wslCheck.waitFor()
-                if (exitCode == 0) {
-                    wslAvailable = true
-                    println("   ✅ WSL (Ubuntu) is available")
-                }
-            } catch (Exception e) {
-                // WSL not available
-            }
-        }
-        
         // Check if cargo-ndk is available (try multiple locations)
         def cargoNdkAvailable = false
         def foundCargoPath = null
@@ -522,26 +504,9 @@ tasks.register("buildRustModules") {
             }
         }
         
-        // Check WSL for cargo-ndk if Windows and not found locally
-        if (!cargoNdkAvailable && wslAvailable) {
-            try {
-                def wslCargoCheck = new ProcessBuilder("wsl", "-d", "Ubuntu", "--", "bash", "-c", "command -v cargo-ndk")
-                    .redirectErrorStream(true)
-                    .start()
-                def exitCode = wslCargoCheck.waitFor()
-                if (exitCode == 0) {
-                    cargoNdkAvailable = true
-                    useWSL = true
-                    println("   ✅ Found cargo-ndk in WSL")
-                }
-            } catch (Exception e) {
-                // WSL cargo-ndk not available
-            }
-        }
-        
         if (!cargoNdkAvailable) {
             def setupScript = System.getProperty("os.name").toLowerCase().contains("windows") 
-                ? "scripts\\setup-wsl.ps1" 
+                ? "scripts\\setup-rust.ps1" 
                 : "scripts/setup-rust.sh"
             throw new RuntimeException(
                 "❌ cargo-ndk is REQUIRED to build Rust modules!\n" +
@@ -549,8 +514,7 @@ tasks.register("buildRustModules") {
                 "   Rust MUST be used for this project. Please install Rust and cargo-ndk:\n" +
                 "\n" +
                 "   Quick setup:\n" +
-                "   - Windows:  .\\scripts\\setup-wsl.ps1 (recommended for perf-net/quiche-client)\n" +
-                "   - Windows:  .\\scripts\\setup-rust.ps1 (for simple modules only)\n" +
+                "   - Windows:  .\\scripts\\setup-rust.ps1\n" +
                 "   - Linux/Mac: ./scripts/setup-rust.sh\n" +
                 "\n" +
                 "   Manual setup:\n" +
@@ -569,16 +533,6 @@ tasks.register("buildRustModules") {
         // Use the found cargo path for building
         def cargoCommand = foundCargoPath ?: "cargo"
         
-        // Helper function to convert Windows path to WSL path
-        def toWSLPath = { String winPath ->
-            if (!System.getProperty("os.name").toLowerCase().contains("windows")) {
-                return winPath
-            }
-            // Convert C:\Users\... to /mnt/c/Users/...
-            def wslPath = winPath.replaceAll("^([A-Z]):", "/mnt/\$1").replace("\\", "/").toLowerCase()
-            return wslPath
-        }
-        
         rustModules.each { moduleName, config ->
             println("   Building ${moduleName}...")
             def moduleDir = file("src/main/jni/${moduleName}")
@@ -589,9 +543,6 @@ tasks.register("buildRustModules") {
                 println("   ⚠️  Module ${moduleName} not found, skipping")
                 return
             }
-            
-            // Determine if this module needs WSL (modules with CMake dependencies)
-            def needsWSL = (moduleName == "perf-net" || moduleName == "quiche-client") && useWSL && wslAvailable
             
             targets.each { target ->
                 def abi = abiMap[target]
@@ -607,45 +558,18 @@ tasks.register("buildRustModules") {
                 
                 // Build Rust library if not found
                 println("   🔨 Building ${moduleName} for ${target}...")
-                if (needsWSL) {
-                    println("   🐧 Using WSL for ${moduleName} (CMake dependencies)")
-                }
                 
-                def processBuilder
-                if (needsWSL) {
-                    // Build in WSL
-                    def wslModuleDir = toWSLPath(moduleDir.absolutePath)
-                    def wslNdkPath = toWSLPath(ndkPath)
-                    
-                    // Build command to run in WSL
-                    def buildCmd = """
-                        export ANDROID_NDK=${wslNdkPath} &&
-                        export ANDROID_NDK_HOME=${wslNdkPath} &&
-                        export NDK_HOME=${wslNdkPath} &&
-                        export ANDROID_PLATFORM=${androidPlatform} &&
-                        export ANDROID_ABI=${abi} &&
-                        export CMAKE_TOOLCHAIN_FILE=${wslNdkPath}/build/cmake/android.toolchain.cmake &&
-                        export CMAKE_GENERATOR=Ninja &&
-                        cd ${wslModuleDir} &&
-                        cargo ndk --target ${target} --platform ${androidPlatform} build --release
-                    """.trim().replaceAll("\n", " ").replaceAll(" +", " ")
-                    
-                    processBuilder = new ProcessBuilder("wsl", "-d", "Ubuntu", "--", "bash", "-c", buildCmd)
-                        .redirectErrorStream(true)
-                } else {
-                    // Build natively (Windows or Linux)
-                    processBuilder = new ProcessBuilder(cargoCommand, "ndk",
-                        "--target", target,
-                        "--platform", androidPlatform,
-                        "build",
-                        "--release")
-                        .directory(moduleDir)
-                        .redirectErrorStream(true)
-                }
+                // Build natively (Windows or Linux)
+                def processBuilder = new ProcessBuilder(cargoCommand, "ndk",
+                    "--target", target,
+                    "--platform", androidPlatform,
+                    "build",
+                    "--release")
+                    .directory(moduleDir)
+                    .redirectErrorStream(true)
                 
-                // Set up environment variables for cmake/NDK (only for native builds)
-                if (!needsWSL) {
-                    def env = processBuilder.environment()
+                // Set up environment variables for cmake/NDK
+                def env = processBuilder.environment()
                 env.put("ANDROID_NDK", ndkPath.toString())
                 env.put("ANDROID_NDK_HOME", ndkPath.toString())
                 env.put("NDK_HOME", ndkPath.toString())
@@ -746,7 +670,6 @@ tasks.register("buildRustModules") {
                         env.put("CMAKE_GENERATOR_" + targetEnv, generator ? generator.toString() : "Ninja")
                         println("   📝 Using CMAKE_TOOLCHAIN_FILE: ${toolchainFile.absolutePath}")
                     }
-                }
                 }
                 
                 def process = processBuilder.start()
