@@ -38,8 +38,7 @@ index 0000000..1111111
 +	}
 +	return NewGCM(block)
 +}
-+
-+diff --git a/common/crypto/cipher_nocgo.go b/common/crypto/cipher_nocgo.go
+diff --git a/common/crypto/cipher_nocgo.go b/common/crypto/cipher_nocgo.go
 new file mode 100644
 index 0000000..2222222
 --- /dev/null

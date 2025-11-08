@@ -38,8 +38,7 @@ index 0000000..5555555
 +		UseBoringSSL: true,
 +	}, nil
 +}
-+
-+diff --git a/common/crypto/x509_nocgo.go b/common/crypto/x509_nocgo.go
+diff --git a/common/crypto/x509_nocgo.go b/common/crypto/x509_nocgo.go
 new file mode 100644
 index 0000000..6666666
 --- /dev/null
