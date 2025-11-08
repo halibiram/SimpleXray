@@ -36,7 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
           fetch-depth: 1
 
       - name: Initialize QUICHE Submodule
@@ -47,9 +47,11 @@ jobs:
           # First, ensure the parent directory exists
           mkdir -p "$(dirname "$QUICHE_DIR")"
           
+          # Sync only the QUICHE submodule URL (skip problematic submodules)
+          git submodule sync app/src/main/jni/quiche-client/third_party/quiche || true
+          
           # Initialize QUICHE submodule recursively to get BoringSSL and other deps
           echo "📥 Initializing QUICHE submodule recursively..."
-          git submodule sync --recursive || true
           git submodule update --init --recursive app/src/main/jni/quiche-client/third_party/quiche || {
             echo "⚠️  Submodule update failed, trying manual clone..."
             # If submodule update fails, clone manually
