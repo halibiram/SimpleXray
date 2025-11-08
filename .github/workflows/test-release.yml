@@ -31,61 +31,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: false
-
-      - name: Initialize Valid Submodules
-        run: |
-          # Initialize required submodules
-          # Use --recursive to initialize nested submodules
-          git submodule sync || true
-
-          # Initialize hev-socks5-tunnel with nested submodules (yaml, lwip, hev-task-system)
-          git submodule update --init --recursive app/src/main/jni/hev-socks5-tunnel || true
-
-          # Initialize QUICHE submodule with nested submodules (BoringSSL)
-          # QUICHE headers are needed even if libraries are pre-built
-          echo "📦 Initializing QUICHE submodule..."
-          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
-
-          # Ensure parent directory exists
-          mkdir -p "$(dirname "$QUICHE_DIR")"
-
-          # Try submodule update first
-          if git submodule update --init --recursive "$QUICHE_DIR" 2>&1; then
-            echo "✅ QUICHE submodule updated via git submodule"
-          else
-            echo "⚠️  QUICHE submodule update failed, trying manual initialization..."
-            # Remove if exists but incomplete
-            if [ -d "$QUICHE_DIR" ] && [ ! -f "$QUICHE_DIR/.git" ]; then
-              echo "Removing incomplete QUICHE directory..."
-              rm -rf "$QUICHE_DIR"
-            fi
-            # Try manual clone if submodule update fails
-            if [ ! -d "$QUICHE_DIR" ]; then
-              echo "Cloning QUICHE repository manually..."
-              git clone --depth=1 --recursive https://github.com/cloudflare/quiche.git "$QUICHE_DIR" || {
-                echo "❌ Failed to initialize QUICHE submodule"
-                echo "This is non-fatal - build will continue without QUICHE support"
-                # Don't exit - build can continue without QUICHE
-              }
-            fi
-          fi
-
-          # Verify QUICHE submodule structure
-          if [ -d "$QUICHE_DIR/quiche" ] && [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
-            echo "✅ QUICHE submodule initialized correctly"
-            echo "   Path: $QUICHE_DIR"
-            echo "   Structure verified: quiche/Cargo.toml exists"
-          elif [ -d "$QUICHE_DIR" ]; then
-            echo "⚠️  QUICHE submodule directory exists but structure incomplete"
-            echo "   Contents:"
-            ls -la "$QUICHE_DIR" | head -10 || true
-            echo "   Build will continue but QUICHE support may be disabled"
-          else
-            echo "⚠️  QUICHE submodule not found - build will continue without QUICHE"
-          fi
-
-          echo "✅ Submodules initialized"
 
       - name: Setup GitHub CLI
         run: |
@@ -327,110 +272,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build BoringSSL for QUICHE
-        run: |
-          echo "🔨 Building BoringSSL for QUICHE..."
-          
-          # Get NDK path from Android SDK
-          NDK_HOME="$ANDROID_HOME/ndk/$(ls -1 $ANDROID_HOME/ndk | head -1)"
-          if [ ! -d "$NDK_HOME" ]; then
-            echo "❌ NDK not found at $NDK_HOME"
-            exit 1
-          fi
-          echo "Using NDK: $NDK_HOME"
-          
-          # Install build tools
-          sudo apt-get update
-          sudo apt-get install -y ninja-build cmake
-          
-          # BoringSSL path in QUICHE submodule
-          BORINGSSL_DIR="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl"
-          
-          if [ ! -d "$BORINGSSL_DIR" ]; then
-            echo "⚠️  BoringSSL directory not found at $BORINGSSL_DIR"
-            echo "   QUICHE build will be skipped"
-            exit 0
-          fi
-          
-          if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
-            echo "⚠️  BoringSSL CMakeLists.txt not found"
-            echo "   QUICHE build will be skipped"
-            exit 0
-          fi
-          
-          cd "$BORINGSSL_DIR"
-          
-          # Function to build BoringSSL for a specific ABI
-          build_boringssl() {
-            local ABI=$1
-            local TOOLCHAIN=$2
-            local CMAKE_ARCH=$3
-            
-            echo "Building BoringSSL for $ABI..."
-            
-            # Set up toolchain
-            TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-            export PATH=$TOOLCHAIN_DIR/bin:$PATH
-            export CC=$TOOLCHAIN-clang
-            export CXX=$TOOLCHAIN-clang++
-            export AR=$TOOLCHAIN_DIR/bin/llvm-ar
-            export RANLIB=$TOOLCHAIN_DIR/bin/llvm-ranlib
-            export ANDROID_NDK_HOME=$NDK_HOME
-            export ANDROID_NDK_ROOT=$NDK_HOME
-            
-            # Create build directory (Android.mk expects it at build/)
-            # Clean if exists to avoid stale builds
-            BUILD_DIR="build"
-            if [ -d "$BUILD_DIR" ]; then
-              echo "🧹 Cleaning existing build directory..."
-              rm -rf "$BUILD_DIR"
-            fi
-            mkdir -p "$BUILD_DIR"
-            cd "$BUILD_DIR"
-            
-            # Configure BoringSSL with CMake
-            cmake .. \
-              -DCMAKE_SYSTEM_NAME=Android \
-              -DCMAKE_SYSTEM_VERSION=24 \
-              -DCMAKE_ANDROID_ARCH_ABI=$CMAKE_ARCH \
-              -DCMAKE_ANDROID_NDK=$NDK_HOME \
-              -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DOPENSSL_SMALL=1 \
-              -DOPENSSL_NO_DEPRECATED=1 \
-              -DOPENSSL_NO_ASM=0 \
-              -DBUILD_SHARED_LIBS=OFF \
-              -GNinja
-            
-            # Build
-            ninja -j$(nproc) || {
-              echo "⚠️  BoringSSL build failed for $ABI"
-              cd ..
-              return 1
-            }
-            
-            # Verify libraries were created
-            if [ -f "crypto/libcrypto.a" ] && [ -f "ssl/libssl.a" ]; then
-              echo "✅ BoringSSL build complete for $ABI"
-              ls -lh crypto/libcrypto.a ssl/libssl.a
-            else
-              echo "❌ BoringSSL libraries not found after build"
-              cd ..
-              return 1
-            fi
-            
-            cd ..
-          }
-          
-          # Build for arm64-v8a (required for QUICHE)
-          if build_boringssl "arm64-v8a" "aarch64-linux-android24" "arm64-v8a"; then
-            echo "✅ BoringSSL built successfully for QUICHE"
-          else
-            echo "⚠️  BoringSSL build failed - QUICHE may not work"
-          fi
-          
-          cd ../../../../../../..
-
       - name: Setup Keystore and Properties
         env:
           KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -521,76 +362,23 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Verify QUICHE Submodule Before Build
-        run: |
-          echo "🔍 Verifying QUICHE submodule before build..."
-          QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
-          if [ -d "$QUICHE_DIR/quiche" ]; then
-            echo "✅ QUICHE submodule directory exists"
-            if [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
-              echo "✅ QUICHE Cargo.toml found"
-            else
-              echo "⚠️  QUICHE Cargo.toml not found"
-            fi
-            if [ -d "$QUICHE_DIR/quiche/deps/boringssl" ]; then
-              echo "✅ QUICHE BoringSSL dependency found"
-              
-              # Check if BoringSSL libraries were built
-              BORINGSSL_BUILD_DIR="$QUICHE_DIR/quiche/deps/boringssl/build"
-              if [ -f "$BORINGSSL_BUILD_DIR/crypto/libcrypto.a" ] && [ -f "$BORINGSSL_BUILD_DIR/ssl/libssl.a" ]; then
-                echo "✅ BoringSSL libraries found:"
-                ls -lh "$BORINGSSL_BUILD_DIR/crypto/libcrypto.a" "$BORINGSSL_BUILD_DIR/ssl/libssl.a"
-              else
-                echo "⚠️  BoringSSL libraries not found (QUICHE build may fail)"
-                echo "   Expected: $BORINGSSL_BUILD_DIR/crypto/libcrypto.a"
-                echo "   Expected: $BORINGSSL_BUILD_DIR/ssl/libssl.a"
-              fi
-            else
-              echo "⚠️  QUICHE BoringSSL dependency not found"
-            fi
-          else
-            echo "⚠️  QUICHE submodule directory not found (build may skip QUICHE)"
-          fi
-
       - name: Build Release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           echo "🔨 Building release APK with downloaded artifacts..."
-          # Capture Gradle output to file for better error reporting
-          set +e  # Don't exit on error immediately
+          
+          set +e
           ./gradlew assembleRelease --stacktrace --warning-mode all 2>&1 | tee gradle-build.log
           BUILD_EXIT_CODE=${PIPESTATUS[0]}
-          set -e  # Re-enable exit on error
-
+          set -e
+          
           if [ "$BUILD_EXIT_CODE" -ne 0 ]; then
             echo "❌ Build failed with exit code: $BUILD_EXIT_CODE"
             echo ""
-            echo "=== First 50 lines of Gradle output (for context) ==="
-            head -50 gradle-build.log || echo "Could not read build log"
-            echo ""
-            echo "=== Last 150 lines of Gradle output (most recent errors) ==="
-            tail -150 gradle-build.log || echo "Could not read build log"
-            echo ""
-            echo "=== Searching for FAILURE messages ==="
-            grep -i "FAILURE\|BUILD FAILED" gradle-build.log | tail -10 || echo "No FAILURE messages found"
-            echo ""
-            echo "=== Searching for error patterns ==="
-            grep -i "error\|failed\|exception" gradle-build.log | grep -v "at org.gradle" | tail -30 || echo "No error patterns found"
-            echo ""
-            echo "=== Checking for build logs ==="
-            find app/build -name "*.log" -type f 2>/dev/null | head -5
-            echo ""
-            echo "=== Checking for error reports ==="
-            find app/build -name "*error*" -type f 2>/dev/null | head -5
-            echo ""
-            echo "=== Build output directory structure ==="
-            ls -la app/build/outputs/ 2>/dev/null || echo "  app/build/outputs/ does not exist"
-            echo ""
-            echo "=== Gradle build log location ==="
-            echo "Full log available at: gradle-build.log"
-            echo "❌ Build failed - cannot proceed without APK"
+            echo "=== Last 100 lines of Gradle output ==="
+            tail -100 gradle-build.log || echo "Could not read build log"
             exit 1
           fi
           
