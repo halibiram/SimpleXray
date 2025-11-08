@@ -7,35 +7,49 @@ LOCAL_PATH := $(call my-dir)
 # QUICHE Static Library (pre-built from Rust)
 # ============================================================================
 
-include $(CLEAR_VARS)
-LOCAL_MODULE := quiche-prebuilt
-LOCAL_SRC_FILES := libs/$(TARGET_ARCH_ABI)/libquiche.a
-LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/third_party/quiche/quiche/include
-include $(PREBUILT_STATIC_LIBRARY)
+# Check if QUICHE library exists, skip if not available
+QUICHE_LIB_PATH := $(LOCAL_PATH)/libs/$(TARGET_ARCH_ABI)/libquiche.a
+ifneq ($(wildcard $(QUICHE_LIB_PATH)),)
+    include $(CLEAR_VARS)
+    LOCAL_MODULE := quiche-prebuilt
+    LOCAL_SRC_FILES := libs/$(TARGET_ARCH_ABI)/libquiche.a
+    LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/third_party/quiche/quiche/include
+    include $(PREBUILT_STATIC_LIBRARY)
+    QUICHE_AVAILABLE := true
+else
+    $(warning QUICHE library not found at $(QUICHE_LIB_PATH), skipping quiche-client build)
+    QUICHE_AVAILABLE := false
+endif
 
 # ============================================================================
 # BoringSSL (from QUICHE dependencies)
 # ============================================================================
 
-BORINGSSL_PATH := $(LOCAL_PATH)/third_party/quiche/quiche/deps/boringssl
+# BoringSSL is only needed if QUICHE is available
+ifeq ($(QUICHE_AVAILABLE),true)
+    BORINGSSL_PATH := $(LOCAL_PATH)/third_party/quiche/quiche/deps/boringssl
 
-# BoringSSL crypto library
-include $(CLEAR_VARS)
-LOCAL_MODULE := boringssl-crypto
-LOCAL_SRC_FILES := $(BORINGSSL_PATH)/build/crypto/libcrypto.a
-LOCAL_EXPORT_C_INCLUDES := $(BORINGSSL_PATH)/include
-include $(PREBUILT_STATIC_LIBRARY)
+    # BoringSSL crypto library
+    include $(CLEAR_VARS)
+    LOCAL_MODULE := boringssl-crypto
+    LOCAL_SRC_FILES := $(BORINGSSL_PATH)/build/crypto/libcrypto.a
+    LOCAL_EXPORT_C_INCLUDES := $(BORINGSSL_PATH)/include
+    include $(PREBUILT_STATIC_LIBRARY)
 
-# BoringSSL SSL library
-include $(CLEAR_VARS)
-LOCAL_MODULE := boringssl-ssl
-LOCAL_SRC_FILES := $(BORINGSSL_PATH)/build/ssl/libssl.a
-LOCAL_EXPORT_C_INCLUDES := $(BORINGSSL_PATH)/include
-include $(PREBUILT_STATIC_LIBRARY)
+    # BoringSSL SSL library
+    include $(CLEAR_VARS)
+    LOCAL_MODULE := boringssl-ssl
+    LOCAL_SRC_FILES := $(BORINGSSL_PATH)/build/ssl/libssl.a
+    LOCAL_EXPORT_C_INCLUDES := $(BORINGSSL_PATH)/include
+    include $(PREBUILT_STATIC_LIBRARY)
+endif
 
 # ============================================================================
 # QUICHE Client Shared Library
 # ============================================================================
+
+# Only build quiche-client if QUICHE library is available
+ifeq ($(QUICHE_AVAILABLE),true)
 
 include $(CLEAR_VARS)
 
@@ -85,7 +99,7 @@ LOCAL_SRC_FILES := \
 LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/include \
     $(LOCAL_PATH)/third_party/quiche/quiche/include \
-    $(BORINGSSL_PATH)/include
+    $(LOCAL_PATH)/third_party/quiche/quiche/deps/boringssl/include
 
 # Static libraries
 LOCAL_STATIC_LIBRARIES := \
@@ -97,3 +111,5 @@ LOCAL_STATIC_LIBRARIES := \
 LOCAL_LDLIBS := -llog -landroid -latomic
 
 include $(BUILD_SHARED_LIBRARY)
+
+endif # QUICHE_AVAILABLE
