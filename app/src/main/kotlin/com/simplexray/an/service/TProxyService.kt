@@ -106,7 +106,7 @@ class TProxyService : VpnService() {
     private val enablePerformanceMode: Boolean
         get() = Preferences(this).enablePerformanceMode
     
-    // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
+    // Chain supervisor for Reality SOCKS → PepperShaper → Xray-core
     private var chainSupervisor: ChainSupervisor? = null
     // QUICHE TUN forwarder (TUN → QUICHE → Chain)
     private var quicheClient: QuicheClient? = null
@@ -1169,7 +1169,7 @@ class TProxyService : VpnService() {
             prefs.vpnServiceWasRunning = true
             AppLogger.d("TProxyService: VPN state saved - service is running")
             
-            // Start chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+            // Start chain (Reality SOCKS → PepperShaper → Xray-core)
             // Chain components are optional enhancements - VPN works even if chain fails
             val chainStarted = startChain(prefs)
             if (!chainStarted) {
@@ -1375,10 +1375,10 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Start the tunneling chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+     * Start the tunneling chain (Reality SOCKS → PepperShaper → Xray-core)
      *
      * Chain components are optional - only Xray-core is required.
-     * Reality SOCKS, Hysteria2, and PepperShaper enhance performance but are not critical.
+     * Reality SOCKS and PepperShaper enhance performance but are not critical.
      */
     private fun startChain(prefs: Preferences): Boolean {
         return try {
@@ -1405,7 +1405,6 @@ class TProxyService : VpnService() {
             AppLogger.i("TProxyService: Starting chain with components:")
             AppLogger.i("  - Xray-core: ${chainConfig.xrayConfigPath}")
             AppLogger.i("  - Reality SOCKS: ${if (chainConfig.realityConfig != null) "configured" else "not configured"}")
-            AppLogger.i("  - Hysteria2: ${if (chainConfig.hysteria2Config != null) "configured" else "not configured"}")
             AppLogger.i("  - PepperShaper: ${if (chainConfig.pepperParams != null) "configured" else "not configured"}")
 
             val result = chainSupervisor?.start(chainConfig)
@@ -1474,7 +1473,6 @@ class TProxyService : VpnService() {
         return ChainConfig(
             name = "TProxy Chain",
             realityConfig = realityConfig,
-            hysteria2Config = null,
             pepperParams = PepperParams(
                 mode = PepperMode.BURST_FRIENDLY,
                 maxBurstBytes = 64 * 1024,

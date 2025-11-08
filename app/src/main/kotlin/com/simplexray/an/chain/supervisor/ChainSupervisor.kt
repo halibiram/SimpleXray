@@ -2,7 +2,6 @@ package com.simplexray.an.chain.supervisor
 
 import android.content.Context
 import com.simplexray.an.common.AppLogger
-import com.simplexray.an.chain.hysteria2.Hysteria2
 import com.simplexray.an.chain.pepper.PepperShaper
 import com.simplexray.an.chain.reality.RealitySocks
 import com.simplexray.an.chain.reality.RealityXrayIntegrator
@@ -23,10 +22,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Chain Supervisor: Orchestrates the full tunneling stack
- * 
+ *
  * Manages lifecycle of:
  * - Reality SOCKS (TLS mimic)
- * - Hysteria2 QUIC accelerator
  * - PepperShaper (traffic shaping)
  * - Xray-core (routing engine)
  */
@@ -63,11 +61,6 @@ class ChainSupervisor(private val context: Context) {
             RealitySocks.init(context)
         } catch (e: Exception) {
             AppLogger.e("ChainSupervisor: Failed to initialize RealitySocks: ${e.message}", e)
-        }
-        try {
-            Hysteria2.init(context)
-        } catch (e: Exception) {
-            AppLogger.e("ChainSupervisor: Failed to initialize Hysteria2: ${e.message}", e)
         }
         try {
             PepperShaper.init(context)
@@ -122,107 +115,27 @@ class ChainSupervisor(private val context: Context) {
                 results.add(result)
                 updateLayerStatus("reality", result.isSuccess, result.exceptionOrNull()?.message)
             }
-            
-            // 2. Start Hysteria2 if configured (chain to Reality SOCKS)
-            if (config.hysteria2Config != null) {
-                // Only start if Reality SOCKS succeeded (if configured)
-                val realitySucceeded = config.realityConfig == null || 
-                    results.firstOrNull()?.isSuccess != false
-                
-                if (realitySucceeded) {
-                    val upstreamSocks = RealitySocks.getLocalAddress()
-                    if (upstreamSocks != null || config.realityConfig == null) {
-                        val result = try {
-                            Hysteria2.start(config.hysteria2Config, upstreamSocks)
-                        } catch (e: Exception) {
-                            AppLogger.e("ChainSupervisor: Exception starting Hysteria2: ${e.message}", e)
-                            Result.failure(e)
-                        }
-                        results.add(result)
-                        updateLayerStatus("hysteria2", result.isSuccess, result.exceptionOrNull()?.message)
-                    } else {
-                        AppLogger.w("ChainSupervisor: RealitySocks not ready, skipping Hysteria2")
-                        results.add(Result.failure(Exception("RealitySocks not ready")))
-                        updateLayerStatus("hysteria2", false, "RealitySocks not ready")
-                    }
-                } else {
-                    AppLogger.w("ChainSupervisor: RealitySocks failed, skipping Hysteria2")
-                    results.add(Result.failure(Exception("RealitySocks failed")))
-                    updateLayerStatus("hysteria2", false, "RealitySocks failed")
-                }
-            }
-            
-            // 3. Attach PepperShaper if configured
+
+            // 2. Attach PepperShaper if configured
             if (config.pepperParams != null) {
-                // Attempt to attach PepperShaper to socket FDs
-                // Try multiple sources: Hysteria2, RealitySocks, or TUN interface
+                // PepperShaper is initialized but not attached to any FDs
+                // It's available for future use if needed
                 val pepperResult = try {
-                    var attached = false
-                    var errorMessage: String? = null
-                    
                     // Verify PepperShaper is initialized
-                    try {
-                        PepperShaper.getStats() // This will throw if not initialized
+                    val isPepperAvailable = try {
+                        PepperShaper.getStats()
+                        true
                     } catch (e: Exception) {
                         AppLogger.w("ChainSupervisor: PepperShaper not initialized: ${e.message}")
-                        errorMessage = "PepperShaper not initialized"
+                        false
                     }
-                    
-                    // Try 1: Get FDs from Hysteria2 if running
-                    if (config.hysteria2Config != null && Hysteria2.isRunning()) {
-                        AppLogger.d("ChainSupervisor: Attempting to get FDs from Hysteria2")
-                        val hysteria2Fds = Hysteria2.getSocketFds()
-                        if (hysteria2Fds != null) {
-                            AppLogger.d("ChainSupervisor: Got FDs from Hysteria2: ${hysteria2Fds.first}/${hysteria2Fds.second}")
-                            val handle = PepperShaper.attach(
-                                fdPair = hysteria2Fds,
-                                mode = PepperShaper.SocketMode.TCP,
-                                params = config.pepperParams
-                            )
-                            if (handle != null && handle > 0) {
-                                pepperHandle = handle
-                                attached = true
-                                AppLogger.i("ChainSupervisor: PepperShaper attached to Hysteria2 sockets (handle=$handle)")
-                            } else {
-                                AppLogger.w("ChainSupervisor: PepperShaper.attach returned invalid handle: $handle")
-                                errorMessage = "Failed to attach to Hysteria2 sockets"
-                            }
-                        } else {
-                            AppLogger.w("ChainSupervisor: Could not extract FDs from Hysteria2 process")
-                            errorMessage = "Hysteria2 FDs not available"
-                        }
-                    } else {
-                        if (config.hysteria2Config == null) {
-                            AppLogger.w("ChainSupervisor: Hysteria2 not configured, cannot attach PepperShaper")
-                            errorMessage = "Hysteria2 not configured"
-                        } else if (!Hysteria2.isRunning()) {
-                            AppLogger.w("ChainSupervisor: Hysteria2 not running, cannot attach PepperShaper")
-                            errorMessage = "Hysteria2 not running"
-                        }
-                    }
-                    
-                    // Try 2: If Hysteria2 FDs not available, check if we can use alternative approach
-                    // For now, if PepperShaper is initialized, mark it as available even without attachment
-                    // This allows the chain to work, and PepperShaper can be attached later if FDs become available
-                    if (!attached) {
-                        // Check if PepperShaper native library is loaded and working
-                        val isPepperAvailable = try {
-                            PepperShaper.getStats()
-                            true
-                        } catch (e: Exception) {
-                            false
-                        }
-                        
-                        if (isPepperAvailable) {
-                            AppLogger.i("ChainSupervisor: PepperShaper initialized and available (FD attachment pending)")
-                            // Mark as success - PepperShaper is ready, just waiting for FDs
-                            Result.success(Unit)
-                        } else {
-                            AppLogger.w("ChainSupervisor: PepperShaper not available: $errorMessage")
-                            Result.success(Unit) // Still success - chain works without PepperShaper
-                        }
-                    } else {
+
+                    if (isPepperAvailable) {
+                        AppLogger.i("ChainSupervisor: PepperShaper initialized and available (not attached to any FDs)")
                         Result.success(Unit)
+                    } else {
+                        AppLogger.w("ChainSupervisor: PepperShaper not available")
+                        Result.success(Unit) // Still success - chain works without PepperShaper
                     }
                 } catch (e: Exception) {
                     AppLogger.e("ChainSupervisor: Failed to attach PepperShaper: ${e.message}", e)
@@ -343,7 +256,7 @@ class ChainSupervisor(private val context: Context) {
             }
             
             // Check if critical layers started successfully
-            // Reality and Xray are critical, Hysteria2 and PepperShaper are optional
+            // Reality and Xray are critical, PepperShaper is optional
             val criticalLayers = mutableListOf<Result<Unit>>()
             if (config.realityConfig != null) {
                 results.firstOrNull()?.let { criticalLayers.add(it) }
@@ -428,25 +341,19 @@ class ChainSupervisor(private val context: Context) {
                 updateLayerStatus("pepper", false, pepperResult.exceptionOrNull()?.message)
             }
             pepperHandle = null
-            
-            // Stop Hysteria2
-            val hy2Result = Hysteria2.stop()
-            stopResults.add(hy2Result)
-            updateLayerStatus("hysteria2", false, hy2Result.exceptionOrNull()?.message)
-            
+
             // Stop RealitySocks
             val realityResult = RealitySocks.stop()
             stopResults.add(realityResult)
             updateLayerStatus("reality", false, realityResult.exceptionOrNull()?.message)
-            
+
             // Log any failures but continue cleanup
             stopResults.forEachIndexed { index, result ->
                 if (result.isFailure) {
                     val layerName = when (index) {
                         0 -> "xray"
                         1 -> "pepper"
-                        2 -> "hysteria2"
-                        3 -> "reality"
+                        2 -> "reality"
                         else -> "unknown"
                     }
                     AppLogger.w("ChainSupervisor: Failed to stop layer $layerName: ${result.exceptionOrNull()?.message}")
@@ -529,15 +436,14 @@ class ChainSupervisor(private val context: Context) {
                     
                     // Aggregate metrics from all layers (with null safety)
                     val realityStatus = RealitySocks.getStatus()
-                    val hy2Metrics = Hysteria2.getMetrics()
-                    
+
                     // Safe aggregation with overflow protection
                     val totalBytesUp = runCatching {
-                        (realityStatus?.bytesUp ?: 0L) + (hy2Metrics?.bytesUp ?: 0L)
+                        realityStatus?.bytesUp ?: 0L
                     }.getOrElse { 0L }
-                    
+
                     val totalBytesDown = runCatching {
-                        (realityStatus?.bytesDown ?: 0L) + (hy2Metrics?.bytesDown ?: 0L)
+                        realityStatus?.bytesDown ?: 0L
                     }.getOrElse { 0L }
                     
                     // This is already in a coroutine (monitoringJob), so we can use suspend
