@@ -267,23 +267,75 @@ jobs:
               exit 1
             }
             
+            echo "📦 Downloaded artifacts:"
+            find release-artifacts -type f -exec ls -lh {} \; 2>/dev/null | head -20 || echo "  No files found"
+            
             # Find APK file in downloaded artifacts
             APK_FILE=$(find release-artifacts -name "*.apk" -type f | head -1)
             
             if [ -z "$APK_FILE" ]; then
-              echo "⚠️  No APK file found in artifacts"
-              echo "📁 Artifacts downloaded:"
-              find release-artifacts -type f | head -10
-              # Try to find any file that might be the APK
-              APK_FILE=$(find release-artifacts -type f \( -name "*.apk" -o -name "*simplexray*" \) | head -1)
+              echo "⚠️  No APK file found in artifacts from run $RUN_ID"
+              echo "📁 This run contains native library artifacts (boringssl, hysteria2, quiche, xray)"
+              echo "   but no APK. Searching for APK in releases..."
+              
+              # Function to check if release has APK
+              check_release_has_apk() {
+                local tag=$1
+                local release_info=$(gh release view "$tag" --json assets 2>/dev/null)
+                local exit_code=$?
+                
+                if [ $exit_code -ne 0 ] || [ -z "$release_info" ]; then
+                  return 1
+                fi
+                
+                local apk_asset=$(echo "$release_info" | jq -r '.assets[] | select(.name | endswith(".apk")) | .name' 2>/dev/null | head -1)
+                
+                if [ -n "$apk_asset" ] && [ "$apk_asset" != "null" ] && [ "$apk_asset" != "" ]; then
+                  echo "$apk_asset"
+                  return 0
+                fi
+                
+                return 1
+              }
+              
+              # Search releases for APK
+              ALL_RELEASES=$(gh release list --limit 10 --json tagName,createdAt --jq '.[] | "\(.tagName)|\(.createdAt)"' || echo "")
+              
+              if [ -n "$ALL_RELEASES" ]; then
+                for release_info in $ALL_RELEASES; do
+                  RELEASE_TAG=$(echo "$release_info" | cut -d'|' -f1)
+                  CREATED_AT=$(echo "$release_info" | cut -d'|' -f2)
+                  
+                  echo "  Checking release $RELEASE_TAG ($CREATED_AT) for APK..."
+                  
+                  set +e
+                  APK_ASSET=$(check_release_has_apk "$RELEASE_TAG" 2>&1)
+                  local check_exit=$?
+                  set -e
+                  
+                  if [ $check_exit -eq 0 ] && [ -n "$APK_ASSET" ]; then
+                    APK_NAME="$APK_ASSET"
+                    echo "✅ Found APK in release $RELEASE_TAG: $APK_NAME"
+                    
+                    # Download APK from release
+                    gh release download "$RELEASE_TAG" --pattern "$APK_NAME" --dir release-artifacts/ || {
+                      echo "❌ Failed to download APK from release"
+                      exit 1
+                    }
+                    
+                    APK_FILE="release-artifacts/$APK_NAME"
+                    break
+                  fi
+                done
+              fi
+              
+              if [ -z "$APK_FILE" ]; then
+                echo "❌ No APK found in releases either"
+                exit 1
+              fi
+            else
+              APK_NAME=$(basename "$APK_FILE")
             fi
-            
-            if [ -z "$APK_FILE" ]; then
-              echo "❌ No suitable APK file found"
-              exit 1
-            fi
-            
-            APK_NAME=$(basename "$APK_FILE")
           fi
           
           # Verify APK file exists
