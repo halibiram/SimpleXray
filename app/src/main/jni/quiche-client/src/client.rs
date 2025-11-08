@@ -7,11 +7,12 @@ use quinn::{Endpoint, Connection, ClientConfig};
 use quinn::crypto::rustls::QuicClientConfig;
 use std::sync::Arc;
 use std::net::ToSocketAddrs;
-use log::{info, warn};
-use tokio::runtime::Runtime;
+use log::{info, warn, error};
+use tokio::runtime::{Runtime, Handle};
 use tokio::io::AsyncWriteExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CongestionControl {
@@ -101,12 +102,27 @@ impl QuicheClient {
     pub fn create(config: QuicConfig) -> Result<Self, Box<dyn std::error::Error>> {
         info!("Creating QUIC client for {}:{}", config.server_host, config.server_port);
 
-        // Create Tokio runtime
-        let runtime = Runtime::new()?;
+        // Try to use existing runtime handle first (if called from async context)
+        // Otherwise create a new current-thread runtime (safer for JNI)
+        let runtime = match Handle::try_current() {
+            Ok(_) => {
+                // We're in an async context, but we still need our own runtime for block_on
+                // Create a minimal current-thread runtime
+                Runtime::new()?
+            }
+            Err(_) => {
+                // Not in async context, create current-thread runtime (safer for JNI)
+                // Use Builder to create a current-thread runtime explicitly
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to create Tokio runtime: {}", e))?
+            }
+        };
 
-        // Configure CPU affinity
+        // Configure CPU affinity (non-fatal, continue even if it fails)
         if let Err(e) = Self::configure_cpu_affinity(&config) {
-            warn!("Failed to configure CPU affinity: {} (non-fatal)", e);
+            warn!("Failed to configure CPU affinity: {} (non-fatal, continuing)", e);
         }
 
         Ok(Self {
@@ -120,6 +136,11 @@ impl QuicheClient {
     }
 
     fn configure_cpu_affinity(config: &QuicConfig) -> Result<(), Box<dyn std::error::Error>> {
+        // Skip if None
+        if matches!(config.cpu_affinity, CpuAffinity::None) {
+            return Ok(());
+        }
+
         use nix::sched::{CpuSet, sched_setaffinity};
         use nix::unistd::Pid;
 
@@ -133,19 +154,34 @@ impl QuicheClient {
                 (1u64 << 0) | (1u64 << 1) | (1u64 << 2) | (1u64 << 3)
             }
             CpuAffinity::Custom(mask) => mask,
-            CpuAffinity::None => return Ok(()),
+            CpuAffinity::None => return Ok(()), // Already checked, but compiler needs this
         };
 
+        // Check if we have permission to set CPU affinity
+        // On Android, this might fail due to SELinux or permissions
         let mut cpuset = CpuSet::new();
         for i in 0..64 {
             if cpu_mask & (1u64 << i) != 0 {
-                cpuset.set(i)?;
+                if let Err(e) = cpuset.set(i) {
+                    warn!("Failed to set CPU {} in affinity mask: {}", i, e);
+                    // Continue with other CPUs
+                }
             }
         }
 
-        sched_setaffinity(Pid::from_raw(0), &cpuset)?;
-        info!("CPU affinity set to mask 0x{:x}", cpu_mask);
-        Ok(())
+        // Try to set affinity, but don't fail if it doesn't work
+        match sched_setaffinity(Pid::from_raw(0), &cpuset) {
+            Ok(_) => {
+                info!("CPU affinity set to mask 0x{:x}", cpu_mask);
+                Ok(())
+            }
+            Err(e) => {
+                // On Android, this often fails due to SELinux restrictions
+                // This is non-fatal, just log and continue
+                warn!("Failed to set CPU affinity (may be restricted on Android): {}", e);
+                Err(format!("CPU affinity setting failed: {}", e).into())
+            }
+        }
     }
 
     pub fn connect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -156,48 +192,82 @@ impl QuicheClient {
 
         info!("Connecting to {}:{}...", self.config.server_host, self.config.server_port);
 
-        // Resolve server address
-        let addr = format!("{}:{}", self.config.server_host, self.config.server_port);
-        let mut addrs = addr.to_socket_addrs()?;
-        let server_addr = addrs.next()
-            .ok_or("Failed to resolve server address")?;
+        // Wrap the entire connect logic in panic catching
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // Resolve server address
+            let addr = format!("{}:{}", self.config.server_host, self.config.server_port);
+            let mut addrs = addr.to_socket_addrs()
+                .map_err(|e| format!("DNS resolution failed: {}", e))?;
+            let server_addr = addrs.next()
+                .ok_or_else(|| "Failed to resolve server address".to_string())?;
 
-        // Create client config with rustls
-        // For now, use default config (accepts any certificate)
-        // In production, you should use proper certificate validation
-        // rustls 0.23 uses dangerous() instead of with_safe_defaults()
-        let crypto = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
-            .with_no_client_auth();
-        
-        let quic_crypto = QuicClientConfig::try_from(Arc::new(crypto))?;
-        let client_config = ClientConfig::new(Arc::new(quic_crypto));
+            info!("Resolved address: {:?}", server_addr);
 
-        // Create endpoint
-        let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
-        endpoint.set_default_client_config(client_config);
+            // Create client config with rustls
+            // For now, use default config (accepts any certificate)
+            // In production, you should use proper certificate validation
+            // rustls 0.23 uses dangerous() instead of with_safe_defaults()
+            let crypto = rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+                .with_no_client_auth();
+            
+            let quic_crypto = QuicClientConfig::try_from(Arc::new(crypto))
+                .map_err(|e| format!("Failed to create QUIC crypto config: {:?}", e))?;
+            let client_config = ClientConfig::new(Arc::new(quic_crypto));
 
-        // Connect
-        // quinn's connect accepts a string for server_name
-        let new_conn = self.runtime.block_on(async {
-            let connecting = endpoint.connect(server_addr, &self.config.server_host)
-                .map_err(|e| -> Box<dyn std::error::Error> { format!("Connection failed: {:?}", e).into() })?;
-            connecting.await
-                .map_err(|e| -> Box<dyn std::error::Error> { format!("Connection handshake failed: {:?}", e).into() })
-        })?;
+            // Create endpoint
+            let mut endpoint = Endpoint::client("[::]:0".parse()
+                .map_err(|e| format!("Failed to parse bind address: {:?}", e))?)
+                .map_err(|e| format!("Failed to create endpoint: {:?}", e))?;
+            endpoint.set_default_client_config(client_config);
 
-        self.endpoint = Some(endpoint);
-        self.connection = Some(new_conn);
-        self.connected.store(true, Ordering::Release);
+            info!("Endpoint created, initiating connection...");
 
-        // Update metrics
-        let mut metrics = self.metrics.lock();
-        metrics.is_established = true;
-        drop(metrics);
+            // Connect with timeout protection
+            let new_conn = self.runtime.block_on(async {
+                let connecting = endpoint.connect(server_addr, &self.config.server_host)
+                    .map_err(|e| -> Box<dyn std::error::Error> { 
+                        error!("Connection initiation failed: {:?}", e);
+                        format!("Connection failed: {:?}", e).into() 
+                    })?;
+                
+                info!("Connection initiated, waiting for handshake...");
+                connecting.await
+                    .map_err(|e| -> Box<dyn std::error::Error> { 
+                        error!("Connection handshake failed: {:?}", e);
+                        format!("Connection handshake failed: {:?}", e).into() 
+                    })
+            })?;
 
-        info!("Connected successfully");
-        Ok(())
+            info!("Connection established successfully");
+            Ok((endpoint, new_conn))
+        }));
+
+        match result {
+            Ok(Ok((endpoint, new_conn))) => {
+                self.endpoint = Some(endpoint);
+                self.connection = Some(new_conn);
+                self.connected.store(true, Ordering::Release);
+
+                // Update metrics
+                let mut metrics = self.metrics.lock();
+                metrics.is_established = true;
+                drop(metrics);
+
+                info!("Connected successfully");
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                error!("Connect failed: {}", e);
+                Err(e)
+            }
+            Err(_) => {
+                let msg = "Panic occurred during connection (this should not happen)";
+                error!("{}", msg);
+                Err(msg.into())
+            }
+        }
     }
 
     pub fn disconnect(&mut self) {

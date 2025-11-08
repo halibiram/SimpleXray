@@ -8,7 +8,7 @@ use jni::objects::{JClass, JByteArray};
 use jni::sys::{jboolean, jbooleanArray, jdoubleArray, jint, jlong, jlongArray};
 use std::sync::Arc;
 use parking_lot::Mutex;
-use log::error;
+use log::{error, info, warn};
 
 use crate::client::{QuicheClient, QuicConfig, CongestionControl, CpuAffinity};
 use crate::tun_forwarder::{QuicheTunForwarder, ForwarderConfig};
@@ -42,30 +42,53 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
     enable_zero_copy: jboolean,
     cpu_affinity: jint,
 ) -> jlong {
+    // Initialize logger if not already done
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("QuicheJNI")
             .with_max_level(log::LevelFilter::Debug),
     );
 
+    info!("nativeCreate: Starting QUIC client creation");
+
+    // Validate parameters
+    if server_port < 1 || server_port > 65535 {
+        error!("nativeCreate: Invalid server port: {}", server_port);
+        return 0;
+    }
+
     let host = jstring_to_string(&mut env, server_host);
+    if host.is_empty() {
+        error!("nativeCreate: Empty server host");
+        return 0;
+    }
+
     let cc = match congestion_control {
         0 => CongestionControl::Reno,
         1 => CongestionControl::Cubic,
         2 => CongestionControl::Bbr,
         3 => CongestionControl::Bbr2,
-        _ => CongestionControl::Bbr2,
+        _ => {
+            warn!("nativeCreate: Unknown congestion control {}, using BBR2", congestion_control);
+            CongestionControl::Bbr2
+        }
     };
     
     let cpu_aff = match cpu_affinity {
         0 => CpuAffinity::None,
         1 => CpuAffinity::BigCores,
         2 => CpuAffinity::LittleCores,
-        _ => CpuAffinity::BigCores,
+        _ => {
+            warn!("nativeCreate: Unknown CPU affinity {}, using BigCores", cpu_affinity);
+            CpuAffinity::BigCores
+        }
     };
 
+    info!("nativeCreate: Config - host={}, port={}, cc={:?}, cpu_aff={:?}", 
+          host, server_port, cc, cpu_aff);
+
     let config = QuicConfig {
-        server_host: host,
+        server_host: host.clone(),
         server_port: server_port as u16,
         cc_algorithm: cc,
         enable_zero_copy: enable_zero_copy != 0,
@@ -73,13 +96,30 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
         ..Default::default()
     };
 
-    match QuicheClient::create(config) {
-        Ok(client) => {
-            let client = Arc::new(Mutex::new(client));
-            Box::into_raw(Box::new(client)) as jlong
+    // Use catch_unwind to prevent panics from crashing the JVM
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        match QuicheClient::create(config) {
+            Ok(client) => {
+                let client = Arc::new(Mutex::new(client));
+                let handle = Box::into_raw(Box::new(client)) as jlong;
+                info!("nativeCreate: QUIC client created successfully, handle={}", handle);
+                Ok(handle)
+            }
+            Err(e) => {
+                error!("nativeCreate: Failed to create QUIC client: {}", e);
+                Err(e)
+            }
         }
-        Err(e) => {
-            error!("Failed to create QUIC client: {}", e);
+    }));
+
+    match result {
+        Ok(Ok(handle)) => handle,
+        Ok(Err(e)) => {
+            error!("nativeCreate: Client creation error: {}", e);
+            0
+        }
+        Err(_) => {
+            error!("nativeCreate: Panic occurred during client creation (this should not happen)");
             0
         }
     }
@@ -92,17 +132,39 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeConnect(
     _class: JClass,
     client_handle: jlong,
 ) -> jint {
+    // Initialize logger if not already done
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_tag("QuicheJNI")
+            .with_max_level(log::LevelFilter::Debug),
+    );
+
     if client_handle == 0 {
+        error!("nativeConnect: Invalid client handle (0)");
         return -1;
     }
 
-    let client = unsafe { &*(client_handle as *const Arc<Mutex<QuicheClient>>) };
-    let mut client = client.lock();
-    
-    match client.connect() {
-        Ok(_) => 0,
-        Err(e) => {
-            error!("Connect failed: {}", e);
+    // Use catch_unwind to prevent panics from crashing the JVM
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let client = unsafe { &*(client_handle as *const Arc<Mutex<QuicheClient>>) };
+        let mut client = client.lock();
+        
+        match client.connect() {
+            Ok(_) => {
+                info!("nativeConnect: Connection successful");
+                0
+            }
+            Err(e) => {
+                error!("nativeConnect: Connection failed: {}", e);
+                -1
+            }
+        }
+    }));
+
+    match result {
+        Ok(ret_code) => ret_code,
+        Err(_) => {
+            error!("nativeConnect: Panic occurred during connection (this should not happen)");
             -1
         }
     }
