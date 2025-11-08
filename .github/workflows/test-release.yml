@@ -275,6 +275,47 @@ jobs:
             echo "use_release=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Find Rust Build Workflow Run
+        id: find_rust_workflow
+        run: |
+          echo "🔍 Finding successful Rust build workflow run..."
+          
+          # Get workflow file name
+          RUST_WORKFLOW_FILE=".github/workflows/rust-build.yml"
+          
+          # Get successful workflow runs for rust-build workflow
+          RUST_WORKFLOW_RUNS=$(gh run list --workflow="$RUST_WORKFLOW_FILE" --limit 10 --json databaseId,conclusion,createdAt,displayTitle --jq '.[] | select(.conclusion == "success") | "\(.databaseId)|\(.createdAt)|\(.displayTitle)"' 2>/dev/null || echo "")
+          
+          if [ -z "$RUST_WORKFLOW_RUNS" ]; then
+            echo "⚠️  No successful Rust build workflow runs found"
+            echo "rust_run_id=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "📋 Found successful Rust workflow runs:"
+          echo "$RUST_WORKFLOW_RUNS" | head -3
+          echo ""
+          
+          # Get the most recent successful run
+          RUST_RUN_ID=$(echo "$RUST_WORKFLOW_RUNS" | head -1 | cut -d'|' -f1)
+          
+          # Check if this run has artifacts
+          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/$RUST_RUN_ID/artifacts --jq '.artifacts[] | .name' 2>/dev/null || echo "")
+          
+          if [ -n "$ARTIFACTS" ] && echo "$ARTIFACTS" | grep -q "rust-libs"; then
+            echo "✅ Found Rust build run with artifacts: $RUST_RUN_ID"
+            echo "   Artifacts:"
+            echo "$ARTIFACTS" | grep "rust-libs" | while read -r artifact; do
+              if [ -n "$artifact" ]; then
+                echo "     - $artifact"
+              fi
+            done
+            echo "rust_run_id=$RUST_RUN_ID" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  Rust build run $RUST_RUN_ID has no rust-libs artifacts"
+            echo "rust_run_id=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Artifacts from Workflow Run
         id: download_artifacts
         run: |
@@ -302,6 +343,37 @@ jobs:
           echo "📁 Artifact directories:"
           ls -la artifacts-temp/ || echo "  No directories found"
 
+      - name: Download Rust Libraries from CI
+        id: download_rust_libs
+        run: |
+          RUST_RUN_ID="${{ steps.find_rust_workflow.outputs.rust_run_id }}"
+          
+          if [ -z "$RUST_RUN_ID" ]; then
+            echo "⚠️  No Rust build workflow run ID found, skipping Rust libraries download"
+            echo "rust_libs_available=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "📥 Downloading Rust libraries from workflow run $RUST_RUN_ID..."
+          
+          mkdir -p artifacts-temp/rust-libs
+          
+          # Download Rust artifacts
+          gh run download "$RUST_RUN_ID" --pattern "rust-libs-*" --dir artifacts-temp/rust-libs/ || {
+            echo "⚠️  Failed to download Rust libraries from workflow run"
+            echo "rust_libs_available=false" >> $GITHUB_OUTPUT
+            exit 0
+          }
+          
+          echo "📦 Downloaded Rust artifacts:"
+          find artifacts-temp/rust-libs -type f -exec ls -lh {} \; 2>/dev/null | head -20 || echo "  No files found"
+          
+          # List artifact directories
+          echo "📁 Rust artifact directories:"
+          ls -la artifacts-temp/rust-libs/ || echo "  No directories found"
+          
+          echo "rust_libs_available=true" >> $GITHUB_OUTPUT
+
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
@@ -325,35 +397,116 @@ jobs:
           echo "keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}" >> ./store.properties
           echo "keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}" >> ./store.properties
 
+      - name: Copy Rust Libraries from CI Artifacts
+        if: steps.download_rust_libs.outputs.rust_libs_available == 'true'
+        run: |
+          echo "📦 Copying Rust libraries from CI artifacts..."
+          
+          # Ensure jniLibs directory structure exists
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          mkdir -p app/src/main/jniLibs/armeabi-v7a
+          mkdir -p app/src/main/jniLibs/x86_64
+          mkdir -p app/src/main/jniLibs/x86
+          
+          # Rust modules to copy
+          rust_modules="xray-signal-handler pepper-shaper perf-net quiche-client"
+          
+          # Copy Rust libraries for each target
+          # aarch64-linux-android -> arm64-v8a
+          if [ -d "artifacts-temp/rust-libs/rust-libs-aarch64-linux-android" ]; then
+            echo "📋 Copying Rust libraries for aarch64-linux-android (ABI: arm64-v8a)..."
+            for module in $rust_modules; do
+              lib_file="artifacts-temp/rust-libs/rust-libs-aarch64-linux-android/lib$module.so"
+              if [ -f "$lib_file" ]; then
+                cp "$lib_file" "app/src/main/jniLibs/arm64-v8a/lib$module.so"
+                echo "   ✅ Copied lib$module.so to arm64-v8a"
+              else
+                echo "   ⚠️  lib$module.so not found"
+              fi
+            done
+          fi
+          
+          # armv7-linux-androideabi -> armeabi-v7a
+          if [ -d "artifacts-temp/rust-libs/rust-libs-armv7-linux-androideabi" ]; then
+            echo "📋 Copying Rust libraries for armv7-linux-androideabi (ABI: armeabi-v7a)..."
+            for module in $rust_modules; do
+              lib_file="artifacts-temp/rust-libs/rust-libs-armv7-linux-androideabi/lib$module.so"
+              if [ -f "$lib_file" ]; then
+                cp "$lib_file" "app/src/main/jniLibs/armeabi-v7a/lib$module.so"
+                echo "   ✅ Copied lib$module.so to armeabi-v7a"
+              else
+                echo "   ⚠️  lib$module.so not found"
+              fi
+            done
+          fi
+          
+          # x86_64-linux-android -> x86_64
+          if [ -d "artifacts-temp/rust-libs/rust-libs-x86_64-linux-android" ]; then
+            echo "📋 Copying Rust libraries for x86_64-linux-android (ABI: x86_64)..."
+            for module in $rust_modules; do
+              lib_file="artifacts-temp/rust-libs/rust-libs-x86_64-linux-android/lib$module.so"
+              if [ -f "$lib_file" ]; then
+                cp "$lib_file" "app/src/main/jniLibs/x86_64/lib$module.so"
+                echo "   ✅ Copied lib$module.so to x86_64"
+              else
+                echo "   ⚠️  lib$module.so not found"
+              fi
+            done
+          fi
+          
+          # i686-linux-android -> x86
+          if [ -d "artifacts-temp/rust-libs/rust-libs-i686-linux-android" ]; then
+            echo "📋 Copying Rust libraries for i686-linux-android (ABI: x86)..."
+            for module in $rust_modules; do
+              lib_file="artifacts-temp/rust-libs/rust-libs-i686-linux-android/lib$module.so"
+              if [ -f "$lib_file" ]; then
+                cp "$lib_file" "app/src/main/jniLibs/x86/lib$module.so"
+                echo "   ✅ Copied lib$module.so to x86"
+              else
+                echo "   ⚠️  lib$module.so not found"
+              fi
+            done
+          fi
+          
+          echo "✅ Rust libraries copy complete"
+          
+          # Verify Rust libraries
+          echo "📋 Verifying Rust libraries:"
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            rust_libs=$(find app/src/main/jniLibs/$abi -name "libxray-signal-handler.so" -o -name "libpepper-shaper.so" -o -name "libperf-net.so" -o -name "libquiche-client.so" 2>/dev/null | wc -l)
+            if [ "$rust_libs" -gt 0 ]; then
+              echo "   ✅ $abi: $rust_libs Rust libraries found"
+            else
+              echo "   ⚠️  $abi: No Rust libraries found"
+            fi
+          done
+
       - name: Copy Native Libraries from Artifacts
         run: |
           echo "📦 Copying native libraries from artifacts..."
           
           # Ensure jniLibs directory structure exists
-          mkdir -p app/src/main/jniLibs
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          mkdir -p app/src/main/jniLibs/x86_64
           
           # Copy Xray libraries
           if [ -d "artifacts-temp/xray-arm64-v8a" ]; then
-            mkdir -p app/src/main/jniLibs/arm64-v8a
             cp artifacts-temp/xray-arm64-v8a/libxray.so app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || echo "⚠️  libxray.so not found in xray-arm64-v8a"
             echo "✅ Copied Xray library for arm64-v8a"
           fi
           
           if [ -d "artifacts-temp/xray-x86_64" ]; then
-            mkdir -p app/src/main/jniLibs/x86_64
             cp artifacts-temp/xray-x86_64/libxray.so app/src/main/jniLibs/x86_64/ 2>/dev/null || echo "⚠️  libxray.so not found in xray-x86_64"
             echo "✅ Copied Xray library for x86_64"
           fi
           
           # Copy Hysteria2 libraries
           if [ -d "artifacts-temp/hysteria2-arm64-v8a" ]; then
-            mkdir -p app/src/main/jniLibs/arm64-v8a
             cp artifacts-temp/hysteria2-arm64-v8a/libhysteria2.so app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || echo "⚠️  libhysteria2.so not found in hysteria2-arm64-v8a"
             echo "✅ Copied Hysteria2 library for arm64-v8a"
           fi
           
           if [ -d "artifacts-temp/hysteria2-x86_64" ]; then
-            mkdir -p app/src/main/jniLibs/x86_64
             cp artifacts-temp/hysteria2-x86_64/libhysteria2.so app/src/main/jniLibs/x86_64/ 2>/dev/null || echo "⚠️  libhysteria2.so not found in hysteria2-x86_64"
             echo "✅ Copied Hysteria2 library for x86_64"
           fi
@@ -373,9 +526,9 @@ jobs:
             echo "✅ Copied QUICHE libraries for x86_64"
           fi
           
-          # Verify libraries
-          echo "📋 Verifying native libraries:"
-          find app/src/main/jniLibs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No .so files found"
+          # Verify all libraries
+          echo "📋 Verifying all native libraries:"
+          find app/src/main/jniLibs -name "*.so" -type f 2>/dev/null | head -20 || echo "⚠️  No .so files found"
           find app/src/main/jni/quiche-client/libs -name "libquiche.*" -type f 2>/dev/null | head -10 || echo "⚠️  No QUICHE libraries found"
 
       - name: Copy BoringSSL Libraries from Artifacts for QUICHE
@@ -562,16 +715,28 @@ jobs:
           git push origin "$TEST_TAG"
           
           # Create release notes
+          RUST_RUN_ID="${{ steps.find_rust_workflow.outputs.rust_run_id }}"
+          if [ -n "$RUST_RUN_ID" ]; then
+            RUST_INFO="
+          **Rust Libraries:** Built from Rust CI workflow run $RUST_RUN_ID
+            - xray-signal-handler
+            - pepper-shaper
+            - perf-net
+            - quiche-client"
+          else
+            RUST_INFO=""
+          fi
+          
           cat > release_notes.md << EOF
           🧪 Test Release for version ${VERSION_NAME}
           
           **Source:** ${SOURCE_INFO}
           **Test Version:** ${TEST_VERSION_NAME}
           **Build Code:** ${BUILD_CODE}
-          **Commit:** ${COMMIT}
+          **Commit:** ${COMMIT}${RUST_INFO}
           
           **Note:** This is a test release. APK was built using native libraries from ${SOURCE_INFO}.
-          Native libraries (Xray, Hysteria2, QUICHE, BoringSSL) were downloaded from the workflow run and used to build the APK.
+          Native libraries (Xray, Hysteria2, QUICHE, BoringSSL) were downloaded from the workflow run and used to build the APK.$([ -n "$RUST_RUN_ID" ] && echo " Rust native modules were downloaded from Rust CI workflow run $RUST_RUN_ID and used in the build.")
           
           **Download APK:**
           - \`${APK_NAME}\` - For most modern devices (ARM64) - BoringSSL optimized
@@ -618,9 +783,15 @@ jobs:
           
           TEST_TAG="v${{ steps.version.outputs.test_version_name }}"
           RUN_ID="${{ steps.find_workflow.outputs.run_id }}"
+          RUST_RUN_ID="${{ steps.find_rust_workflow.outputs.rust_run_id }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/$TEST_TAG"
           
-          TEXT="🧪 *Test Release Created*\n\n📦 *Version:* $TEST_TAG\n📋 *Source:* Workflow Run $RUN_ID\n🔨 *Build:* ${{ steps.version.outputs.version_code }}\n\nℹ️ *Note:* This is a test release. APK was built using native libraries from workflow run $RUN_ID.\n\n🔗 [Download Test Release]($RELEASE_URL)"
+          RUST_INFO=""
+          if [ -n "$RUST_RUN_ID" ]; then
+            RUST_INFO="\n🔧 *Rust Libraries:* CI Run $RUST_RUN_ID"
+          fi
+          
+          TEXT="🧪 *Test Release Created*\n\n📦 *Version:* $TEST_TAG\n📋 *Source:* Workflow Run $RUN_ID$RUST_INFO\n🔨 *Build:* ${{ steps.version.outputs.version_code }}\n\nℹ️ *Note:* This is a test release. APK was built using native libraries from workflow run $RUN_ID.$([ -n "$RUST_RUN_ID" ] && echo " Rust modules from CI run $RUST_RUN_ID.")\n\n🔗 [Download Test Release]($RELEASE_URL)"
           
           curl -s -X POST \
             -H "Content-Type: application/json" \
