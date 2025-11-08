@@ -24,8 +24,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
 ) -> jlong {
     // Create rustls client config for QUIC
+    // rustls 0.23 uses with_root_certificates instead of with_safe_defaults
     let mut crypto = match RustlsClientConfig::builder()
-        .with_safe_defaults()
+        .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification::new(true, true, None)))
         .with_no_client_auth()
     {

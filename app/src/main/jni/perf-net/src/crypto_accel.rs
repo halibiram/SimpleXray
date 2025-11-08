@@ -50,27 +50,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     key: JObject,
 ) -> jint {
     // Convert JObject to JByteBuffer
-    let input_buffer = match JByteBuffer::from(input) {
-        Ok(buf) => buf,
-        Err(_) => {
-            error!("Invalid input buffer");
-            return -1;
-        }
-    };
-    let output_buffer = match JByteBuffer::from(output) {
-        Ok(buf) => buf,
-        Err(_) => {
-            error!("Invalid output buffer");
-            return -1;
-        }
-    };
-    let key_buffer = match JByteBuffer::from(key) {
-        Ok(buf) => buf,
-        Err(_) => {
-            error!("Invalid key buffer");
-            return -1;
-        }
-    };
+    let input_buffer = JByteBuffer::from(input);
+    let output_buffer = JByteBuffer::from(output);
+    let key_buffer = JByteBuffer::from(key);
 
     let input_ptr = match env.get_direct_buffer_address(&input_buffer) {
         Ok(ptr) => {
@@ -169,7 +151,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // Pass only the plaintext part, it will append the tag
     let plaintext_slice = &mut output_slice[..input_len as usize];
     match key.seal_in_place_append_tag(nonce, Aad::empty(), plaintext_slice) {
-        Ok(tag_len) => {
+        Ok(_) => {
+            let tag_len = aead::AES_128_GCM.tag_len();
             debug!("AES-128-GCM encrypt successful, tag_len={}", tag_len);
             (input_len + tag_len as jint) as jint
         }

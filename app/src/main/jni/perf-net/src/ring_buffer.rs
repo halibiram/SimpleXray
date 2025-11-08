@@ -240,7 +240,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     let result = rb.write(unsafe {
         std::slice::from_raw_parts(
-            src.as_ptr().add(offset as usize),
+            src.as_ptr().add(offset as usize) as *const u8,
             length as usize,
         )
     });
@@ -290,7 +290,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     let result = rb.read(unsafe {
         std::slice::from_raw_parts_mut(
-            dst.as_ptr().add(offset as usize),
+            dst.as_ptr().add(offset as usize) as *mut u8,
             length as usize,
         )
     });

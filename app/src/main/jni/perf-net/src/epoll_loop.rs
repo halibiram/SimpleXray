@@ -117,16 +117,10 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         Interest::READABLE | Interest::WRITABLE
     };
 
-    // Create a wrapper for the raw FD
-    struct FdWrapper(RawFd);
-    impl AsRawFd for FdWrapper {
-        fn as_raw_fd(&self) -> RawFd {
-            self.0
-        }
-    }
-
-    let mut wrapper = FdWrapper(fd);
-    match ctx.poll.registry().register(&mut wrapper, token, interest) {
+    // Use mio::unix::SourceFd for raw file descriptors
+    use mio::unix::SourceFd;
+    let mut source_fd = SourceFd(&fd);
+    match ctx.poll.registry().register(&mut source_fd, token, interest) {
         Ok(_) => {
             ctx.registered_fds.insert(fd, token);
             debug!("Added fd {} to epoll", fd);
@@ -162,15 +156,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let fd = fd as RawFd;
 
     if let Some(token) = ctx.registered_fds.remove(&fd) {
-        struct FdWrapper(RawFd);
-        impl AsRawFd for FdWrapper {
-            fn as_raw_fd(&self) -> RawFd {
-                self.0
-            }
-        }
-
-        let mut wrapper = FdWrapper(fd);
-        match ctx.poll.registry().deregister(&mut wrapper) {
+        use mio::unix::SourceFd;
+        let mut source_fd = SourceFd(&fd);
+        match ctx.poll.registry().deregister(&mut source_fd) {
             Ok(_) => {
                 debug!("Removed fd {} from epoll", fd);
                 0
@@ -189,7 +177,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Wait for events
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeEpollWait(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     epoll_handle: jlong,
     out_events: jlongArray,
@@ -234,13 +222,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
                 };
 
                 let nfds = nfds.min(size as usize);
-                let mut arr = match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
+                let mut arr = unsafe { match env.get_array_elements(&out_events_array, jni::objects::ReleaseMode::CopyBack) {
                     Ok(a) => a,
                     Err(_) => {
                         error!("Failed to get array elements");
                         return -1;
                     }
-                };
+                } };
 
                 for (i, event) in events.iter().take(nfds).enumerate() {
                     // Find fd for this token

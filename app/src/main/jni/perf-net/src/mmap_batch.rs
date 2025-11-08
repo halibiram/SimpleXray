@@ -59,15 +59,21 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         None => return 0,
     };
     
+    // Use libc::mmap directly for anonymous mapping since nix 0.28 requires AsFd
     let ptr = unsafe {
-        mmap(
-            None,
-            size_nonzero,
-            ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-            MapFlags::MAP_PRIVATE | MapFlags::MAP_ANONYMOUS,
-            None,
+        let addr = libc::mmap(
+            std::ptr::null_mut(),
+            size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
             0,
-        )
+        );
+        if addr == libc::MAP_FAILED {
+            Err(nix::errno::Errno::last())
+        } else {
+            Ok(std::ptr::NonNull::new(addr as *mut u8).unwrap())
+        }
     };
 
     match ptr {
@@ -132,8 +138,10 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut total = batch.total_mapped.lock();
 
     for i in 0..addr_len {
-        let ptr = unsafe { addrs.get_unchecked(i as usize) } as *mut libc::c_void;
-        let len = unsafe { lens.get_unchecked(i as usize) } as usize;
+        let ptr_val = unsafe { *addrs.get_unchecked(i as usize) };
+        let ptr = ptr_val as *mut libc::c_void;
+        let len_val = unsafe { *lens.get_unchecked(i as usize) };
+        let len = len_val as usize;
 
         // Convert *mut to NonNull for munmap
         if let Some(ptr_nonnull) = std::ptr::NonNull::new(ptr) {

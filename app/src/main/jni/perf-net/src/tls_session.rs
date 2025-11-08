@@ -67,7 +67,7 @@ fn remove_oldest_entry(cache: &mut HashMap<String, TlsSessionTicket>) {
 /// Store TLS session ticket
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeStoreTLSTicket(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     host: JString,
     ticket_data: JByteArray,
@@ -147,11 +147,13 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     // Create byte array
     match env.new_byte_array(ticket.ticket_data.len() as i32) {
         Ok(result) => {
-            if let Err(_) = env.set_byte_array_region(result, 0, &ticket.ticket_data) {
+            // Convert Vec<u8> to &[i8] for JNI
+            let ticket_data_i8: Vec<i8> = ticket.ticket_data.iter().map(|&b| b as i8).collect();
+            if let Err(_) = env.set_byte_array_region(result, 0, &ticket_data_i8) {
                 return std::ptr::null_mut();
             }
             debug!("Retrieved TLS ticket for {}", host_str);
-            result
+            result.into_raw()
         }
         Err(_) => std::ptr::null_mut(),
     }

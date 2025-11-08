@@ -8,6 +8,7 @@ use jni::objects::{JClass, JObject, JIntArray, JByteBuffer, JObjectArray};
 use jni::sys::{jint, jobject, jobjectArray, jintArray};
 use nix::sys::socket::{recv, send, MsgFlags, recvmsg};
 use std::os::unix::io::RawFd;
+use std::os::fd::AsRawFd;
 use std::ptr;
 use log::{debug, error};
 
@@ -81,13 +82,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // Convert JObject to JByteBuffer
-    let buffer_byte = match JByteBuffer::from(buffer) {
-        Ok(buf) => buf,
-        Err(_) => {
-            error!("Not a direct buffer");
-            return -1;
-        }
-    };
+    let buffer_byte = JByteBuffer::from(buffer);
 
     let buf_ptr = match env.get_direct_buffer_address(&buffer_byte) {
         Ok(ptr) => {
@@ -153,13 +148,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     }
 
     // Convert JObject to JByteBuffer
-    let buffer_byte = match JByteBuffer::from(buffer) {
-        Ok(buf) => buf,
-        Err(_) => {
-            error!("Not a direct buffer");
-            return -1;
-        }
-    };
+    let buffer_byte = JByteBuffer::from(buffer);
 
     let buf_ptr = match env.get_direct_buffer_address(&buffer_byte) {
         Ok(ptr) => {
@@ -328,15 +317,15 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let fd = fd as RawFd;
     let flags = MsgFlags::MSG_DONTWAIT;
 
-    // Convert libc::iovec to nix::IoSliceMut
-    use std::os::unix::io::IoSliceMut;
+    // Convert libc::iovec to std::io::IoSliceMut
+    use std::io::IoSliceMut;
     let mut io_slices: Vec<IoSliceMut> = iovecs.iter().map(|iov| {
         unsafe {
             IoSliceMut::new(std::slice::from_raw_parts_mut(iov.iov_base as *mut u8, iov.iov_len))
         }
     }).collect();
 
-    match recvmsg(fd, &mut io_slices, flags, None) {
+    match recvmsg(fd, &mut io_slices, None, flags) {
         Ok(received) => received as jint,
         Err(nix::errno::Errno::EAGAIN) => 0,
         Err(e) => {
@@ -349,7 +338,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Allocate direct ByteBuffer in native memory
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeAllocateDirectBuffer(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     capacity: jint,
 ) -> jobject {
@@ -373,7 +362,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     };
 
     match env.call_static_method(
-        byte_buffer_class,
+        &byte_buffer_class,
         "allocateDirect",
         "(I)Ljava/nio/ByteBuffer;",
         &[jni::objects::JValue::Int(capacity)],

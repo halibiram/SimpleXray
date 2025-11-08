@@ -9,6 +9,7 @@ use jni::sys::jint;
 use log::{debug, error};
 use nix::sys::socket::{socket, AddressFamily, SockType, SockFlag, SockProtocol};
 use std::os::unix::io::RawFd;
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::OnceLock;
 use std::fs::File;

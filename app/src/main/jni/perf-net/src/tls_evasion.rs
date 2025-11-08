@@ -32,7 +32,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
     output: JByteArray,
 ) -> jint {
-    let capacity = match env.get_array_length(output) {
+    let capacity = match env.get_array_length(&output) {
         Ok(len) => len as usize,
         Err(_) => return -1,
     };
@@ -48,7 +48,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let mut bytes = vec![0u8; padding_len];
     get_rng().fill(&mut bytes[..]);
 
-    if let Err(_) = env.set_byte_array_region(output, 0, &bytes) {
+    // Convert Vec<u8> to &[i8] for JNI
+    let bytes_i8: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
+    if let Err(_) = env.set_byte_array_region(&output, 0, &bytes_i8) {
         return -1;
     }
 

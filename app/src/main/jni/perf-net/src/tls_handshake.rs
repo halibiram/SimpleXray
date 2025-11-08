@@ -26,8 +26,9 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
 ) -> jlong {
     // Create rustls client config
+    // rustls 0.23 uses with_root_certificates instead of with_safe_defaults
     let mut crypto = match RustlsClientConfig::builder()
-        .with_safe_defaults()
+        .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification::new(true, true, None)))
         .with_no_client_auth()
     {
@@ -93,7 +94,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
         return -1;
     }
 
-    let hostname_str = match _env.get_string(hostname) {
+    let hostname_str = match _env.get_string(&hostname) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => return -1,
     };

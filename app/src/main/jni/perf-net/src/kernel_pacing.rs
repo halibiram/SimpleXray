@@ -25,7 +25,8 @@ struct PacingFIFO {
     running: Arc<std::sync::atomic::AtomicBool>,
 }
 
-static PACING_FIFOS: Mutex<HashMap<u64, Arc<Mutex<PacingFIFO>>>> = Mutex::new(std::collections::HashMap::new());
+use std::sync::LazyLock;
+static PACING_FIFOS: LazyLock<Mutex<HashMap<u64, Arc<Mutex<PacingFIFO>>>>> = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 static NEXT_FIFO_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Initialize internal pacing FIFO
@@ -92,7 +93,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 
     unsafe {
         std::ptr::copy_nonoverlapping(
-            src.as_ptr().add(offset as usize),
+            src.as_ptr().add(offset as usize) as *const u8,
             packet_data.as_mut_ptr(),
             length as usize,
         );

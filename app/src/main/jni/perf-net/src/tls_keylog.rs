@@ -26,7 +26,7 @@ struct SessionTiming {
 
 static KEYLOG_PATH: Mutex<Option<String>> = Mutex::new(None);
 static KEYLOG_ENABLED: Mutex<bool> = Mutex::new(false);
-static SESSION_TIMINGS: Mutex<HashMap<u64, SessionTiming>> = Mutex::new(HashMap::new());
+static SESSION_TIMINGS: LazyLock<Mutex<HashMap<u64, SessionTiming>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn get_timestamp_ms() -> u64 {
     SystemTime::now()
@@ -94,7 +94,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     _class: JClass,
     filepath: JString,
 ) -> jint {
-    let path = match env.get_string(filepath) {
+    let path = match env.get_string(&filepath) {
         Ok(s) => s.to_string_lossy().to_string(),
         Err(_) => {
             error!("Invalid filepath");
@@ -250,7 +250,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
             if let Err(_) = env.set_long_array_region(result, 0, &values) {
                 return std::ptr::null_mut();
             }
-            result
+            result.into_raw()
         }
         Err(_) => std::ptr::null_mut(),
     }

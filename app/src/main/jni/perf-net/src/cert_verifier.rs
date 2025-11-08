@@ -96,7 +96,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     hostname: JString,
 ) -> jlong {
     let hostname_str = if !hostname.is_null() {
-        match env.get_string(hostname) {
+        match env.get_string(&hostname) {
             Ok(s) => Some(s.to_string_lossy().to_string()),
             Err(_) => None,
         }

@@ -9,6 +9,7 @@ use jni::sys::jint;
 use log::{debug, error};
 use nix::sys::socket::{setsockopt, sockopt};
 use std::os::unix::io::RawFd;
+use std::os::fd::BorrowedFd;
 
 // Helper function to set socket option using libc (for options not in nix 0.28)
 #[cfg(target_os = "android")]
@@ -223,9 +224,8 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     let keepcnt: i32 = 3;      // 3 probes before timeout
 
     // Enable keep-alive
-    use std::os::fd::BorrowedFd;
     let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
-    match setsockopt(borrowed_fd, sockopt::KeepAlive, keepalive) {
+    match setsockopt(&borrowed_fd, sockopt::KeepAlive, &keepalive) {
         Ok(_) => {}
         Err(e) => {
             error!("Failed to enable SO_KEEPALIVE: {}", e);
@@ -282,8 +282,10 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
     };
 
     let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
-    let result1 = setsockopt(borrowed_fd, sockopt::SndBuf, send_buf as u32);
-    let result2 = setsockopt(borrowed_fd, sockopt::RcvBuf, recv_buf as u32);
+    let send_buf_usize = send_buf as usize;
+    let recv_buf_usize = recv_buf as usize;
+    let result1 = setsockopt(&borrowed_fd, sockopt::SndBuf, &send_buf_usize);
+    let result2 = setsockopt(&borrowed_fd, sockopt::RcvBuf, &recv_buf_usize);
 
     match (result1, result2) {
         (Ok(_), Ok(_)) => {
