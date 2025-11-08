@@ -1184,73 +1184,78 @@ class TProxyService : VpnService() {
                 stopXray()
                 return
             }
-            
-            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain)
-            establishedFd.let { fd ->
-                try {
-                    // Get QUICHE server address from chain or preferences
-                    val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
-                    val quicheServerPort = prefs.quicheServerPort ?: 443
-                    
-                    AppLogger.i("TProxyService: Starting QUICHE TUN forwarder with chain ($quicheServerHost:$quicheServerPort)")
-                    
-                    quicheClient = QuicheClient.create(
-                        serverHost = quicheServerHost,
-                        serverPort = quicheServerPort,
-                        congestionControl = CongestionControl.BBR2,
-                        enableZeroCopy = true,
-                        cpuAffinity = CpuAffinity.BIG_CORES
-                    )
-                    
-                    if (quicheClient == null) {
-                        AppLogger.e("TProxyService: Failed to create QUICHE client")
-                        stopXray()
-                        return
-                    }
-                    
-                    // Connect QUICHE client
-                    if (!quicheClient!!.connect()) {
-                        AppLogger.e("TProxyService: Failed to connect QUICHE client")
-                        quicheClient?.close()
-                        quicheClient = null
-                        stopXray()
-                        return
-                    }
-                    
-                    // Create and start QUICHE TUN forwarder
-                    quicheTunForwarder = QuicheTunForwarder.create(
-                        tunFd = fd.fd,
-                        quicClient = quicheClient!!,
-                        batchSize = 64,
-                        useGSO = true,
-                        useGRO = true
-                    )
-                    
-                    if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
-                        AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder")
-                        quicheTunForwarder?.close()
-                        quicheTunForwarder = null
-                        quicheClient?.close()
-                        quicheClient = null
-                        stopXray()
-                        return
-                    }
-                    
-                    AppLogger.i("TProxyService: QUICHE TUN forwarder with chain started successfully")
-                    
-                    // Apply performance optimizations if enabled
-                    if (enablePerformanceMode && perfIntegration != null) {
-                        try {
-                            perfIntegration?.applyNetworkOptimizations(fd.fd)
-                        } catch (e: Exception) {
-                            AppLogger.w("Failed to apply network optimizations", e)
+
+            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain) if enabled
+            if (prefs.useQuicheTun) {
+                AppLogger.i("TProxyService: QUICHE TUN is enabled, starting forwarder")
+                establishedFd.let { fd ->
+                    try {
+                        // Get QUICHE server address from chain or preferences
+                        val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
+                        val quicheServerPort = prefs.quicheServerPort ?: 443
+
+                        AppLogger.i("TProxyService: Starting QUICHE TUN forwarder with chain ($quicheServerHost:$quicheServerPort)")
+
+                        quicheClient = QuicheClient.create(
+                            serverHost = quicheServerHost,
+                            serverPort = quicheServerPort,
+                            congestionControl = CongestionControl.BBR2,
+                            enableZeroCopy = true,
+                            cpuAffinity = CpuAffinity.BIG_CORES
+                        )
+
+                        if (quicheClient == null) {
+                            AppLogger.e("TProxyService: Failed to create QUICHE client")
+                            stopXray()
+                            return
                         }
+
+                        // Connect QUICHE client
+                        if (!quicheClient!!.connect()) {
+                            AppLogger.e("TProxyService: Failed to connect QUICHE client")
+                            quicheClient?.close()
+                            quicheClient = null
+                            stopXray()
+                            return
+                        }
+
+                        // Create and start QUICHE TUN forwarder
+                        quicheTunForwarder = QuicheTunForwarder.create(
+                            tunFd = fd.fd,
+                            quicClient = quicheClient!!,
+                            batchSize = 64,
+                            useGSO = true,
+                            useGRO = true
+                        )
+
+                        if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
+                            AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder")
+                            quicheTunForwarder?.close()
+                            quicheTunForwarder = null
+                            quicheClient?.close()
+                            quicheClient = null
+                            stopXray()
+                            return
+                        }
+
+                        AppLogger.i("TProxyService: QUICHE TUN forwarder with chain started successfully")
+
+                        // Apply performance optimizations if enabled
+                        if (enablePerformanceMode && perfIntegration != null) {
+                            try {
+                                perfIntegration?.applyNetworkOptimizations(fd.fd)
+                            } catch (e: Exception) {
+                                AppLogger.w("Failed to apply network optimizations", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder: ${e.message}", e)
+                        stopXray()
+                        return
                     }
-                } catch (e: Exception) {
-                    AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder: ${e.message}", e)
-                    stopXray()
-                    return
                 }
+            } else {
+                AppLogger.i("TProxyService: QUICHE TUN is disabled, using standard VPN routing")
             }
 
             val successIntent = Intent(ACTION_START)
