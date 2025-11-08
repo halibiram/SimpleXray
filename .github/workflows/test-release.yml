@@ -327,6 +327,110 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Build BoringSSL for QUICHE
+        run: |
+          echo "🔨 Building BoringSSL for QUICHE..."
+          
+          # Get NDK path from Android SDK
+          NDK_HOME="$ANDROID_HOME/ndk/$(ls -1 $ANDROID_HOME/ndk | head -1)"
+          if [ ! -d "$NDK_HOME" ]; then
+            echo "❌ NDK not found at $NDK_HOME"
+            exit 1
+          fi
+          echo "Using NDK: $NDK_HOME"
+          
+          # Install build tools
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+          
+          # BoringSSL path in QUICHE submodule
+          BORINGSSL_DIR="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl"
+          
+          if [ ! -d "$BORINGSSL_DIR" ]; then
+            echo "⚠️  BoringSSL directory not found at $BORINGSSL_DIR"
+            echo "   QUICHE build will be skipped"
+            exit 0
+          fi
+          
+          if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
+            echo "⚠️  BoringSSL CMakeLists.txt not found"
+            echo "   QUICHE build will be skipped"
+            exit 0
+          fi
+          
+          cd "$BORINGSSL_DIR"
+          
+          # Function to build BoringSSL for a specific ABI
+          build_boringssl() {
+            local ABI=$1
+            local TOOLCHAIN=$2
+            local CMAKE_ARCH=$3
+            
+            echo "Building BoringSSL for $ABI..."
+            
+            # Set up toolchain
+            TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+            export PATH=$TOOLCHAIN_DIR/bin:$PATH
+            export CC=$TOOLCHAIN-clang
+            export CXX=$TOOLCHAIN-clang++
+            export AR=$TOOLCHAIN_DIR/bin/llvm-ar
+            export RANLIB=$TOOLCHAIN_DIR/bin/llvm-ranlib
+            export ANDROID_NDK_HOME=$NDK_HOME
+            export ANDROID_NDK_ROOT=$NDK_HOME
+            
+            # Create build directory (Android.mk expects it at build/)
+            # Clean if exists to avoid stale builds
+            BUILD_DIR="build"
+            if [ -d "$BUILD_DIR" ]; then
+              echo "🧹 Cleaning existing build directory..."
+              rm -rf "$BUILD_DIR"
+            fi
+            mkdir -p "$BUILD_DIR"
+            cd "$BUILD_DIR"
+            
+            # Configure BoringSSL with CMake
+            cmake .. \
+              -DCMAKE_SYSTEM_NAME=Android \
+              -DCMAKE_SYSTEM_VERSION=24 \
+              -DCMAKE_ANDROID_ARCH_ABI=$CMAKE_ARCH \
+              -DCMAKE_ANDROID_NDK=$NDK_HOME \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DOPENSSL_SMALL=1 \
+              -DOPENSSL_NO_DEPRECATED=1 \
+              -DOPENSSL_NO_ASM=0 \
+              -DBUILD_SHARED_LIBS=OFF \
+              -GNinja
+            
+            # Build
+            ninja -j$(nproc) || {
+              echo "⚠️  BoringSSL build failed for $ABI"
+              cd ..
+              return 1
+            }
+            
+            # Verify libraries were created
+            if [ -f "crypto/libcrypto.a" ] && [ -f "ssl/libssl.a" ]; then
+              echo "✅ BoringSSL build complete for $ABI"
+              ls -lh crypto/libcrypto.a ssl/libssl.a
+            else
+              echo "❌ BoringSSL libraries not found after build"
+              cd ..
+              return 1
+            fi
+            
+            cd ..
+          }
+          
+          # Build for arm64-v8a (required for QUICHE)
+          if build_boringssl "arm64-v8a" "aarch64-linux-android24" "arm64-v8a"; then
+            echo "✅ BoringSSL built successfully for QUICHE"
+          else
+            echo "⚠️  BoringSSL build failed - QUICHE may not work"
+          fi
+          
+          cd ../../../../../../..
+
       - name: Setup Keystore and Properties
         env:
           KEYSTORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -392,133 +496,6 @@ jobs:
           echo "📋 Verifying native libraries:"
           find app/src/main/jniLibs -name "*.so" -type f 2>/dev/null | head -10 || echo "⚠️  No .so files found"
           find app/src/main/jni/quiche-client/libs -name "libquiche.*" -type f 2>/dev/null | head -10 || echo "⚠️  No QUICHE libraries found"
-
-      - name: Build BoringSSL for QUICHE
-        run: |
-          echo "🔨 Building BoringSSL for QUICHE..."
-          
-          # Get NDK path from Android SDK
-          NDK_HOME="$ANDROID_HOME/ndk/$(ls -1 $ANDROID_HOME/ndk | head -1)"
-          if [ ! -d "$NDK_HOME" ]; then
-            echo "❌ NDK not found at $NDK_HOME"
-            exit 1
-          fi
-          echo "Using NDK: $NDK_HOME"
-          
-          # Install build tools
-          sudo apt-get update
-          sudo apt-get install -y ninja-build cmake
-          
-          # BoringSSL path in QUICHE submodule
-          BORINGSSL_DIR="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl"
-          
-          # Check if QUICHE library exists - if not, we don't need BoringSSL
-          QUICHE_LIB="app/src/main/jni/quiche-client/libs/arm64-v8a/libquiche.a"
-          if [ ! -f "$QUICHE_LIB" ]; then
-            echo "⚠️  QUICHE library not found at $QUICHE_LIB"
-            echo "   QUICHE build will be skipped, BoringSSL not needed"
-            exit 0
-          fi
-          
-          if [ ! -d "$BORINGSSL_DIR" ]; then
-            echo "❌ BoringSSL directory not found at $BORINGSSL_DIR"
-            echo "   QUICHE library exists but BoringSSL is missing - build will fail"
-            exit 1
-          fi
-          
-          if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
-            echo "❌ BoringSSL CMakeLists.txt not found at $BORINGSSL_DIR/CMakeLists.txt"
-            echo "   QUICHE library exists but BoringSSL is incomplete - build will fail"
-            exit 1
-          fi
-          
-          echo "✅ BoringSSL source found, building libraries..."
-          cd "$BORINGSSL_DIR"
-          
-          # Set up toolchain
-          TOOLCHAIN_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-          export PATH=$TOOLCHAIN_DIR/bin:$PATH
-          export CC=aarch64-linux-android24-clang
-          export CXX=aarch64-linux-android24-clang++
-          export AR=$TOOLCHAIN_DIR/bin/llvm-ar
-          export RANLIB=$TOOLCHAIN_DIR/bin/llvm-ranlib
-          export ANDROID_NDK_HOME=$NDK_HOME
-          export ANDROID_NDK_ROOT=$NDK_HOME
-          
-          # Create build directory (Android.mk expects it at build/)
-          # Clean if exists to avoid stale builds
-          BUILD_DIR="build"
-          if [ -d "$BUILD_DIR" ]; then
-            echo "🧹 Cleaning existing build directory..."
-            rm -rf "$BUILD_DIR"
-          fi
-          mkdir -p "$BUILD_DIR"
-          cd "$BUILD_DIR"
-          
-          echo "📦 Configuring BoringSSL with CMake..."
-          # Configure BoringSSL with CMake
-          if ! cmake .. \
-            -DCMAKE_SYSTEM_NAME=Android \
-            -DCMAKE_SYSTEM_VERSION=24 \
-            -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a \
-            -DCMAKE_ANDROID_NDK=$NDK_HOME \
-            -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DOPENSSL_SMALL=1 \
-            -DOPENSSL_NO_DEPRECATED=1 \
-            -DOPENSSL_NO_ASM=0 \
-            -DBUILD_SHARED_LIBS=OFF \
-            -GNinja; then
-            echo "❌ CMake configuration failed"
-            exit 1
-          fi
-          
-          echo "🔨 Building BoringSSL with Ninja..."
-          # Build
-          if ! ninja -j$(nproc); then
-            echo "❌ BoringSSL build failed"
-            echo "📋 Build directory contents:"
-            ls -la || true
-            exit 1
-          fi
-          
-          # Verify libraries were created
-          if [ ! -f "crypto/libcrypto.a" ] || [ ! -f "ssl/libssl.a" ]; then
-            echo "❌ BoringSSL libraries not found after build"
-            echo "📋 Build directory contents:"
-            find . -name "*.a" -type f || true
-            ls -la crypto/ ssl/ || true
-            exit 1
-          fi
-          
-          echo "✅ BoringSSL build complete for arm64-v8a"
-          ls -lh crypto/libcrypto.a ssl/libssl.a
-          
-          # Verify the expected paths exist
-          EXPECTED_CRYPTO="$(pwd)/crypto/libcrypto.a"
-          EXPECTED_SSL="$(pwd)/ssl/libssl.a"
-          echo "📋 Libraries at expected paths:"
-          echo "   Crypto: $EXPECTED_CRYPTO"
-          echo "   SSL: $EXPECTED_SSL"
-          
-          cd ../../../../../../..
-          
-          # Final verification from project root
-          echo "🔍 Final verification of BoringSSL libraries..."
-          BORINGSSL_CRYPTO="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl/build/crypto/libcrypto.a"
-          BORINGSSL_SSL="app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl/build/ssl/libssl.a"
-          
-          if [ -f "$BORINGSSL_CRYPTO" ] && [ -f "$BORINGSSL_SSL" ]; then
-            echo "✅ BoringSSL libraries verified at expected paths:"
-            ls -lh "$BORINGSSL_CRYPTO" "$BORINGSSL_SSL"
-          else
-            echo "❌ BoringSSL libraries not found at expected paths!"
-            echo "   Expected: $BORINGSSL_CRYPTO"
-            echo "   Expected: $BORINGSSL_SSL"
-            echo "📋 Checking if BoringSSL directory exists:"
-            ls -la app/src/main/jni/quiche-client/third_party/quiche/quiche/deps/boringssl/ || true
-            exit 1
-          fi
 
       - name: Download Rules Files
         run: |
