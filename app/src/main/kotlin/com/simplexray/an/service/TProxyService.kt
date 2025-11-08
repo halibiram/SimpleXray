@@ -34,7 +34,6 @@ import com.simplexray.an.chain.reality.RealityConfig
 import com.simplexray.an.chain.reality.TlsFingerprintProfile
 import com.simplexray.an.chain.pepper.PepperParams
 import com.simplexray.an.chain.pepper.PepperMode
-import com.simplexray.an.chain.pepper.PepperShaper
 import com.simplexray.an.chain.pepper.QueueDiscipline
 import com.simplexray.an.quiche.QuicheClient
 import com.simplexray.an.quiche.QuicheTunForwarder
@@ -1187,30 +1186,11 @@ class TProxyService : VpnService() {
 
             // Attach PepperShaper to TUN FD for traffic shaping (if chain is running)
             if (chainStarted && chainSupervisor?.getStatus()?.state != ChainState.STOPPED) {
-                try {
-                    val pepperParams = PepperParams(
-                        mode = PepperMode.BURST_FRIENDLY,
-                        maxBurstBytes = 64 * 1024,
-                        targetRateBps = 0,
-                        queueDiscipline = QueueDiscipline.FQ,
-                        lossAwareBackoff = true,
-                        enablePacing = true
-                    )
-
-                    // Attach PepperShaper to TUN FD
-                    val pepperHandle = PepperShaper.attach(
-                        fdPair = Pair(establishedFd.fd, establishedFd.fd),
-                        mode = PepperShaper.SocketMode.TUN,
-                        params = pepperParams
-                    )
-
-                    if (pepperHandle != null && pepperHandle > 0) {
-                        AppLogger.i("TProxyService: PepperShaper attached to TUN FD (handle=$pepperHandle)")
-                    } else {
-                        AppLogger.w("TProxyService: Failed to attach PepperShaper to TUN FD")
-                    }
-                } catch (e: Exception) {
-                    AppLogger.w("TProxyService: Exception attaching PepperShaper: ${e.message}", e)
+                val pepperAttached = chainSupervisor?.attachPepperToTunFd(establishedFd.fd) ?: false
+                if (pepperAttached) {
+                    AppLogger.i("TProxyService: PepperShaper attached to TUN FD successfully")
+                } else {
+                    AppLogger.w("TProxyService: Failed to attach PepperShaper to TUN FD (non-critical)")
                 }
             }
 

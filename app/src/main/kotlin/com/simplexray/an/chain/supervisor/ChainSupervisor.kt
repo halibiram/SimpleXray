@@ -473,6 +473,51 @@ class ChainSupervisor(private val context: Context) {
     }
     
     /**
+     * Attach PepperShaper to TUN file descriptor for traffic shaping
+     *
+     * @param tunFd The TUN interface file descriptor
+     * @return true if successfully attached, false otherwise
+     */
+    fun attachPepperToTunFd(tunFd: Int): Boolean {
+        return try {
+            // Check if PepperShaper is initialized
+            if (currentConfig?.pepperParams == null) {
+                AppLogger.w("ChainSupervisor: Cannot attach PepperShaper - no pepper params configured")
+                return false
+            }
+
+            // Don't re-attach if already attached
+            if (pepperHandle != null && pepperHandle!! > 0) {
+                AppLogger.i("ChainSupervisor: PepperShaper already attached (handle=$pepperHandle)")
+                return true
+            }
+
+            AppLogger.i("ChainSupervisor: Attaching PepperShaper to TUN FD $tunFd")
+
+            val handle = PepperShaper.attach(
+                fdPair = Pair(tunFd, tunFd),
+                mode = PepperShaper.SocketMode.TUN,
+                params = currentConfig!!.pepperParams!!
+            )
+
+            if (handle != null && handle > 0) {
+                pepperHandle = handle
+                updateLayerStatus("pepper", true, null)
+                AppLogger.i("ChainSupervisor: PepperShaper attached successfully (handle=$handle)")
+                true
+            } else {
+                AppLogger.w("ChainSupervisor: PepperShaper.attach() returned invalid handle")
+                updateLayerStatus("pepper", false, "Invalid handle returned")
+                false
+            }
+        } catch (e: Exception) {
+            AppLogger.e("ChainSupervisor: Failed to attach PepperShaper to TUN FD: ${e.message}", e)
+            updateLayerStatus("pepper", false, e.message)
+            false
+        }
+    }
+
+    /**
      * Shutdown and cleanup all resources
      * Prevents memory leaks by cancelling all coroutines
      */
