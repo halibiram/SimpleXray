@@ -599,7 +599,13 @@ tasks.register("buildRustModules") {
                 def destDir = file("src/main/jniLibs/${abi}")
                 def destLib = file("${destDir}/lib${kotlinLibName}.so")
                 
-                // Always build Rust library - REQUIRED
+                // Check if library already exists in jniLibs (from CI artifacts)
+                if (destLib.exists()) {
+                    println("   ✅ ${moduleName} (${abi}): lib${kotlinLibName}.so already exists, skipping build")
+                    return
+                }
+                
+                // Build Rust library if not found
                 println("   🔨 Building ${moduleName} for ${target}...")
                 if (needsWSL) {
                     println("   🐧 Using WSL for ${moduleName} (CMake dependencies)")
