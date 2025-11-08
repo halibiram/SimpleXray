@@ -157,7 +157,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeIsConnec
 /// Send data
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
     data: JByteArray,
@@ -174,7 +174,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
         }
     };
 
-    let src = match env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) {
+    let src = match unsafe { env.get_array_elements(&data, jni::objects::ReleaseMode::NoCopyBack) } {
         Ok(elems) => elems,
         Err(_) => {
             error!("Failed to get byte array elements");
