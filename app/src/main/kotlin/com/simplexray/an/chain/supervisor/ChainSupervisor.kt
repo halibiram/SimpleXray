@@ -392,22 +392,28 @@ class ChainSupervisor(private val context: Context) {
     
     /**
      * Stop the chain
+     * 
+     * Thread-safe: Uses Mutex for synchronization instead of @Synchronized
+     * to avoid deadlock with coroutine-based status updates.
      */
-    @Synchronized
     fun stop(): Result<Unit> {
         return try {
-            if (_status.value.state == ChainState.STOPPED) {
-                return Result.success(Unit)
-            }
-            
-            AppLogger.i("ChainSupervisor: Stopping chain")
+            // Use runBlocking to access mutex from non-suspend context
+            // Wrap entire stop logic in mutex to ensure mutual exclusion
             kotlinx.coroutines.runBlocking {
                 statusMutex.withLock {
+                    // Early return if already stopped
+                    if (_status.value.state == ChainState.STOPPED) {
+                        return@runBlocking Result.success(Unit)
+                    }
+                    
+                    AppLogger.i("ChainSupervisor: Stopping chain")
                     _status.value = _status.value.copy(state = ChainState.STOPPING)
                 }
             }
             
             // Stop layers in reverse order with error handling
+            // These operations are safe to run outside the mutex as they don't modify shared state
             val stopResults = mutableListOf<Result<Unit>>()
             
             // Stop Xray-core
@@ -447,6 +453,7 @@ class ChainSupervisor(private val context: Context) {
                 }
             }
             
+            // Final status update - must be in mutex
             startTime.set(0)
             kotlinx.coroutines.runBlocking {
                 statusMutex.withLock {

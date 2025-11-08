@@ -593,7 +593,7 @@ jobs:
           ./gradlew assembleRelease --stacktrace --warning-mode all 2>&1 | tee gradle-build.log
           BUILD_EXIT_CODE=${PIPESTATUS[0]}
           set -e  # Re-enable exit on error
-          
+
           if [ "$BUILD_EXIT_CODE" -ne 0 ]; then
             echo "❌ Build failed with exit code: $BUILD_EXIT_CODE"
             echo ""
