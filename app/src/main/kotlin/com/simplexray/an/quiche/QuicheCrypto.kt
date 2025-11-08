@@ -14,7 +14,7 @@ object QuicheCrypto {
         try {
             System.loadLibrary("quiche-client")
         } catch (e: UnsatisfiedLinkError) {
-            AppLogger.e(TAG, "Failed to load QUICHE client library", e)
+            AppLogger.e("$TAG: Failed to load QUICHE client library", e)
         }
     }
 

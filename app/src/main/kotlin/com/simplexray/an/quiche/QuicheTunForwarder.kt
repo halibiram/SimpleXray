@@ -19,7 +19,7 @@ class QuicheTunForwarder private constructor(
             try {
                 System.loadLibrary("quiche-client")
             } catch (e: UnsatisfiedLinkError) {
-                AppLogger.e(TAG, "Failed to load QUICHE client library", e)
+                AppLogger.e("$TAG: Failed to load QUICHE client library", e)
             }
         }
 
@@ -42,7 +42,7 @@ class QuicheTunForwarder private constructor(
             )
 
             if (handle == 0L) {
-                AppLogger.e(TAG, "Failed to create TUN forwarder")
+                AppLogger.e("$TAG: Failed to create TUN forwarder")
                 return null
             }
 
@@ -77,11 +77,11 @@ class QuicheTunForwarder private constructor(
     fun start(): Boolean {
         val result = nativeStart(handle)
         if (result != 0) {
-            AppLogger.e(TAG, "Failed to start forwarder: $result")
+            AppLogger.e("$TAG: Failed to start forwarder: $result")
             return false
         }
 
-        AppLogger.i(TAG, "TUN forwarder started")
+        AppLogger.i("$TAG: TUN forwarder started")
         return true
     }
 
@@ -90,7 +90,7 @@ class QuicheTunForwarder private constructor(
      */
     fun stop() {
         nativeStop(handle)
-        AppLogger.i(TAG, "TUN forwarder stopped")
+        AppLogger.i("$TAG: TUN forwarder stopped")
     }
 
     /**
@@ -111,7 +111,7 @@ class QuicheTunForwarder private constructor(
     override fun close() {
         stop()
         nativeDestroy(handle)
-        AppLogger.i(TAG, "TUN forwarder destroyed")
+        AppLogger.i("$TAG: TUN forwarder destroyed")
     }
 }
 

@@ -72,10 +72,10 @@ jobs:
           # QUICHE headers are needed even if libraries are pre-built
           echo "📦 Initializing QUICHE submodule..."
           QUICHE_DIR="app/src/main/jni/quiche-client/third_party/quiche"
-          
+
           # Ensure parent directory exists
           mkdir -p "$(dirname "$QUICHE_DIR")"
-          
+
           # Try submodule update first
           if git submodule update --init --recursive "$QUICHE_DIR" 2>&1; then
             echo "✅ QUICHE submodule updated via git submodule"
@@ -96,7 +96,7 @@ jobs:
               }
             fi
           fi
-          
+
           # Verify QUICHE submodule structure
           if [ -d "$QUICHE_DIR/quiche" ] && [ -f "$QUICHE_DIR/quiche/Cargo.toml" ]; then
             echo "✅ QUICHE submodule initialized correctly"
@@ -163,7 +163,7 @@ jobs:
         if: steps.check_tag.outputs.exists == 'false'
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION || '1.25.3' }}
+          go-version: ${{ env.GO_VERSION != '' && env.GO_VERSION || '1.25.3' }}
           cache: false
 
       - name: Setup Keystore and Properties

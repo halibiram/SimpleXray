@@ -17,9 +17,9 @@ class QuicheClient private constructor(
         init {
             try {
                 System.loadLibrary("quiche-client")
-                AppLogger.i(TAG, "QUICHE client library loaded")
+                AppLogger.i("$TAG: QUICHE client library loaded")
             } catch (e: UnsatisfiedLinkError) {
-                AppLogger.e(TAG, "Failed to load QUICHE client library", e)
+                AppLogger.e("$TAG: Failed to load QUICHE client library", e)
             }
         }
 
@@ -42,7 +42,7 @@ class QuicheClient private constructor(
             )
 
             if (handle == 0L) {
-                AppLogger.e(TAG, "Failed to create QUIC client")
+                AppLogger.e("$TAG: Failed to create QUIC client")
                 return null
             }
 
@@ -83,11 +83,11 @@ class QuicheClient private constructor(
     fun connect(): Boolean {
         val result = nativeConnect(handle)
         if (result != 0) {
-            AppLogger.e(TAG, "Failed to connect: $result")
+            AppLogger.e("$TAG: Failed to connect: $result")
             return false
         }
 
-        AppLogger.i(TAG, "Connected to QUIC server")
+        AppLogger.i("$TAG: Connected to QUIC server")
         return true
     }
 
@@ -96,7 +96,7 @@ class QuicheClient private constructor(
      */
     fun disconnect() {
         nativeDisconnect(handle)
-        AppLogger.i(TAG, "Disconnected from server")
+        AppLogger.i("$TAG: Disconnected from server")
     }
 
     /**
@@ -139,7 +139,7 @@ class QuicheClient private constructor(
     override fun close() {
         disconnect()
         nativeDestroy(handle)
-        AppLogger.i(TAG, "QUIC client destroyed")
+        AppLogger.i("$TAG: QUIC client destroyed")
     }
 }
 
