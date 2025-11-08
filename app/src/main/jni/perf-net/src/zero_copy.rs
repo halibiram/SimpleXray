@@ -223,7 +223,7 @@ pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nat
 /// Scatter-gather receive (recvmsg)
 #[no_mangle]
 pub extern "system" fn Java_com_simplexray_an_performance_PerformanceManager_nativeRecvMsg(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     fd: jint,
     buffers: jobjectArray,
