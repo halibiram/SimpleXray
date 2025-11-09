@@ -49,7 +49,7 @@ class QuicheTunForwarder private constructor(
             return QuicheTunForwarder(handle)
         }
 
-        @JvmStatic
+        // Remove @JvmStatic to fix JNI name mangling issue (same as QuicheClient)
         private external fun nativeCreate(
             tunFd: Int,
             clientHandle: Long,
@@ -58,16 +58,12 @@ class QuicheTunForwarder private constructor(
             useGRO: Boolean
         ): Long
 
-        @JvmStatic
         private external fun nativeStart(handle: Long): Int
 
-        @JvmStatic
         private external fun nativeStop(handle: Long)
 
-        @JvmStatic
         private external fun nativeDestroy(handle: Long)
 
-        @JvmStatic
         private external fun nativeGetStats(handle: Long): LongArray?
     }
 

@@ -39,10 +39,9 @@ object QuicheCrypto {
         nativePrintCapabilities()
     }
 
-    @JvmStatic
+    // Remove @JvmStatic for object singleton (not needed and causes JNI issues)
     private external fun nativeGetCapabilities(): BooleanArray?
 
-    @JvmStatic
     private external fun nativePrintCapabilities()
 }
 

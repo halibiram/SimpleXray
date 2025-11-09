@@ -49,7 +49,8 @@ class QuicheClient private constructor(
             return QuicheClient(handle)
         }
 
-        @JvmStatic
+        // Remove @JvmStatic to fix JNI name mangling issue
+        // JNI will look for: Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeCreate
         private external fun nativeCreate(
             serverHost: String,
             serverPort: Int,
@@ -58,22 +59,16 @@ class QuicheClient private constructor(
             cpuAffinity: Int
         ): Long
 
-        @JvmStatic
         private external fun nativeConnect(handle: Long): Int
 
-        @JvmStatic
         private external fun nativeDisconnect(handle: Long)
 
-        @JvmStatic
         private external fun nativeDestroy(handle: Long)
 
-        @JvmStatic
         private external fun nativeIsConnected(handle: Long): Boolean
 
-        @JvmStatic
         private external fun nativeSend(handle: Long, data: ByteArray): Int
 
-        @JvmStatic
         private external fun nativeGetMetrics(handle: Long): DoubleArray?
     }
 

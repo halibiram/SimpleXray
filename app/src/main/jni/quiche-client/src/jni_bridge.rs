@@ -32,8 +32,10 @@ fn jstring_to_string(env: &mut JNIEnv, jstr: jni::sys::jstring) -> String {
 }
 
 /// Create QUIC client
+/// Note: Function name includes $Companion (encoded as 00024) because the native method
+/// is declared in Kotlin's companion object without @JvmStatic
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeCreate(
     mut env: JNIEnv,
     _class: JClass,
     server_host: jni::sys::jstring,
@@ -127,7 +129,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeCreate(
 
 /// Connect to server
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeConnect(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeConnect(
     _env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
@@ -172,7 +174,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeConnect(
 
 /// Disconnect from server
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeDisconnect(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeDisconnect(
     _env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
@@ -188,7 +190,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeDisconne
 
 /// Destroy client
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeDestroy(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeDestroy(
     _env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
@@ -202,7 +204,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeDestroy(
 
 /// Check if connected
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeIsConnected(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeIsConnected(
     _env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
@@ -218,7 +220,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeIsConnec
 
 /// Send data
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeSend(
     mut env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
@@ -262,7 +264,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeSend(
 
 /// Get metrics
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeGetMetrics(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_00024Companion_nativeGetMetrics(
     env: JNIEnv,
     _class: JClass,
     client_handle: jlong,
@@ -300,7 +302,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheClient_nativeGetMetri
 
 /// Create TUN forwarder
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeCreate(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_00024Companion_nativeCreate(
     _env: JNIEnv,
     _class: JClass,
     tun_fd: jint,
@@ -339,7 +341,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeCr
 
 /// Start TUN forwarder
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeStart(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_00024Companion_nativeStart(
     _env: JNIEnv,
     _class: JClass,
     forwarder_handle: jlong,
@@ -362,7 +364,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeSt
 
 /// Stop TUN forwarder
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeStop(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_00024Companion_nativeStop(
     _env: JNIEnv,
     _class: JClass,
     forwarder_handle: jlong,
@@ -378,7 +380,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeSt
 
 /// Destroy TUN forwarder
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeDestroy(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_00024Companion_nativeDestroy(
     _env: JNIEnv,
     _class: JClass,
     forwarder_handle: jlong,
@@ -392,7 +394,7 @@ pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeDe
 
 /// Get forwarder statistics
 #[no_mangle]
-pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_nativeGetStats(
+pub extern "system" fn Java_com_simplexray_an_quiche_QuicheTunForwarder_00024Companion_nativeGetStats(
     env: JNIEnv,
     _class: JClass,
     forwarder_handle: jlong,
