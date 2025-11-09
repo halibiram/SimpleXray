@@ -10,7 +10,7 @@ data class RealityConfig(
     val publicKey: String,
     val serverName: String,
     val fingerprintProfile: TlsFingerprintProfile = TlsFingerprintProfile.CHROME,
-    val localPort: Int = 10808, // Default local SOCKS5 port
+    val localPort: Int = 10809, // Default local SOCKS5 port (10809 to avoid conflict with Xray main port 10808)
     val uuid: String? = null // VLESS UUID (optional, will be generated if not provided)
 )
 

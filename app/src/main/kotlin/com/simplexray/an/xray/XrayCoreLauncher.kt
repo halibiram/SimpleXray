@@ -736,14 +736,13 @@ object XrayCoreLauncher {
         // This avoids execute_no_trans denial from app_data_file context
         val androidVersion = Build.VERSION.SDK_INT
         if (androidVersion >= 34) { // Android 14+ (API 34+)
-            // For Android 14+, try using native library directly
+            // For Android 14+, ALWAYS use native library directly
             // Native library directory has app_file_exec context which allows execution
-            if (src.canExecute()) {
-                AppLogger.i("Using native library directly (Android $androidVersion SELinux compliance): ${src.absolutePath}")
-                return src
-            } else {
-                AppLogger.w("Native library not executable, falling back to copy method")
-            }
+            // Android 16+ SELinux policy prevents setExecutable() on copied files
+            // Even if canExecute() returns false, the library is executable in native context
+            AppLogger.i("Using native library directly (Android $androidVersion SELinux compliance): ${src.absolutePath}")
+            AppLogger.d("Native library executable check: ${src.canExecute()} (ignoring for Android 14+)")
+            return src
         }
         
         // SELinux fix: Copy to filesDir with libxray_copy.so name to avoid setattr denial

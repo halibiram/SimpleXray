@@ -1691,7 +1691,7 @@ class TProxyService : VpnService() {
                             publicKey = publicKey,
                             serverName = serverName,
                             fingerprintProfile = TlsFingerprintProfile.CHROME,
-                            localPort = 10808,
+                            localPort = 10809, // Use different port to avoid conflict with main Xray SOCKS (10808)
                             uuid = uuid
                         )
                     }
