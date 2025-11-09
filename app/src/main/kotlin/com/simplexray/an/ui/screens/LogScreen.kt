@@ -58,6 +58,7 @@ fun LogScreen(
     val filteredSystemLogs by logViewModel.filteredSystemLogs.collectAsStateWithLifecycle()
     val logType by logViewModel.logType.collectAsStateWithLifecycle()
     val logLevel by logViewModel.logLevel.collectAsStateWithLifecycle()
+    val logcatError by logViewModel.logcatError.collectAsStateWithLifecycle()
     val isInitialLoad = remember { mutableStateOf(true) }
 
     val selectedTabIndex = when (logType) {
@@ -138,7 +139,36 @@ fun LogScreen(
         // Log Content
         val currentLogs = if (logType == LogViewModel.LogType.SERVICE) filteredEntries else filteredSystemLogs
 
-        if (currentLogs.isEmpty()) {
+        // Show error message if logcat failed (only for System Logcat)
+        if (logType == LogViewModel.LogType.SYSTEM && logcatError != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "⚠️ Logcat Kullanılamıyor",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = logcatError ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                }
+            }
+        } else if (currentLogs.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center

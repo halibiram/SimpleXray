@@ -66,6 +66,9 @@ class LogViewModel(application: Application) :
     private val _logLevel = MutableStateFlow(LogLevel.ALL)
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()
 
+    private val _logcatError = MutableStateFlow<String?>(null)
+    val logcatError: StateFlow<String?> = _logcatError.asStateFlow()
+
     private var logcatProcess: Process? = null
     private var logcatJob: Job? = null
 
@@ -275,21 +278,100 @@ class LogViewModel(application: Application) :
             return
         }
 
+        // Android 10+ (API 29+) sürümlerinde logcat okuma kısıtlamaları var
+        // Uygulamalar sistem logcat'ini okuyamaz, sadece kendi loglarını okuyabilir
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val errorMsg = "Android ${Build.VERSION.SDK_INT} (Android ${Build.VERSION.RELEASE}) sürümünde sistem logcat okuma kısıtlanmıştır.\n\n" +
+                    "Alternatif yöntemler:\n" +
+                    "1. ADB kullanarak: adb logcat\n" +
+                    "2. Android Studio Logcat penceresi\n" +
+                    "3. Sadece uygulama logları görüntülenebilir (Service Logs sekmesi)"
+            AppLogger.w(errorMsg)
+            viewModelScope.launch {
+                _logcatError.value = errorMsg
+                _systemLogEntries.value = listOf(
+                    "⚠️ Android ${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE})",
+                    "",
+                    "Sistem logcat okuma kısıtlanmıştır.",
+                    "",
+                    "Alternatif yöntemler:",
+                    "• ADB: adb logcat",
+                    "• Android Studio Logcat",
+                    "• Service Logs sekmesini kullanın"
+                )
+            }
+            return
+        }
+
+        // Clear error message
+        _logcatError.value = null
+
         logcatJob = viewModelScope.launch(Dispatchers.IO) {
+            var process: Process? = null
             try {
+                AppLogger.d("Starting logcat process...")
+                
                 // Clear logcat buffer first to show only new logs
                 try {
-                    Runtime.getRuntime().exec("logcat -c").waitFor()
+                    val clearProcess = Runtime.getRuntime().exec("logcat -c")
+                    val clearExitCode = clearProcess.waitFor()
+                    if (clearExitCode != 0) {
+                        AppLogger.w("logcat -c returned exit code: $clearExitCode")
+                        val errorMsg = "Logcat buffer temizlenemedi (exit code: $clearExitCode). Logcat okuma izni olmayabilir."
+                        withContext(Dispatchers.Main) {
+                            _logcatError.value = errorMsg
+                        }
+                    } else {
+                        AppLogger.d("Logcat buffer cleared successfully")
+                    }
                 } catch (e: Exception) {
                     AppLogger.w("Could not clear logcat buffer", e)
+                    val errorMsg = "Logcat buffer temizlenemedi: ${e.message}"
+                    withContext(Dispatchers.Main) {
+                        _logcatError.value = errorMsg
+                    }
                 }
 
                 // Read logcat with threadtime format for better categorization
                 // Use ProcessBuilder for better error handling
                 val processBuilder = ProcessBuilder("logcat", "-v", "threadtime", "*:V")
                 processBuilder.redirectErrorStream(true)
-                val process = processBuilder.start()
+                process = processBuilder.start()
                 logcatProcess = process
+
+                AppLogger.d("Logcat process started")
+
+                // Check if process is alive
+                if (!process.isAlive) {
+                    val exitValue = try {
+                        process.exitValue()
+                    } catch (e: IllegalThreadStateException) {
+                        -1
+                    }
+                    AppLogger.e("Logcat process died immediately with exit code: $exitValue")
+                    // Try to read error stream
+                    var errorOutput = ""
+                    try {
+                        val errorReader = process.errorStream.bufferedReader()
+                        val errorLines = errorReader.readLines()
+                        if (errorLines.isNotEmpty()) {
+                            errorOutput = errorLines.joinToString("\n")
+                            AppLogger.e("Logcat error output: $errorOutput")
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e("Could not read error stream", e)
+                    }
+                    logcatProcess = null
+                    val errorMsg = if (errorOutput.isNotEmpty()) {
+                        "Logcat başlatılamadı (exit code: $exitValue):\n$errorOutput"
+                    } else {
+                        "Logcat başlatılamadı (exit code: $exitValue). İzin hatası olabilir."
+                    }
+                    withContext(Dispatchers.Main) {
+                        _logcatError.value = errorMsg
+                    }
+                    return@launch
+                }
 
                 val reader = process.inputStream.bufferedReader()
                 val systemLogsList = mutableListOf<String>()
@@ -297,9 +379,46 @@ class LogViewModel(application: Application) :
                 try {
                     reader.use { bufferedReader ->
                         var updateCounter = 0
-                        while (isActive) {
-                            val line = bufferedReader.readLine() ?: break
+                        var lineCount = 0
+                        AppLogger.d("Starting to read logcat output...")
+                        
+                        while (isActive && process.isAlive) {
+                            // Check if process is still alive before reading
+                            if (!process.isAlive) {
+                                val exitValue = try {
+                                    process.exitValue()
+                                } catch (e: IllegalThreadStateException) {
+                                    -1
+                                }
+                                AppLogger.w("Logcat process died with exit code: $exitValue")
+                                break
+                            }
+                            
+                            val line = try {
+                                bufferedReader.readLine()
+                            } catch (e: Exception) {
+                                if (isActive) {
+                                    AppLogger.e("Error reading line from logcat", e)
+                                }
+                                break
+                            }
+                            
+                            if (line == null) {
+                                // EOF reached, process might have terminated
+                                if (!process.isAlive) {
+                                    AppLogger.d("Logcat process terminated (EOF reached)")
+                                } else {
+                                    AppLogger.w("Unexpected EOF from logcat stream")
+                                }
+                                break
+                            }
+                            
                             if (!isActive) break
+                            
+                            lineCount++
+                            if (lineCount == 1) {
+                                AppLogger.d("First logcat line received: ${line.take(100)}")
+                            }
                             
                             // Skip empty lines
                             if (line.trim().isEmpty()) {
@@ -344,6 +463,8 @@ class LogViewModel(application: Application) :
                             }
                         }
                         
+                        AppLogger.d("Logcat reading finished. Total lines read: $lineCount")
+                        
                         // Final update
                         withContext(Dispatchers.Main) {
                             _systemLogEntries.value = systemLogsList.toList()
@@ -351,6 +472,7 @@ class LogViewModel(application: Application) :
                     }
                 } catch (e: CancellationException) {
                     // Normal cancellation, rethrow to maintain coroutine cancellation semantics
+                    AppLogger.d("Logcat reading cancelled")
                     throw e
                 } catch (e: InterruptedIOException) {
                     // Expected when process is destroyed from another thread
@@ -364,13 +486,35 @@ class LogViewModel(application: Application) :
                     if (logcatProcess == process) {
                         logcatProcess = null
                     }
+                    try {
+                        if (process != null && process.isAlive) {
+                            process.destroy()
+                            AppLogger.d("Logcat process destroyed")
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.w("Error destroying logcat process", e)
+                    }
                 }
             } catch (e: CancellationException) {
                 // Re-throw cancellation to properly handle coroutine cancellation
+                AppLogger.d("Logcat start cancelled")
                 throw e
             } catch (e: Exception) {
                 AppLogger.e("Error starting logcat", e)
+                val errorMsg = "Logcat başlatılırken hata: ${e.message}\n\n" +
+                        "Olası nedenler:\n" +
+                        "• Android 10+ sürümünde logcat okuma kısıtlaması\n" +
+                        "• İzin eksikliği\n" +
+                        "• Cihaz root edilmemiş olabilir"
+                withContext(Dispatchers.Main) {
+                    _logcatError.value = errorMsg
+                }
                 logcatProcess = null
+                try {
+                    process?.destroy()
+                } catch (ex: Exception) {
+                    AppLogger.w("Error destroying process after exception", ex)
+                }
             }
         }
     }
@@ -380,6 +524,7 @@ class LogViewModel(application: Application) :
         logcatJob = null
         logcatProcess?.destroy()
         logcatProcess = null
+        _logcatError.value = null
         AppLogger.d("Logcat stopped")
     }
 

@@ -223,3 +223,4 @@ echo -e "${DIM}Not: İndirilen dosyalar .gitignore'da zaten tanımlı${NC}"
 
 
 
+

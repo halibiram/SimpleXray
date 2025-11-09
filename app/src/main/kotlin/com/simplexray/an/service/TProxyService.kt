@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import com.simplexray.an.common.AppLogger
+import com.simplexray.an.common.MiuiHelper
 import androidx.core.app.NotificationCompat
 import com.simplexray.an.BuildConfig
 import com.simplexray.an.R
@@ -28,7 +29,6 @@ import com.simplexray.an.service.XrayProcessManager
 import com.simplexray.an.performance.PerformanceIntegration
 import com.simplexray.an.chain.supervisor.ChainSupervisor
 import com.simplexray.an.chain.supervisor.ChainConfig
-import com.simplexray.an.chain.supervisor.ChainState
 import com.simplexray.an.chain.reality.RealitySocks
 import com.simplexray.an.chain.reality.RealityConfig
 import com.simplexray.an.chain.reality.TlsFingerprintProfile
@@ -107,7 +107,7 @@ class TProxyService : VpnService() {
     private val enablePerformanceMode: Boolean
         get() = Preferences(this).enablePerformanceMode
     
-    // Chain supervisor for Reality SOCKS → PepperShaper → Xray-core
+    // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
     private var chainSupervisor: ChainSupervisor? = null
     // QUICHE TUN forwarder (TUN → QUICHE → Chain)
     private var quicheClient: QuicheClient? = null
@@ -157,7 +157,27 @@ class TProxyService : VpnService() {
         super.onCreate()
         isServiceRunning.set(true)
         logFileManager = LogFileManager(this)
-        
+
+        // Enhanced lifecycle logging for crash detection
+        AppLogger.i("TProxyService: onCreate() - Service instance created, process PID=${android.os.Process.myPid()}, thread=${Thread.currentThread().name}")
+
+        // MIUI Device Detection and Setup
+        if (MiuiHelper.isMiuiDevice()) {
+            MiuiHelper.logMiuiDeviceInfo()
+
+            val permStatus = MiuiHelper.checkMiuiPermissions(this)
+            when (permStatus) {
+                MiuiHelper.MiuiPermissionStatus.NEEDS_SETUP -> {
+                    AppLogger.w("TProxyService: MIUI permissions not configured - VPN may be killed by system")
+                    AppLogger.w("TProxyService: User should enable Autostart and disable Battery Optimization")
+                }
+                MiuiHelper.MiuiPermissionStatus.OK -> {
+                    AppLogger.i("TProxyService: MIUI permissions configured correctly")
+                }
+                else -> {}
+            }
+        }
+
         // VPN Permission Check: Ensure user has granted VPN permission
         // VpnService.prepare() returns null if permission is already granted
         // If it returns an Intent, user needs to grant permission
@@ -170,7 +190,7 @@ class TProxyService : VpnService() {
         } else {
             AppLogger.d("TProxyService: VPN permission already granted")
         }
-        
+
         // Initialize performance optimizations if enabled
         // Add configuration validation before initializing performance mode
         if (enablePerformanceMode) {
@@ -190,8 +210,8 @@ class TProxyService : VpnService() {
                 Preferences(this).enablePerformanceMode = false
             }
         }
-        
-        AppLogger.d("TProxyService created.")
+
+        AppLogger.i("TProxyService: onCreate() completed successfully")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -218,12 +238,24 @@ class TProxyService : VpnService() {
         
         // Handle null intent (service restart after being killed by system)
         if (intent == null) {
-            AppLogger.w("TProxyService: Restarted with null intent, attempting state recovery")
+            val manufacturer = android.os.Build.MANUFACTURER
+            val isMIUI = manufacturer.equals("Xiaomi", ignoreCase = true) || manufacturer.equals("Redmi", ignoreCase = true)
+
+            if (isMIUI) {
+                AppLogger.w("TProxyService: MIUI/HyperOS - Restarted with null intent (may have been killed by system)")
+            } else {
+                AppLogger.w("TProxyService: Restarted with null intent, attempting state recovery")
+            }
+
             val prefs = Preferences(this)
-            
+
             // Check if VPN was running before process death
             if (prefs.vpnServiceWasRunning) {
-                AppLogger.d("TProxyService: VPN was running before restart, attempting recovery")
+                if (isMIUI) {
+                    AppLogger.i("TProxyService: MIUI/HyperOS - Attempting automatic VPN recovery")
+                } else {
+                    AppLogger.d("TProxyService: VPN was running before restart, attempting recovery")
+                }
                 
                 // Verify config file still exists
                 val configPath = prefs.selectedConfigPath
@@ -322,10 +354,19 @@ class TProxyService : VpnService() {
                 if (prefs.disableVpn) {
                     // Start monitoring even in core-only mode (to detect service issues)
                     startConnectionMonitoring()
-                    
+
                     // Save state for core-only mode too
                     prefs.vpnServiceWasRunning = true
-                    
+
+                    // MIUI Compatibility: Start watchdog services even in core-only mode
+                    try {
+                        VpnWatchdogJobService.scheduleWatchdog(this)
+                        VpnWatchdogReceiver.scheduleWatchdog(this)
+                        AppLogger.i("TProxyService: Watchdog services scheduled for core-only mode (MIUI compatibility)")
+                    } catch (e: Exception) {
+                        AppLogger.w("TProxyService: Failed to schedule watchdog services: ${e.message}", e)
+                    }
+
                     serviceScope.launch { runXrayProcess() }
                     val successIntent = Intent(ACTION_START)
                     successIntent.setPackage(application.packageName)
@@ -352,27 +393,56 @@ class TProxyService : VpnService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         // When user swipes away the app, restart the service to keep VPN connection alive
-        AppLogger.d("TProxyService: App task removed, ensuring service continues")
+        AppLogger.i("TProxyService: App task removed, ensuring service continues (MIUI compatibility mode)")
+
+        // MIUI/HyperOS compatibility: Ensure service persists
+        // MIUI may try to kill the service when task is removed
+        val prefs = Preferences(this)
+        if (prefs.vpnServiceWasRunning && tunFd != null) {
+            try {
+                // Re-create foreground notification to reinforce service importance
+                val channelName = if (prefs.disableVpn) "nosocks" else "chain"
+                createNotification(channelName)
+                AppLogger.d("TProxyService: Foreground notification refreshed for MIUI compatibility")
+
+                // Ensure VPN state is persisted
+                prefs.vpnServiceWasRunning = true
+                AppLogger.d("TProxyService: VPN state persisted - MIUI should not kill service")
+            } catch (e: Exception) {
+                AppLogger.e("TProxyService: Error refreshing foreground state: ${e.message}", e)
+            }
+        }
+
         // Don't stop the service - let it continue running in background
         // The service will keep running even when app is removed from recent apps
     }
 
     override fun onDestroy() {
         // VPN Session Lifecycle Logging
-        AppLogger.d("TProxyService: onDestroy called - VPN state=destroying, tunFd=${if (tunFd != null) "valid" else "null"}")
-        
+        AppLogger.i("TProxyService: onDestroy called - VPN state=destroying, tunFd=${if (tunFd != null) "valid" else "null"}, PID=${android.os.Process.myPid()}")
+
         // Crash Detector: Check if VPN was unexpectedly stopped
         val vpnActive = tunFd != null && isServiceRunning.get()
         if (vpnActive) {
             AppLogger.e("VPN: Unexpected Stop: VPN was active when service destroyed. tunFd=${if (tunFd != null) "valid" else "null"}, isRunning=${isServiceRunning.get()}")
+
+            // MIUI/HyperOS Detection: Log if this might be MIUI restart rejection
+            val manufacturer = android.os.Build.MANUFACTURER
+            if (manufacturer.equals("Xiaomi", ignoreCase = true) || manufacturer.equals("Redmi", ignoreCase = true)) {
+                AppLogger.w("TProxyService: MIUI/HyperOS detected - Service destroyed while VPN active. This may be MIUI restart restriction.")
+                AppLogger.w("TProxyService: MIUI may have rejected automatic service restart. User may need to manually restart VPN.")
+            }
         }
-        
+
         super.onDestroy()
         isServiceRunning.set(false)
-        
+
         // Stop connection monitoring
         stopConnectionMonitoring()
-        
+
+        // Stop port monitoring
+        stopPortMonitoring()
+
         handler.removeCallbacks(broadcastLogsRunnable)
         broadcastLogsRunnable.run()
         
@@ -815,15 +885,27 @@ class TProxyService : VpnService() {
 
     private fun stopXray() {
         AppLogger.d("stopXray called with keepExecutorAlive=" + false)
-        
+
         // Clear state that VPN is running
         val prefs = Preferences(this)
         prefs.vpnServiceWasRunning = false
         AppLogger.d("TProxyService: VPN state cleared - service is stopping")
-        
+
+        // MIUI Compatibility: Cancel watchdog services when VPN is manually stopped
+        try {
+            VpnWatchdogJobService.cancelWatchdog(this)
+            VpnWatchdogReceiver.cancelWatchdog(this)
+            AppLogger.d("TProxyService: Watchdog services cancelled")
+        } catch (e: Exception) {
+            AppLogger.w("TProxyService: Failed to cancel watchdog services: ${e.message}", e)
+        }
+
         // Stop connection monitoring
         stopConnectionMonitoring()
-        
+
+        // Stop port monitoring
+        stopPortMonitoring()
+
         // Cancel existing scope and recreate it to allow future startXray() calls
         serviceScope.cancel()
         serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -919,13 +1001,21 @@ class TProxyService : VpnService() {
                 val isAlive = isProcessAlive(effectivePid.toInt())
                 
                 if (isAlive) {
+                    // CRITICAL: Prevent self-kill! Never kill our own service process
+                    val myPid = android.os.Process.myPid()
+                    if (effectivePid.toInt() == myPid) {
+                        AppLogger.e("CRITICAL: Attempted to kill own process (PID: $effectivePid)! This would crash VPN service. Aborting kill.")
+                        AppLogger.e("This indicates a bug in process management - Xray child process PID was not tracked correctly")
+                        return
+                    }
+
                     // Verify this is still the xray process (prevents PID reuse race condition)
                     if (!isXrayProcess(effectivePid.toInt())) {
                         AppLogger.w("Process (PID: $effectivePid) does not appear to be xray process. Skipping kill.")
                         return
                     }
-                    
-                    AppLogger.d("Killing process by PID: $effectivePid (Process reference unavailable or invalid)")
+
+                    AppLogger.d("Killing Xray child process by PID: $effectivePid (my PID: $myPid)")
                     try {
                         // Use Android Process.killProcess for same-UID processes (graceful shutdown)
                         android.os.Process.killProcess(effectivePid.toInt())
@@ -1131,6 +1221,81 @@ class TProxyService : VpnService() {
         AppLogger.d("TProxyService: Stopped VPN connection monitoring")
     }
 
+    // Port monitoring variables
+    private var monitoredPort: Int = -1
+    private val portCheckRunnable = Runnable {
+        checkPortAvailability()
+    }
+
+    /**
+     * Start monitoring SOCKS port to detect connection issues.
+     * This helps identify when port 10808 becomes unavailable.
+     */
+    private fun startPortMonitoring(port: Int) {
+        monitoredPort = port
+        AppLogger.i("TProxyService: Started port monitoring for SOCKS port $port")
+        scheduleNextPortCheck()
+    }
+
+    /**
+     * Stop monitoring SOCKS port.
+     */
+    private fun stopPortMonitoring() {
+        if (monitoredPort == -1) return
+        handler.removeCallbacks(portCheckRunnable)
+        AppLogger.d("TProxyService: Stopped port monitoring for port $monitoredPort")
+        monitoredPort = -1
+    }
+
+    /**
+     * Check if monitored port is available and log any issues.
+     */
+    private fun checkPortAvailability() {
+        if (monitoredPort == -1 || !Companion.isRunning()) {
+            return
+        }
+
+        try {
+            // Try to connect to the SOCKS port
+            val socket = java.net.Socket()
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", monitoredPort), 1000)
+            socket.close()
+            AppLogger.d("TProxyService: SOCKS port $monitoredPort is accessible")
+        } catch (e: java.net.ConnectException) {
+            AppLogger.e("TProxyService: SOCKS port $monitoredPort connection refused - Xray may not be running or crashed")
+            // Try to restart Xray process
+            serviceScope.launch {
+                try {
+                    AppLogger.i("TProxyService: Attempting to restart Xray process due to port unavailability")
+                    val currentState = processState.getAndUpdate { state ->
+                        ProcessState(state.process, state.pid, reloading = true)
+                    }
+                    killProcessSafely(currentState.process, currentState.pid)
+                    runXrayProcess()
+                } catch (e: Exception) {
+                    AppLogger.e("TProxyService: Failed to restart Xray process: ${e.message}", e)
+                }
+            }
+        } catch (e: java.net.SocketTimeoutException) {
+            AppLogger.w("TProxyService: SOCKS port $monitoredPort connection timeout")
+        } catch (e: Exception) {
+            AppLogger.w("TProxyService: Error checking port $monitoredPort: ${e.message}")
+        }
+
+        scheduleNextPortCheck()
+    }
+
+    /**
+     * Schedule next port availability check.
+     */
+    private fun scheduleNextPortCheck() {
+        if (monitoredPort == -1 || !Companion.isRunning()) {
+            return
+        }
+        handler.removeCallbacks(portCheckRunnable)
+        handler.postDelayed(portCheckRunnable, 15000) // Check every 15 seconds
+    }
+
     private fun startService() {
         if (tunFd != null) {
             AppLogger.d("TProxyService: VPN interface already established, skipping")
@@ -1169,105 +1334,108 @@ class TProxyService : VpnService() {
             // Save state that VPN is running
             prefs.vpnServiceWasRunning = true
             AppLogger.d("TProxyService: VPN state saved - service is running")
-            
-            // Start chain (Reality SOCKS → PepperShaper → Xray-core)
-            // Chain components are optional enhancements - VPN works even if chain fails
+
+            // MIUI Compatibility: Start watchdog services to monitor and restart VPN if killed
+            try {
+                VpnWatchdogJobService.scheduleWatchdog(this)
+                VpnWatchdogReceiver.scheduleWatchdog(this)
+                AppLogger.i("TProxyService: Watchdog services scheduled for MIUI compatibility")
+            } catch (e: Exception) {
+                AppLogger.w("TProxyService: Failed to schedule watchdog services: ${e.message}", e)
+            }
+
+            // Start chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
             val chainStarted = startChain(prefs)
             if (!chainStarted) {
-                AppLogger.w("TProxyService: Chain start failed - continuing with basic VPN (Xray may still work)")
-                // Don't stop - Xray-core may still be running even if chain setup had issues
-            } else {
-                AppLogger.i("TProxyService: Chain started successfully")
+                AppLogger.e("TProxyService: Chain start failed - cannot continue")
+                stopXray()
+                return
             }
-
-            // Wait for chain to be ready (always returns true after timeout)
+            
+            // Wait for chain to be ready
             val chainReady = waitForChainReady()
-            AppLogger.d("TProxyService: Chain ready check completed: $chainReady")
-
-            // Attach PepperShaper to TUN FD for traffic shaping (if chain is running)
-            if (chainStarted && chainSupervisor?.getStatus()?.state != ChainState.STOPPED) {
-                val pepperAttached = chainSupervisor?.attachPepperToTunFd(establishedFd.fd) ?: false
-                if (pepperAttached) {
-                    AppLogger.i("TProxyService: PepperShaper attached to TUN FD successfully")
-                } else {
-                    AppLogger.w("TProxyService: Failed to attach PepperShaper to TUN FD (non-critical)")
-                }
+            if (!chainReady) {
+                AppLogger.e("TProxyService: Chain not ready - cannot start QUICHE")
+                stopXray()
+                return
+            }
+            
+            // Validate SOCKS port is available before starting QUICHE
+            val socksPort = extractXraySocksPort(prefs.selectedConfigPath ?: "")
+            if (socksPort != null) {
+                AppLogger.i("TProxyService: Xray SOCKS proxy will listen on port $socksPort")
+                // Start port monitoring to detect connection issues
+                startPortMonitoring(socksPort)
+            } else {
+                AppLogger.w("TProxyService: Could not determine Xray SOCKS port from config")
             }
 
-            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain) if enabled
-            // QUICHE TUN is an optional performance optimization
-            // VPN will work with standard routing if QUICHE TUN fails
-            if (prefs.useQuicheTun) {
-                AppLogger.i("TProxyService: QUICHE TUN is enabled, attempting to start forwarder")
-                establishedFd.let { fd ->
-                    try {
-                        // Get QUICHE server address from chain or preferences
-                        val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
-                        val quicheServerPort = prefs.quicheServerPort ?: 443
+            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain)
+            establishedFd.let { fd ->
+                try {
+                    // Get QUICHE server address from chain or preferences
+                    val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
+                    val quicheServerPort = prefs.quicheServerPort ?: 443
 
-                        AppLogger.i("TProxyService: Starting QUICHE TUN forwarder ($quicheServerHost:$quicheServerPort)")
+                    AppLogger.i("TProxyService: Starting QUICHE TUN forwarder with chain ($quicheServerHost:$quicheServerPort)")
 
-                        quicheClient = QuicheClient.create(
-                            serverHost = quicheServerHost,
-                            serverPort = quicheServerPort,
-                            congestionControl = CongestionControl.BBR2,
-                            enableZeroCopy = true,
-                            cpuAffinity = CpuAffinity.BIG_CORES
-                        )
-
-                        if (quicheClient == null) {
-                            AppLogger.w("TProxyService: Failed to create QUICHE client - continuing with standard VPN routing")
-                            // Don't stop VPN - continue with standard routing
-                        } else {
-                            // Connect QUICHE client
-                            if (!quicheClient!!.connect()) {
-                                AppLogger.w("TProxyService: Failed to connect QUICHE client - continuing with standard VPN routing")
-                                quicheClient?.close()
-                                quicheClient = null
-                                // Don't stop VPN - continue with standard routing
-                            } else {
-                                // Create and start QUICHE TUN forwarder
-                                quicheTunForwarder = QuicheTunForwarder.create(
-                                    tunFd = fd.fd,
-                                    quicClient = quicheClient!!,
-                                    batchSize = 64,
-                                    useGSO = true,
-                                    useGRO = true
-                                )
-
-                                if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
-                                    AppLogger.w("TProxyService: Failed to start QUICHE TUN forwarder - continuing with standard VPN routing")
-                                    quicheTunForwarder?.close()
-                                    quicheTunForwarder = null
-                                    quicheClient?.close()
-                                    quicheClient = null
-                                    // Don't stop VPN - continue with standard routing
-                                } else {
-                                    AppLogger.i("TProxyService: QUICHE TUN forwarder started successfully")
-
-                                    // Apply performance optimizations if enabled
-                                    if (enablePerformanceMode && perfIntegration != null) {
-                                        try {
-                                            perfIntegration?.applyNetworkOptimizations(fd.fd)
-                                        } catch (e: Exception) {
-                                            AppLogger.w("Failed to apply network optimizations", e)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        AppLogger.w("TProxyService: Exception starting QUICHE TUN forwarder: ${e.message} - continuing with standard VPN routing", e)
-                        // Clean up QUICHE resources
+                    quicheClient = QuicheClient.create(
+                        serverHost = quicheServerHost,
+                        serverPort = quicheServerPort,
+                        congestionControl = CongestionControl.BBR2,
+                        enableZeroCopy = true,
+                        cpuAffinity = CpuAffinity.BIG_CORES
+                    )
+                    
+                    if (quicheClient == null) {
+                        AppLogger.e("TProxyService: Failed to create QUICHE client")
+                        stopXray()
+                        return
+                    }
+                    
+                    // Connect QUICHE client
+                    if (!quicheClient!!.connect()) {
+                        AppLogger.e("TProxyService: Failed to connect QUICHE client")
+                        quicheClient?.close()
+                        quicheClient = null
+                        stopXray()
+                        return
+                    }
+                    
+                    // Create and start QUICHE TUN forwarder
+                    quicheTunForwarder = QuicheTunForwarder.create(
+                        tunFd = fd.fd,
+                        quicClient = quicheClient!!,
+                        batchSize = 64,
+                        useGSO = true,
+                        useGRO = true
+                    )
+                    
+                    if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
+                        AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder")
                         quicheTunForwarder?.close()
                         quicheTunForwarder = null
                         quicheClient?.close()
                         quicheClient = null
-                        // Don't stop VPN - continue with standard routing
+                        stopXray()
+                        return
                     }
+                    
+                    AppLogger.i("TProxyService: QUICHE TUN forwarder with chain started successfully")
+                    
+                    // Apply performance optimizations if enabled
+                    if (enablePerformanceMode && perfIntegration != null) {
+                        try {
+                            perfIntegration?.applyNetworkOptimizations(fd.fd)
+                        } catch (e: Exception) {
+                            AppLogger.w("Failed to apply network optimizations", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder: ${e.message}", e)
+                    stopXray()
+                    return
                 }
-            } else {
-                AppLogger.i("TProxyService: QUICHE TUN is disabled, using standard VPN routing")
             }
 
             val successIntent = Intent(ACTION_START)
@@ -1386,62 +1554,36 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Start the tunneling chain (Reality SOCKS → PepperShaper → Xray-core)
-     *
-     * Chain components are optional - only Xray-core is required.
-     * Reality SOCKS and PepperShaper enhance performance but are not critical.
+     * Start the tunneling chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
      */
     private fun startChain(prefs: Preferences): Boolean {
         return try {
             if (chainSupervisor == null) {
                 chainSupervisor = ChainSupervisor(this)
             }
-
+            
             // Validate Xray config path is available
             if (prefs.selectedConfigPath == null) {
                 AppLogger.e("TProxyService: No Xray config path available - chain cannot start")
                 return false
             }
-
+            
             // Build chain config from preferences and Xray config
             val chainConfig = buildChainConfig(prefs)
-
-            // Validate that chain config has Xray config path (minimum requirement)
+            
+            // Validate that chain config has Xray config path
             if (chainConfig.xrayConfigPath == null) {
                 AppLogger.e("TProxyService: Chain config missing Xray config path")
                 return false
             }
-
-            // Log chain configuration
-            AppLogger.i("TProxyService: Starting chain with components:")
-            AppLogger.i("  - Xray-core: ${chainConfig.xrayConfigPath}")
-            AppLogger.i("  - Reality SOCKS: ${if (chainConfig.realityConfig != null) "configured" else "not configured"}")
-            AppLogger.i("  - PepperShaper: ${if (chainConfig.pepperParams != null) "configured" else "not configured"}")
-
+            
             val result = chainSupervisor?.start(chainConfig)
             if (result?.isSuccess == true) {
-                val status = chainSupervisor?.getStatus()
-                AppLogger.i("TProxyService: Chain started successfully - state: ${status?.state}")
-
-                // Log active layers
-                status?.layers?.forEach { (name, layer) ->
-                    if (layer.isRunning) {
-                        AppLogger.i("  ✓ $name layer active")
-                    } else {
-                        AppLogger.w("  ✗ $name layer inactive: ${layer.error ?: "unknown reason"}")
-                    }
-                }
+                AppLogger.i("TProxyService: Chain started successfully")
                 true
             } else {
                 val error = result?.exceptionOrNull()
                 AppLogger.e("TProxyService: Chain start failed: ${error?.message}", error)
-
-                // Check if this is a critical failure or if Xray can still work
-                val status = chainSupervisor?.getStatus()
-                if (status?.state == ChainState.DEGRADED || status?.state == ChainState.RUNNING) {
-                    AppLogger.w("TProxyService: Chain in degraded mode but continuing (Xray may still work)")
-                    return true
-                }
                 false
             }
         } catch (e: Exception) {
@@ -1473,12 +1615,18 @@ class TProxyService : VpnService() {
             }
         }
         
-        // Don't extract Reality config - let Xray-core handle it directly from the original config
-        // This ensures the original Xray config is used without modification
-
+        // Build Reality config from Xray config if available
+        val realityConfig = try {
+            extractRealityConfigFromXray(prefs.selectedConfigPath)
+        } catch (e: Exception) {
+            AppLogger.d("TProxyService: Could not extract Reality config: ${e.message}")
+            null
+        }
+        
         return ChainConfig(
             name = "TProxy Chain",
-            realityConfig = null,  // Use original Xray config instead of extracting
+            realityConfig = realityConfig,
+            hysteria2Config = null,
             pepperParams = PepperParams(
                 mode = PepperMode.BURST_FRIENDLY,
                 maxBurstBytes = 64 * 1024,
@@ -1558,55 +1706,39 @@ class TProxyService : VpnService() {
     
     /**
      * Wait for chain to be ready
-     * Chain is considered ready if at least one layer is running:
-     * - Reality SOCKS (if configured)
-     * - OR Xray-core (primary routing engine)
      */
     private fun waitForChainReady(): Boolean {
         var attempts = 0
         val maxAttempts = 20
         val delayMs = 500L
-
-        AppLogger.d("TProxyService: Waiting for chain to be ready...")
-
+        
         while (attempts < maxAttempts) {
-            // Check Reality SOCKS first (if configured)
+            // Check Reality SOCKS first
             val realityAddr = RealitySocks.getLocalAddress()
             if (realityAddr != null) {
-                AppLogger.i("TProxyService: Chain ready - Reality SOCKS port: ${realityAddr.port}")
+                AppLogger.i("TProxyService: Chain ready, Reality SOCKS port: ${realityAddr.port}")
                 return true
             }
-
-            // Check if Xray-core is running (primary routing engine)
-            // Xray is the core component - if it's running, chain is ready
+            
+            // Check Xray is running
             val prefs = Preferences(this)
             val configPath = prefs.selectedConfigPath
             if (configPath != null) {
                 val xraySocksPort = extractXraySocksPort(configPath)
                 if (xraySocksPort != null) {
-                    AppLogger.i("TProxyService: Chain ready - Xray SOCKS port: $xraySocksPort")
+                    AppLogger.i("TProxyService: Chain ready, Xray SOCKS port: $xraySocksPort")
                     return true
                 }
             }
-
-            // Also check ChainSupervisor status
-            val chainStatus = chainSupervisor?.getStatus()
-            if (chainStatus != null && (chainStatus.state == ChainState.RUNNING || chainStatus.state == ChainState.DEGRADED)) {
-                AppLogger.i("TProxyService: Chain ready - ChainSupervisor state: ${chainStatus.state}")
-                return true
-            }
-
+            
             attempts++
             if (attempts < maxAttempts) {
-                AppLogger.d("TProxyService: Chain not ready yet (attempt $attempts/$maxAttempts), retrying...")
                 Thread.sleep(delayMs)
             }
         }
-
-        AppLogger.w("TProxyService: Chain not fully ready after ${maxAttempts} attempts, but continuing anyway")
-        // Return true anyway - Xray may still work even if Reality SOCKS isn't ready
-        // This allows the VPN to start even if optional components aren't ready
-        return true
+        
+        AppLogger.e("TProxyService: Chain not ready after ${maxAttempts} attempts")
+        return false
     }
     
     /**
