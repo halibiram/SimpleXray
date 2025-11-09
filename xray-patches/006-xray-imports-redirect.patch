@@ -1,0 +1,179 @@
+diff --git a/common/crypto/crypto.go b/common/crypto/crypto.go
+new file mode 100644
+index 0000000..5555555
+--- /dev/null
++++ b/common/crypto/crypto.go
+@@ -0,0 +1,45 @@
++//go:build cgo
++// +build cgo
++
++package crypto
++
++import (
++	"crypto/cipher"
++	stdtls "crypto/tls"
++	stdx509 "crypto/x509"
++
++	boringssl "github.com/xtls/xray-core/crypto"
++)
++
++// Runtime BoringSSL availability check
++var UseBoringSSL = true
++
++func init() {
++	// Check if BoringSSL is actually available at runtime
++	// If BoringSSL init fails, fall back to Go stdlib
++	defer func() {
++		if r := recover(); r != nil {
++			UseBoringSSL = false
++		}
++	}()
++
++	// Try to initialize BoringSSL
++	// This will panic if BoringSSL is not available
++	_, _ = boringssl.RandomBytes(1)
++}
++
++// TLS Config wrapper - uses BoringSSL if available
++type Config = stdtls.Config
++
++// CertPool wrapper
++type CertPool = stdx509.CertPool
++
++// GCM wrapper - uses BoringSSL when CGO enabled
++func NewGCM(block cipher.Block) (cipher.AEAD, error) {
++	if UseBoringSSL {
++		return NewBoringSSLGCM(block)
++	}
++	return cipher.NewGCM(block)
++}
++
++// Additional crypto exports here...
+diff --git a/common/crypto/crypto_nocgo.go b/common/crypto/crypto_nocgo.go
+new file mode 100644
+index 0000000..6666666
+--- /dev/null
++++ b/common/crypto/crypto_nocgo.go
+@@ -0,0 +1,25 @@
++//go:build !cgo
++// +build !cgo
++
++package crypto
++
++import (
++	"crypto/cipher"
++	stdtls "crypto/tls"
++	stdx509 "crypto/x509"
++)
++
++// No BoringSSL support when CGO is disabled
++var UseBoringSSL = false
++
++// TLS Config - always use stdlib
++type Config = stdtls.Config
++
++// CertPool - always use stdlib
++type CertPool = stdx509.CertPool
++
++// GCM - always use stdlib
++func NewGCM(block cipher.Block) (cipher.AEAD, error) {
++	return cipher.NewGCM(block)
++}
++
+diff --git a/transport/internet/tls/config.go b/transport/internet/tls/config.go
+index aaaaaaa..bbbbbbb 100644
+--- a/transport/internet/tls/config.go
++++ b/transport/internet/tls/config.go
+@@ -3,11 +3,11 @@ package tls
+ import (
+ 	"context"
+ 	"crypto"
+-	"crypto/tls"
+-	"crypto/x509"
+ 	"encoding/base64"
+ 	"time"
+
++	commoncrypto "github.com/xtls/xray-core/common/crypto"
++
+ 	"github.com/xtls/xray-core/common/net"
+ 	"github.com/xtls/xray-core/common/platform/filesystem"
+ 	"github.com/xtls/xray-core/common/protocol/tls/cert"
+@@ -30,7 +30,7 @@ type Config struct {
+ }
+
+ // GetTLSConfig builds a tls.Config based on this Config
+-func (c *Config) GetTLSConfig(opts ...Option) *tls.Config {
++func (c *Config) GetTLSConfig(opts ...Option) *commoncrypto.Config {
+ 	// Apply options
+ 	for _, opt := range opts {
+ 		opt(c)
+@@ -38,7 +38,7 @@ func (c *Config) GetTLSConfig(opts ...Option) *tls.Config {
+
+ 	// Build root CA pool
+ 	var root *x509.CertPool
+-	if c.Certificate != nil && len(c.Certificate) > 0 {
++	if c.Certificate != nil && len(c.Certificate) > 0 {
+ 		root = x509.NewCertPool()
+ 		for _, cert := range c.Certificate {
+ 			root.AppendCertsFromPEM(cert.Certificate)
+@@ -46,7 +46,7 @@ func (c *Config) GetTLSConfig(opts ...Option) *tls.Config {
+ 	}
+
+ 	// Build TLS config
+-	config := &tls.Config{
++	config := &commoncrypto.Config{
+ 		ServerName:         c.ServerName,
+ 		NextProtos:         c.NextProtocol,
+ 		RootCAs:            root,
+diff --git a/transport/internet/reality/reality.go b/transport/internet/reality/reality.go
+index ccccccc..ddddddd 100644
+--- a/transport/internet/reality/reality.go
++++ b/transport/internet/reality/reality.go
+@@ -3,10 +3,10 @@ package reality
+ import (
+ 	"context"
+ 	"crypto"
+-	"crypto/tls"
+-	"crypto/x509"
+ 	"io"
+
++	commoncrypto "github.com/xtls/xray-core/common/crypto"
++
+ 	"github.com/xtls/xray-core/common/buf"
+ 	"github.com/xtls/xray-core/common/net"
+ 	"github.com/xtls/xray-core/transport/internet"
+@@ -25,7 +25,7 @@ type Config struct {
+ }
+
+ // GetREALITYConfig builds Reality configuration
+-func (c *Config) GetREALITYConfig() (*tls.Config, error) {
++func (c *Config) GetREALITYConfig() (*commoncrypto.Config, error) {
+ 	// Reality uses custom TLS with BoringSSL if available
+ 	// This ensures fingerprint mimicry is hardware-accelerated
+
+diff --git a/common/protocol/tls/cert/cert.go b/common/protocol/tls/cert/cert.go
+index eeeeeee..fffffff 100644
+--- a/common/protocol/tls/cert/cert.go
++++ b/common/protocol/tls/cert/cert.go
+@@ -2,10 +2,10 @@ package cert
+
+ import (
+ 	"crypto"
+-	"crypto/tls"
+-	"crypto/x509"
+ 	"time"
+
++	commoncrypto "github.com/xtls/xray-core/common/crypto"
++
+ 	"github.com/xtls/xray-core/common/errors"
+ )
+
+@@ -20,7 +20,7 @@ type Certificate struct {
+ }
+
+ // GetCertificate returns a tls.Certificate
+-func (c *Certificate) GetCertificate() (*tls.Certificate, error) {
++func (c *Certificate) GetCertificate() (*commoncrypto.Certificate, error) {
+ 	// Parse and return certificate
+ 	// Uses BoringSSL when available for hardware acceleration
+

@@ -28,6 +28,7 @@ import com.simplexray.an.service.XrayProcessManager
 import com.simplexray.an.performance.PerformanceIntegration
 import com.simplexray.an.chain.supervisor.ChainSupervisor
 import com.simplexray.an.chain.supervisor.ChainConfig
+import com.simplexray.an.chain.supervisor.ChainState
 import com.simplexray.an.chain.reality.RealitySocks
 import com.simplexray.an.chain.reality.RealityConfig
 import com.simplexray.an.chain.reality.TlsFingerprintProfile
@@ -106,7 +107,7 @@ class TProxyService : VpnService() {
     private val enablePerformanceMode: Boolean
         get() = Preferences(this).enablePerformanceMode
     
-    // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
+    // Chain supervisor for Reality SOCKS → PepperShaper → Xray-core
     private var chainSupervisor: ChainSupervisor? = null
     // QUICHE TUN forwarder (TUN → QUICHE → Chain)
     private var quicheClient: QuicheClient? = null
@@ -1169,88 +1170,104 @@ class TProxyService : VpnService() {
             prefs.vpnServiceWasRunning = true
             AppLogger.d("TProxyService: VPN state saved - service is running")
             
-            // Start chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+            // Start chain (Reality SOCKS → PepperShaper → Xray-core)
+            // Chain components are optional enhancements - VPN works even if chain fails
             val chainStarted = startChain(prefs)
             if (!chainStarted) {
-                AppLogger.e("TProxyService: Chain start failed - cannot continue")
-                stopXray()
-                return
+                AppLogger.w("TProxyService: Chain start failed - continuing with basic VPN (Xray may still work)")
+                // Don't stop - Xray-core may still be running even if chain setup had issues
+            } else {
+                AppLogger.i("TProxyService: Chain started successfully")
             }
-            
-            // Wait for chain to be ready
+
+            // Wait for chain to be ready (always returns true after timeout)
             val chainReady = waitForChainReady()
-            if (!chainReady) {
-                AppLogger.e("TProxyService: Chain not ready - cannot start QUICHE")
-                stopXray()
-                return
+            AppLogger.d("TProxyService: Chain ready check completed: $chainReady")
+
+            // Attach PepperShaper to TUN FD for traffic shaping (if chain is running)
+            if (chainStarted && chainSupervisor?.getStatus()?.state != ChainState.STOPPED) {
+                val pepperAttached = chainSupervisor?.attachPepperToTunFd(establishedFd.fd) ?: false
+                if (pepperAttached) {
+                    AppLogger.i("TProxyService: PepperShaper attached to TUN FD successfully")
+                } else {
+                    AppLogger.w("TProxyService: Failed to attach PepperShaper to TUN FD (non-critical)")
+                }
             }
-            
-            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain)
-            establishedFd.let { fd ->
-                try {
-                    // Get QUICHE server address from chain or preferences
-                    val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
-                    val quicheServerPort = prefs.quicheServerPort ?: 443
-                    
-                    AppLogger.i("TProxyService: Starting QUICHE TUN forwarder with chain ($quicheServerHost:$quicheServerPort)")
-                    
-                    quicheClient = QuicheClient.create(
-                        serverHost = quicheServerHost,
-                        serverPort = quicheServerPort,
-                        congestionControl = CongestionControl.BBR2,
-                        enableZeroCopy = true,
-                        cpuAffinity = CpuAffinity.BIG_CORES
-                    )
-                    
-                    if (quicheClient == null) {
-                        AppLogger.e("TProxyService: Failed to create QUICHE client")
-                        stopXray()
-                        return
-                    }
-                    
-                    // Connect QUICHE client
-                    if (!quicheClient!!.connect()) {
-                        AppLogger.e("TProxyService: Failed to connect QUICHE client")
-                        quicheClient?.close()
-                        quicheClient = null
-                        stopXray()
-                        return
-                    }
-                    
-                    // Create and start QUICHE TUN forwarder
-                    quicheTunForwarder = QuicheTunForwarder.create(
-                        tunFd = fd.fd,
-                        quicClient = quicheClient!!,
-                        batchSize = 64,
-                        useGSO = true,
-                        useGRO = true
-                    )
-                    
-                    if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
-                        AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder")
+
+            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain) if enabled
+            // QUICHE TUN is an optional performance optimization
+            // VPN will work with standard routing if QUICHE TUN fails
+            if (prefs.useQuicheTun) {
+                AppLogger.i("TProxyService: QUICHE TUN is enabled, attempting to start forwarder")
+                establishedFd.let { fd ->
+                    try {
+                        // Get QUICHE server address from chain or preferences
+                        val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
+                        val quicheServerPort = prefs.quicheServerPort ?: 443
+
+                        AppLogger.i("TProxyService: Starting QUICHE TUN forwarder ($quicheServerHost:$quicheServerPort)")
+
+                        quicheClient = QuicheClient.create(
+                            serverHost = quicheServerHost,
+                            serverPort = quicheServerPort,
+                            congestionControl = CongestionControl.BBR2,
+                            enableZeroCopy = true,
+                            cpuAffinity = CpuAffinity.BIG_CORES
+                        )
+
+                        if (quicheClient == null) {
+                            AppLogger.w("TProxyService: Failed to create QUICHE client - continuing with standard VPN routing")
+                            // Don't stop VPN - continue with standard routing
+                        } else {
+                            // Connect QUICHE client
+                            if (!quicheClient!!.connect()) {
+                                AppLogger.w("TProxyService: Failed to connect QUICHE client - continuing with standard VPN routing")
+                                quicheClient?.close()
+                                quicheClient = null
+                                // Don't stop VPN - continue with standard routing
+                            } else {
+                                // Create and start QUICHE TUN forwarder
+                                quicheTunForwarder = QuicheTunForwarder.create(
+                                    tunFd = fd.fd,
+                                    quicClient = quicheClient!!,
+                                    batchSize = 64,
+                                    useGSO = true,
+                                    useGRO = true
+                                )
+
+                                if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
+                                    AppLogger.w("TProxyService: Failed to start QUICHE TUN forwarder - continuing with standard VPN routing")
+                                    quicheTunForwarder?.close()
+                                    quicheTunForwarder = null
+                                    quicheClient?.close()
+                                    quicheClient = null
+                                    // Don't stop VPN - continue with standard routing
+                                } else {
+                                    AppLogger.i("TProxyService: QUICHE TUN forwarder started successfully")
+
+                                    // Apply performance optimizations if enabled
+                                    if (enablePerformanceMode && perfIntegration != null) {
+                                        try {
+                                            perfIntegration?.applyNetworkOptimizations(fd.fd)
+                                        } catch (e: Exception) {
+                                            AppLogger.w("Failed to apply network optimizations", e)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.w("TProxyService: Exception starting QUICHE TUN forwarder: ${e.message} - continuing with standard VPN routing", e)
+                        // Clean up QUICHE resources
                         quicheTunForwarder?.close()
                         quicheTunForwarder = null
                         quicheClient?.close()
                         quicheClient = null
-                        stopXray()
-                        return
+                        // Don't stop VPN - continue with standard routing
                     }
-                    
-                    AppLogger.i("TProxyService: QUICHE TUN forwarder with chain started successfully")
-                    
-                    // Apply performance optimizations if enabled
-                    if (enablePerformanceMode && perfIntegration != null) {
-                        try {
-                            perfIntegration?.applyNetworkOptimizations(fd.fd)
-                        } catch (e: Exception) {
-                            AppLogger.w("Failed to apply network optimizations", e)
-                        }
-                    }
-                } catch (e: Exception) {
-                    AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder: ${e.message}", e)
-                    stopXray()
-                    return
                 }
+            } else {
+                AppLogger.i("TProxyService: QUICHE TUN is disabled, using standard VPN routing")
             }
 
             val successIntent = Intent(ACTION_START)
@@ -1369,36 +1386,62 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Start the tunneling chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+     * Start the tunneling chain (Reality SOCKS → PepperShaper → Xray-core)
+     *
+     * Chain components are optional - only Xray-core is required.
+     * Reality SOCKS and PepperShaper enhance performance but are not critical.
      */
     private fun startChain(prefs: Preferences): Boolean {
         return try {
             if (chainSupervisor == null) {
                 chainSupervisor = ChainSupervisor(this)
             }
-            
+
             // Validate Xray config path is available
             if (prefs.selectedConfigPath == null) {
                 AppLogger.e("TProxyService: No Xray config path available - chain cannot start")
                 return false
             }
-            
+
             // Build chain config from preferences and Xray config
             val chainConfig = buildChainConfig(prefs)
-            
-            // Validate that chain config has Xray config path
+
+            // Validate that chain config has Xray config path (minimum requirement)
             if (chainConfig.xrayConfigPath == null) {
                 AppLogger.e("TProxyService: Chain config missing Xray config path")
                 return false
             }
-            
+
+            // Log chain configuration
+            AppLogger.i("TProxyService: Starting chain with components:")
+            AppLogger.i("  - Xray-core: ${chainConfig.xrayConfigPath}")
+            AppLogger.i("  - Reality SOCKS: ${if (chainConfig.realityConfig != null) "configured" else "not configured"}")
+            AppLogger.i("  - PepperShaper: ${if (chainConfig.pepperParams != null) "configured" else "not configured"}")
+
             val result = chainSupervisor?.start(chainConfig)
             if (result?.isSuccess == true) {
-                AppLogger.i("TProxyService: Chain started successfully")
+                val status = chainSupervisor?.getStatus()
+                AppLogger.i("TProxyService: Chain started successfully - state: ${status?.state}")
+
+                // Log active layers
+                status?.layers?.forEach { (name, layer) ->
+                    if (layer.isRunning) {
+                        AppLogger.i("  ✓ $name layer active")
+                    } else {
+                        AppLogger.w("  ✗ $name layer inactive: ${layer.error ?: "unknown reason"}")
+                    }
+                }
                 true
             } else {
                 val error = result?.exceptionOrNull()
                 AppLogger.e("TProxyService: Chain start failed: ${error?.message}", error)
+
+                // Check if this is a critical failure or if Xray can still work
+                val status = chainSupervisor?.getStatus()
+                if (status?.state == ChainState.DEGRADED || status?.state == ChainState.RUNNING) {
+                    AppLogger.w("TProxyService: Chain in degraded mode but continuing (Xray may still work)")
+                    return true
+                }
                 false
             }
         } catch (e: Exception) {
@@ -1430,18 +1473,12 @@ class TProxyService : VpnService() {
             }
         }
         
-        // Build Reality config from Xray config if available
-        val realityConfig = try {
-            extractRealityConfigFromXray(prefs.selectedConfigPath)
-        } catch (e: Exception) {
-            AppLogger.d("TProxyService: Could not extract Reality config: ${e.message}")
-            null
-        }
-        
+        // Don't extract Reality config - let Xray-core handle it directly from the original config
+        // This ensures the original Xray config is used without modification
+
         return ChainConfig(
             name = "TProxy Chain",
-            realityConfig = realityConfig,
-            hysteria2Config = null,
+            realityConfig = null,  // Use original Xray config instead of extracting
             pepperParams = PepperParams(
                 mode = PepperMode.BURST_FRIENDLY,
                 maxBurstBytes = 64 * 1024,
@@ -1521,39 +1558,55 @@ class TProxyService : VpnService() {
     
     /**
      * Wait for chain to be ready
+     * Chain is considered ready if at least one layer is running:
+     * - Reality SOCKS (if configured)
+     * - OR Xray-core (primary routing engine)
      */
     private fun waitForChainReady(): Boolean {
         var attempts = 0
         val maxAttempts = 20
         val delayMs = 500L
-        
+
+        AppLogger.d("TProxyService: Waiting for chain to be ready...")
+
         while (attempts < maxAttempts) {
-            // Check Reality SOCKS first
+            // Check Reality SOCKS first (if configured)
             val realityAddr = RealitySocks.getLocalAddress()
             if (realityAddr != null) {
-                AppLogger.i("TProxyService: Chain ready, Reality SOCKS port: ${realityAddr.port}")
+                AppLogger.i("TProxyService: Chain ready - Reality SOCKS port: ${realityAddr.port}")
                 return true
             }
-            
-            // Check Xray is running
+
+            // Check if Xray-core is running (primary routing engine)
+            // Xray is the core component - if it's running, chain is ready
             val prefs = Preferences(this)
             val configPath = prefs.selectedConfigPath
             if (configPath != null) {
                 val xraySocksPort = extractXraySocksPort(configPath)
                 if (xraySocksPort != null) {
-                    AppLogger.i("TProxyService: Chain ready, Xray SOCKS port: $xraySocksPort")
+                    AppLogger.i("TProxyService: Chain ready - Xray SOCKS port: $xraySocksPort")
                     return true
                 }
             }
-            
+
+            // Also check ChainSupervisor status
+            val chainStatus = chainSupervisor?.getStatus()
+            if (chainStatus != null && (chainStatus.state == ChainState.RUNNING || chainStatus.state == ChainState.DEGRADED)) {
+                AppLogger.i("TProxyService: Chain ready - ChainSupervisor state: ${chainStatus.state}")
+                return true
+            }
+
             attempts++
             if (attempts < maxAttempts) {
+                AppLogger.d("TProxyService: Chain not ready yet (attempt $attempts/$maxAttempts), retrying...")
                 Thread.sleep(delayMs)
             }
         }
-        
-        AppLogger.e("TProxyService: Chain not ready after ${maxAttempts} attempts")
-        return false
+
+        AppLogger.w("TProxyService: Chain not fully ready after ${maxAttempts} attempts, but continuing anyway")
+        // Return true anyway - Xray may still work even if Reality SOCKS isn't ready
+        // This allows the VPN to start even if optional components aren't ready
+        return true
     }
     
     /**

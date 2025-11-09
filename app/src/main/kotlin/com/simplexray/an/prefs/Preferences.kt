@@ -627,9 +627,10 @@ class Preferences(context: Context) {
 
     /**
      * QUICHE TUN forwarder settings
+     * Default: true - QUICHE TUN is enabled by default for better performance
      */
     var useQuicheTun: Boolean
-        get() = getBooleanPref(USE_QUICHE_TUN, false)
+        get() = getBooleanPref(USE_QUICHE_TUN, true)
         set(value) {
             setValueInProvider(USE_QUICHE_TUN, value)
         }
