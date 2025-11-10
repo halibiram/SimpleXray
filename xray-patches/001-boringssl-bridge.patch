@@ -1,9 +1,9 @@
 diff --git a/crypto/boringssl_bridge.go b/crypto/boringssl_bridge.go
 new file mode 100644
-index 0000000..4beed69
+index 0000000..880c3b5
 --- /dev/null
 +++ b/crypto/boringssl_bridge.go
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,377 @@
 +//go:build cgo
 +// +build cgo
 +
@@ -201,7 +201,7 @@ index 0000000..4beed69
 +// RandomBytes generates random bytes using BoringSSL
 +func RandomBytes(n int) ([]byte, error) {
 +	buf := make([]byte, n)
-+	if C.RAND_bytes((*C.uchar)(&buf[0]), C.int(n)) != 1 {
++	if C.RAND_bytes((*C.uchar)(&buf[0]), C.size_t(n)) != 1 {
 +		return nil, getBoringSSLError()
 +	}
 +	return buf, nil
@@ -269,14 +269,10 @@ index 0000000..4beed69
 +		return nil, errors.New("cipher: ciphertext too short")
 +	}
 +
-+	// Split ciphertext and tag
-+	tagStart := len(ciphertext) - g.Overhead()
-+	ct := ciphertext[:tagStart]
-+	tag := ciphertext[tagStart:]
-+
 +	// Decrypt using BoringSSL (decryption implementation similar to encryption)
 +	// This is a simplified version - full implementation would use EVP_Decrypt* functions
 +	// For now, we'll return an error indicating this needs full implementation
++	// To implement: split ciphertext into ct and tag, then use EVP_DecryptUpdate/Final
 +	return nil, errors.New("BoringSSL GCM decryption not yet fully implemented")
 +}
 +
