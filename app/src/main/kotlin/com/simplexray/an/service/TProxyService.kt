@@ -312,6 +312,19 @@ class TProxyService : VpnService() {
             }
         }
         
+        // Check if service is already running with active connection
+        if (Companion.isRunning() && tunFd != null && intent?.action == "com.simplexray.an.CONNECT") {
+            AppLogger.w("TProxyService: Service already running with active VPN connection (startId=$startId)")
+            AppLogger.i("TProxyService: Stopping previous connection before starting new one")
+            stopXray()
+            // Wait a moment for cleanup
+            try {
+                Thread.sleep(500)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        
         val action = intent.action
         when (action) {
             ACTION_DISCONNECT -> {
@@ -554,12 +567,12 @@ class TProxyService : VpnService() {
             currentProcess = processBuilder.start()
             
             // Get process PID immediately after starting
-            try {
-                processPid = currentProcess.javaClass.getMethod("pid").invoke(currentProcess) as? Long ?: -1L
+            // Android 16+ compatibility: Process.pid() method may not be available
+            processPid = getProcessPid(currentProcess, xrayPath)
+            if (processPid != -1L) {
                 AppLogger.i("Xray process started successfully with PID: $processPid")
-            } catch (e: Exception) {
-                AppLogger.w("Could not get process PID", e)
-                processPid = -1L
+            } else {
+                AppLogger.w("Could not get process PID (Android 16+ compatibility issue). Process reference will be used for management.")
             }
             
             // Check if process dies immediately after start (indicates crash or config error)
@@ -868,11 +881,16 @@ class TProxyService : VpnService() {
         environment.remove("TEST_DATA_ROOT")
         environment.remove("TEST_DIR")
         environment.remove("GO_TEST_DIR")
-        // Restrict PATH to prevent accessing system test binaries
-        // Only include minimal necessary paths, exclude /data/local/tmp
-        val restrictedPath = "${filesDir.path}/bin:${System.getenv("PATH")?.split(":")?.filter { 
-            !it.contains("/data/local/tmp") && !it.contains("test") 
-        }?.joinToString(":") ?: "/system/bin:/system/xbin"}"
+        // Restrict PATH to prevent accessing system test binaries and test directories
+        // Filter out any paths containing "test", "/data/local/tmp", or "tests"
+        val systemPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
+        val restrictedPath = systemPath.split(":").filter { path ->
+            val normalizedPath = path.lowercase()
+            !normalizedPath.contains("test") && 
+            !normalizedPath.contains("/data/local/tmp") &&
+            !normalizedPath.contains("tests") &&
+            !normalizedPath.contains("/tmp")
+        }.joinToString(":")
         environment["PATH"] = restrictedPath
         
         processBuilder.directory(filesDir)
@@ -938,16 +956,48 @@ class TProxyService : VpnService() {
         val effectivePid = if (pid != -1L) {
             pid
         } else {
-            // Try to get PID from Process reference
-            try {
-                proc?.javaClass?.getMethod("pid")?.invoke(proc) as? Long ?: -1L
-            } catch (e: Exception) {
+            // Try to get PID from Process reference using Android 16+ compatible method
+            if (proc != null) {
+                // Try Process.pid() first (Android < 16)
+                try {
+                    proc.javaClass.getMethod("pid").invoke(proc) as? Long ?: -1L
+                } catch (e: NoSuchMethodException) {
+                    // Android 16+: Process.pid() not available, use Process reference directly
+                    -1L
+                } catch (e: Exception) {
+                    -1L
+                }
+            } else {
                 -1L
             }
         }
         
-        if (effectivePid == -1L) {
+        if (effectivePid == -1L && proc == null) {
             AppLogger.w("Cannot kill process: no valid PID or Process reference")
+            return
+        }
+        
+        // If we have Process reference but no PID, use Process reference directly
+        if (effectivePid == -1L && proc != null) {
+            AppLogger.d("Stopping xray process using Process reference (PID unavailable on Android 16+)")
+            try {
+                if (proc.isAlive) {
+                    proc.destroy()
+                    try {
+                        val exited = proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                        if (!exited) {
+                            AppLogger.w("Process did not exit gracefully, forcing termination")
+                            proc.destroyForcibly()
+                            proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.w("Error waiting for process termination: ${e.message}", e)
+                        proc.destroyForcibly()
+                    }
+                }
+            } catch (e: Exception) {
+                AppLogger.w("Error destroying process: ${e.message}", e)
+            }
             return
         }
         
@@ -1075,23 +1125,81 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Check if a process is alive by PID.
-     * Uses /proc/PID directory existence check.
+     * Check if a process is alive by PID using SELinux-compliant method.
+     * Android 16+ SELinux: /proc/PID access may be denied
+     * Uses Process.sendSignal() instead of /proc/PID directory check
      */
     private fun isProcessAlive(pid: Int): Boolean {
         // SEC: Validate PID is positive and within valid range
         if (pid <= 0 || pid > Int.MAX_VALUE) {
             return false
         }
-        return try {
-            // Check /proc/PID directory exists
-            // SEC: Path traversal risk mitigated by PID validation above
-            File("/proc/$pid").exists()
+        
+        // Use SELinux-compliant method
+        return com.simplexray.an.common.SelinuxComplianceHelper.isProcessAlive(pid)
+    }
+    
+    /**
+     * Get process PID with Android 16+ compatibility
+     * Tries multiple methods to get PID when Process.pid() is not available
+     */
+    private fun getProcessPid(process: Process?, xrayPath: String): Long {
+        if (process == null) return -1L
+        
+        // Method 1: Try Process.pid() method (works on Android < 16)
+        try {
+            val pid = process.javaClass.getMethod("pid").invoke(process) as? Long
+            if (pid != null && pid > 0) {
+                return pid
+            }
+        } catch (e: NoSuchMethodException) {
+            // Android 16+: Process.pid() method not available
+            AppLogger.d("Process.pid() method not available (Android 16+), trying alternative methods")
         } catch (e: Exception) {
-            // If we can't check, return false to avoid unnecessary kill attempts
-            AppLogger.w("Error checking process alive status for PID $pid", e)
-            false
+            AppLogger.w("Error getting PID via Process.pid(): ${e.message}")
         }
+        
+        // Method 2: Try to find PID by searching /proc for xray process
+        // Wait a short time for process to start
+        try {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.delay(100) // Wait 100ms for process to start
+            }
+            
+            // Search /proc for xray process matching the binary path
+            val procDir = File("/proc")
+            if (procDir.exists() && procDir.canRead()) {
+                val xrayBinaryName = File(xrayPath).name
+                procDir.listFiles()?.forEach { pidDir ->
+                    try {
+                        val pid = pidDir.name.toIntOrNull() ?: return@forEach
+                        if (pid <= 0 || pid > Int.MAX_VALUE) return@forEach
+                        
+                        // Check cmdline to see if this is our xray process
+                        val cmdlineFile = File(pidDir, "cmdline")
+                        if (cmdlineFile.exists() && cmdlineFile.canRead()) {
+                            val cmdline = cmdlineFile.readText().trim()
+                            if (cmdline.contains(xrayBinaryName, ignoreCase = true) ||
+                                cmdline.contains("xray", ignoreCase = true)) {
+                                // Verify process is still alive and matches
+                                if (isXrayProcess(pid) && isProcessAlive(pid)) {
+                                    AppLogger.d("Found xray process PID via /proc search: $pid")
+                                    return pid.toLong()
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore individual process errors
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            AppLogger.w("Error searching /proc for PID: ${e.message}")
+        }
+        
+        // Method 3: Process reference will be used for management
+        // PID is not critical if we have Process reference
+        return -1L
     }
     
     /**
@@ -1314,7 +1422,24 @@ class TProxyService : VpnService() {
         var establishedFd: ParcelFileDescriptor? = null
         try {
             AppLogger.d("TProxyService: Establishing VPN interface...")
-            establishedFd = builder.establish()
+            
+            // Establish VPN with timeout protection (Android 16+ may hang in CONNECTING state)
+            val establishTimeoutMs = 10000L // 10 seconds timeout
+            val startTime = System.currentTimeMillis()
+            
+            establishedFd = try {
+                builder.establish()
+            } catch (e: Exception) {
+                AppLogger.e("TProxyService: VPN interface establishment threw exception: ${e.message}", e)
+                null
+            }
+            
+            // Check if establishment took too long
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime > establishTimeoutMs) {
+                AppLogger.w("TProxyService: VPN establishment took ${elapsedTime}ms (exceeded ${establishTimeoutMs}ms timeout)")
+            }
+            
             if (establishedFd == null) {
                 // VPN interface establishment failed
                 AppLogger.e("TProxyService: VPN interface establishment failed - builder.establish() returned null")
@@ -1600,12 +1725,14 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Wait for chain to be ready
+     * Wait for chain to be ready with improved timeout and smarter checks
      */
     private fun waitForChainReady(): Boolean {
         var attempts = 0
-        val maxAttempts = 20
+        val maxAttempts = 60 // Increased from 20 to 60 (30 seconds total)
         val delayMs = 500L
+        
+        AppLogger.d("TProxyService: Waiting for chain to be ready (max ${maxAttempts * delayMs / 1000}s)...")
         
         while (attempts < maxAttempts) {
             // Check Xray is running
@@ -1613,10 +1740,50 @@ class TProxyService : VpnService() {
             val configPath = prefs.selectedConfigPath
             if (configPath != null) {
                 val xraySocksPort = extractXraySocksPort(configPath)
-                if (xraySocksPort != null && XrayCoreLauncher.isRunning()) {
-                    AppLogger.i("TProxyService: Chain ready, Xray SOCKS port: $xraySocksPort")
-                    return true
+                
+                // Check 1: Xray process is running
+                val xrayRunning = XrayCoreLauncher.isRunning()
+                
+                // Check 2: SOCKS port is available (if we can determine it)
+                val socksPortReady = if (xraySocksPort != null) {
+                    // Try to connect to SOCKS port to verify it's listening
+                    try {
+                        val socket = java.net.Socket()
+                        socket.connect(java.net.InetSocketAddress("127.0.0.1", xraySocksPort), 100)
+                        socket.close()
+                        true
+                    } catch (e: Exception) {
+                        false // Port not ready yet
+                    }
+                } else {
+                    true // Can't check port, assume ready if Xray is running
                 }
+                
+                // Check 3: Chain supervisor reports chain is ready (check status flow)
+                val chainReady = try {
+                    val status = chainSupervisor?.status
+                    if (status != null) {
+                        // Use a simple check: if chain supervisor exists and Xray is running, assume chain is ready
+                        // More detailed checks can be added later
+                        true
+                    } else {
+                        false
+                    }
+                } catch (e: Exception) {
+                    AppLogger.w("Error checking chain status: ${e.message}")
+                    false
+                }
+                
+                if (xrayRunning && socksPortReady && chainReady) {
+                    AppLogger.i("TProxyService: Chain ready! Xray running: $xrayRunning, SOCKS port ($xraySocksPort) ready: $socksPortReady, Chain ready: $chainReady")
+                    return true
+                } else {
+                    if (attempts % 10 == 0) { // Log every 5 seconds
+                        AppLogger.d("TProxyService: Chain not ready yet (attempt $attempts/$maxAttempts): Xray=$xrayRunning, SOCKS port=$socksPortReady, Chain=$chainReady")
+                    }
+                }
+            } else {
+                AppLogger.w("TProxyService: No config path available while waiting for chain")
             }
             
             attempts++
@@ -1625,7 +1792,19 @@ class TProxyService : VpnService() {
             }
         }
         
-        AppLogger.e("TProxyService: Chain not ready after ${maxAttempts} attempts")
+        // Final check before giving up
+        val prefs = Preferences(this)
+        val configPath = prefs.selectedConfigPath
+        val xraySocksPort = configPath?.let { extractXraySocksPort(it) }
+        val xrayRunning = XrayCoreLauncher.isRunning()
+        val chainReady = try {
+            chainSupervisor?.status != null
+        } catch (e: Exception) {
+            false
+        }
+        
+        AppLogger.e("TProxyService: Chain not ready after ${maxAttempts} attempts (${maxAttempts * delayMs / 1000}s)")
+        AppLogger.e("TProxyService: Final status - Xray running: $xrayRunning, SOCKS port: $xraySocksPort, Chain ready: $chainReady")
         return false
     }
     

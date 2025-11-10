@@ -28,13 +28,31 @@ object MiuiHelper {
 
     /**
      * Get MIUI version if available
+     * Android 16+ SELinux: ro.miui.ui.version.name access may be denied
+     * This is handled gracefully with try-catch
      */
     fun getMiuiVersion(): String? {
         return try {
+            // Android 16+ SELinux may block SystemProperties access
+            // Wrap in try-catch to handle gracefully
             val props = Class.forName("android.os.SystemProperties")
             val get = props.getMethod("get", String::class.java)
-            get.invoke(props, "ro.miui.ui.version.name") as? String
+            val version = get.invoke(props, "ro.miui.ui.version.name") as? String
+            version?.takeIf { it.isNotEmpty() }
+        } catch (e: ClassNotFoundException) {
+            // SystemProperties class not available (expected on non-MIUI devices)
+            null
+        } catch (e: NoSuchMethodException) {
+            // Method not available (unlikely but handle gracefully)
+            AppLogger.d("MiuiHelper: SystemProperties.get method not available")
+            null
+        } catch (e: SecurityException) {
+            // SELinux denied access (Android 16+)
+            AppLogger.d("MiuiHelper: SystemProperties access denied by SELinux (expected on Android 16+)")
+            null
         } catch (e: Exception) {
+            // Any other exception
+            AppLogger.d("MiuiHelper: Failed to get MIUI version: ${e.message}")
             null
         }
     }

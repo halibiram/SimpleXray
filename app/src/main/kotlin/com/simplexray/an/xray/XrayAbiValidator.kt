@@ -67,30 +67,46 @@ object XrayAbiValidator {
             !file.canRead() -> {
                 ValidationResult(false, "File not readable: ${file.absolutePath}", abi)
             }
-            !file.setExecutable(true, false) -> {
+            // Android 16+ SELinux policy: setExecutable() may fail even though file is executable
+            // Skip setExecutable check on Android 16+ (API 36+) as native library directory
+            // has app_file_exec context which allows execution without setExecutable()
+            android.os.Build.VERSION.SDK_INT >= 36 && !file.setExecutable(true, false) -> {
+                // On Android 16+, this is expected - file is still executable in native context
+                Log.d(TAG, "setExecutable() failed on Android 16+ (expected): ${file.absolutePath}")
+                // Continue validation - file may still be executable
+                validateElfBinary(file, abi)
+            }
+            android.os.Build.VERSION.SDK_INT < 36 && !file.setExecutable(true, false) -> {
                 ValidationResult(false, "Cannot set executable permission: ${file.absolutePath}", abi)
             }
             else -> {
-                // Verify file is actually an ELF binary (basic check)
-                val isValid = try {
-                    val header = ByteArray(4)
-                    file.inputStream().use { it.read(header) }
-                    // ELF magic: 0x7F 'E' 'L' 'F'
-                    header[0] == 0x7F.toByte() && 
-                    header[1] == 'E'.code.toByte() && 
-                    header[2] == 'L'.code.toByte() && 
-                    header[3] == 'F'.code.toByte()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to read file header for ${file.absolutePath}", e)
-                    false
-                }
-                
-                if (isValid) {
-                    ValidationResult(true, "Valid executable binary", abi)
-                } else {
-                    ValidationResult(false, "Invalid ELF binary", abi)
-                }
+                validateElfBinary(file, abi)
             }
+        }
+    }
+    
+    /**
+     * Validate ELF binary format
+     */
+    private fun validateElfBinary(file: File, abi: String): ValidationResult {
+        // Verify file is actually an ELF binary (basic check)
+        val isValid = try {
+            val header = ByteArray(4)
+            file.inputStream().use { it.read(header) }
+            // ELF magic: 0x7F 'E' 'L' 'F'
+            header[0] == 0x7F.toByte() && 
+            header[1] == 'E'.code.toByte() && 
+            header[2] == 'L'.code.toByte() && 
+            header[3] == 'F'.code.toByte()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read file header for ${file.absolutePath}", e)
+            false
+        }
+        
+        return if (isValid) {
+            ValidationResult(true, "Valid executable binary", abi)
+        } else {
+            ValidationResult(false, "Invalid ELF binary", abi)
         }
     }
 

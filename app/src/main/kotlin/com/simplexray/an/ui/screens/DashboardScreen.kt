@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -31,10 +32,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.simplexray.an.R
 import com.simplexray.an.common.ROUTE_PERFORMANCE
@@ -47,6 +50,8 @@ import com.simplexray.an.common.ROUTE_CHAIN
 import com.simplexray.an.common.formatBytes
 import com.simplexray.an.common.formatNumber
 import com.simplexray.an.common.formatUptime
+import com.simplexray.an.chain.supervisor.ChainState
+import com.simplexray.an.viewmodel.ChainViewModel
 import com.simplexray.an.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 
@@ -60,6 +65,12 @@ fun DashboardScreen(
     val isRefreshing by mainViewModel.isStatsRefreshing.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     var isVisible by remember { mutableStateOf(false) }
+    
+    // Chain status
+    val chainViewModel: ChainViewModel = viewModel()
+    val chainStatus by chainViewModel.status.collectAsState()
+    val failedLayers = chainStatus.layers.values.filter { !it.isRunning && it.error != null }
+    val isDegraded = chainStatus.state == ChainState.DEGRADED
 
     // Stop updates when screen is not visible
     LaunchedEffect(Unit) {
@@ -106,6 +117,17 @@ fun DashboardScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
+        }
+        
+        // Chain Status Card
+        item {
+            ChainStatusQuickCard(
+                chainStatus = chainStatus,
+                failedLayersCount = failedLayers.size,
+                isDegraded = isDegraded,
+                onClick = { appNavController.navigate(ROUTE_CHAIN) }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         item {
@@ -300,5 +322,101 @@ fun StatRow(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurface,
             fontFamily = FontFamily.Monospace
         )
+    }
+}
+
+@Composable
+private fun ChainStatusQuickCard(
+    chainStatus: com.simplexray.an.chain.supervisor.ChainStatus,
+    failedLayersCount: Int,
+    isDegraded: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraLarge)
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = when (chainStatus.state) {
+                ChainState.RUNNING -> MaterialTheme.colorScheme.primaryContainer
+                ChainState.DEGRADED -> MaterialTheme.colorScheme.errorContainer
+                ChainState.FAILED -> MaterialTheme.colorScheme.errorContainer
+                ChainState.STARTING -> MaterialTheme.colorScheme.secondaryContainer
+                ChainState.STOPPING -> MaterialTheme.colorScheme.surfaceVariant
+                ChainState.STOPPED -> MaterialTheme.colorScheme.surfaceContainer
+            }
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = when (chainStatus.state) {
+                            ChainState.RUNNING -> Icons.Default.CheckCircle
+                            ChainState.DEGRADED -> Icons.Default.Warning
+                            ChainState.FAILED -> Icons.Default.Error
+                            ChainState.STARTING -> Icons.Default.PlayArrow
+                            ChainState.STOPPING -> Icons.Default.Stop
+                            ChainState.STOPPED -> Icons.Default.StopCircle
+                        },
+                        contentDescription = null,
+                        tint = when (chainStatus.state) {
+                            ChainState.RUNNING -> MaterialTheme.colorScheme.primary
+                            ChainState.DEGRADED -> MaterialTheme.colorScheme.error
+                            ChainState.FAILED -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    Text(
+                        text = "Chain Status",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = when (chainStatus.state) {
+                        ChainState.RUNNING -> "All layers running"
+                        ChainState.DEGRADED -> if (failedLayersCount > 0) {
+                            "$failedLayersCount layer(s) failed"
+                        } else {
+                            "Degraded mode"
+                        }
+                        ChainState.FAILED -> "Chain failed"
+                        ChainState.STARTING -> "Starting..."
+                        ChainState.STOPPING -> "Stopping..."
+                        ChainState.STOPPED -> "Stopped"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isDegraded || chainStatus.state == ChainState.FAILED) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+                if (chainStatus.uptime > 0) {
+                    Text(
+                        text = "Uptime: ${formatUptime(chainStatus.uptime)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "View details",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }

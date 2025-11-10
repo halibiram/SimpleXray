@@ -52,11 +52,20 @@ object ChainHelper {
         parts.add("QUICME: configured")
         
         if (config.pepperParams != null) {
-            parts.add("PepperShaper: ${if (try { PepperShaper.getStats(); true } catch (e: Exception) { false }) "✓" else "✗"}")
+            val pepperStatus = if (try { PepperShaper.getStats(); true } catch (e: Exception) { false }) {
+                "ready"
+            } else {
+                "not ready"
+            }
+            parts.add("PepperShaper: $pepperStatus")
+        } else {
+            parts.add("PepperShaper: not configured")
         }
         
         if (config.xrayConfigPath != null) {
             parts.add("Xray: configured")
+        } else {
+            parts.add("Xray: not configured")
         }
         
         return parts.joinToString(", ")

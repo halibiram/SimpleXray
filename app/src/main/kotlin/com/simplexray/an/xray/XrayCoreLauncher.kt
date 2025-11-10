@@ -189,11 +189,16 @@ object XrayCoreLauncher {
             environment.remove("TEST_DATA_ROOT")
             environment.remove("TEST_DIR")
             environment.remove("GO_TEST_DIR")
-            // Restrict PATH to prevent accessing system test binaries
-            // Only include minimal necessary paths
-            val restrictedPath = "${filesDir.path}/bin:${System.getenv("PATH")?.split(":")?.filter { 
-                !it.contains("/data/local/tmp") && !it.contains("test") 
-            }?.joinToString(":") ?: "/system/bin:/system/xbin"}"
+            // Restrict PATH to prevent accessing system test binaries and test directories
+            // Filter out any paths containing "test", "/data/local/tmp", or "tests"
+            val systemPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
+            val restrictedPath = systemPath.split(":").filter { path ->
+                val normalizedPath = path.lowercase()
+                !normalizedPath.contains("test") && 
+                !normalizedPath.contains("/data/local/tmp") &&
+                !normalizedPath.contains("tests") &&
+                !normalizedPath.contains("/tmp")
+            }.joinToString(":")
             environment["PATH"] = restrictedPath
             
             pb.directory(filesDir)
@@ -688,23 +693,18 @@ object XrayCoreLauncher {
     }
     
     /**
-     * Check if a process is alive by PID.
-     * Uses /proc/PID directory existence check.
+     * Check if a process is alive by PID using SELinux-compliant method.
+     * Android 16+ SELinux: /proc/PID access may be denied
+     * Uses Process.sendSignal() instead of /proc/PID directory check
      */
     private fun isProcessAlive(pid: Int): Boolean {
         // SEC: Validate PID is positive and within valid range
         if (pid <= 0 || pid > Int.MAX_VALUE) {
             return false
         }
-        return try {
-            // Check /proc/PID directory exists
-            // SEC: Path traversal risk mitigated by PID validation above
-            java.io.File("/proc/$pid").exists()
-        } catch (e: Exception) {
-            // If we can't check, return false to avoid unnecessary kill attempts
-            AppLogger.w("Error checking process alive status for PID $pid", e)
-            false
-        }
+        
+        // Use SELinux-compliant method
+        return com.simplexray.an.common.SelinuxComplianceHelper.isProcessAlive(pid)
     }
 
     // Android 16+ SELinux compliance: Use native library directly instead of copying

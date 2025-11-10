@@ -3,6 +3,8 @@ package com.simplexray.an.ui.chain
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +28,10 @@ fun ChainScreen(
 ) {
     val status by viewModel.status.collectAsState()
     
+    // Calculate failed layers
+    val failedLayers = status.layers.values.filter { !it.isRunning && it.error != null }
+    val isDegraded = status.state == ChainState.DEGRADED
+    
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -39,28 +45,16 @@ fun ChainScreen(
             fontWeight = FontWeight.Bold
         )
         
-        // Status Card
-        Card {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "Status: ${status.state.name}",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                if (status.uptime > 0) {
-                    Text(
-                        text = "Uptime: ${formatUptime(status.uptime)}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                Text(
-                    text = "↑ ${formatBytes(status.totalBytesUp)} / ↓ ${formatBytes(status.totalBytesDown)}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
+        // Degraded Mode Warning Banner
+        if (isDegraded) {
+            DegradedModeBanner(failedLayers = failedLayers)
         }
+        
+        // Status Card with enhanced information
+        ChainStatusCard(
+            status = status,
+            failedLayersCount = failedLayers.size
+        )
         
         // Layer Status List
         Text(
@@ -113,8 +107,152 @@ fun ChainScreen(
 }
 
 @Composable
+fun DegradedModeBanner(failedLayers: List<com.simplexray.an.chain.supervisor.LayerStatus>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Degraded Mode",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    text = if (failedLayers.isNotEmpty()) {
+                        "Failed layers: ${failedLayers.joinToString(", ") { it.name }}"
+                    } else {
+                        "Some critical layers failed to start"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                if (failedLayers.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    failedLayers.forEach { layer ->
+                        if (layer.error != null) {
+                            Text(
+                                text = "• ${layer.name}: ${layer.error}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ChainStatusCard(
+    status: com.simplexray.an.chain.supervisor.ChainStatus,
+    failedLayersCount: Int
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = when (status.state) {
+                ChainState.RUNNING -> MaterialTheme.colorScheme.primaryContainer
+                ChainState.DEGRADED -> MaterialTheme.colorScheme.errorContainer
+                ChainState.FAILED -> MaterialTheme.colorScheme.errorContainer
+                ChainState.STARTING -> MaterialTheme.colorScheme.secondaryContainer
+                ChainState.STOPPING -> MaterialTheme.colorScheme.surfaceVariant
+                ChainState.STOPPED -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = when (status.state) {
+                        ChainState.RUNNING -> Icons.Default.CheckCircle
+                        ChainState.DEGRADED -> Icons.Default.Warning
+                        ChainState.FAILED -> Icons.Default.Error
+                        ChainState.STARTING -> Icons.Default.PlayArrow
+                        ChainState.STOPPING -> Icons.Default.Stop
+                        ChainState.STOPPED -> Icons.Default.StopCircle
+                    },
+                    contentDescription = null,
+                    tint = when (status.state) {
+                        ChainState.RUNNING -> MaterialTheme.colorScheme.primary
+                        ChainState.DEGRADED -> MaterialTheme.colorScheme.error
+                        ChainState.FAILED -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+                Text(
+                    text = when (status.state) {
+                        ChainState.RUNNING -> "Running"
+                        ChainState.DEGRADED -> "Degraded Mode"
+                        ChainState.FAILED -> "Failed"
+                        ChainState.STARTING -> "Starting..."
+                        ChainState.STOPPING -> "Stopping..."
+                        ChainState.STOPPED -> "Stopped"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            if (status.state == ChainState.DEGRADED && failedLayersCount > 0) {
+                Text(
+                    text = "$failedLayersCount layer(s) failed",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            
+            if (status.uptime > 0) {
+                Text(
+                    text = "Uptime: ${formatUptime(status.uptime)}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            
+            if (status.totalBytesUp > 0 || status.totalBytesDown > 0) {
+                Text(
+                    text = "↑ ${formatBytes(status.totalBytesUp)} / ↓ ${formatBytes(status.totalBytesDown)}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun LayerStatusCard(layer: com.simplexray.an.chain.supervisor.LayerStatus) {
-    Card {
+    val isFailed = !layer.isRunning && layer.error != null
+    
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                layer.isRunning -> MaterialTheme.colorScheme.primaryContainer
+                isFailed -> MaterialTheme.colorScheme.errorContainer
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -123,12 +261,31 @@ fun LayerStatusCard(layer: com.simplexray.an.chain.supervisor.LayerStatus) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = layer.name.uppercase(),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = when {
+                            layer.isRunning -> Icons.Default.CheckCircle
+                            isFailed -> Icons.Default.Error
+                            else -> Icons.Default.Info
+                        },
+                        contentDescription = null,
+                        tint = when {
+                            layer.isRunning -> MaterialTheme.colorScheme.primary
+                            isFailed -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    Text(
+                        text = layer.name.uppercase(),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 if (layer.error != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = layer.error,
                         style = MaterialTheme.typography.bodySmall,
@@ -140,16 +297,25 @@ fun LayerStatusCard(layer: com.simplexray.an.chain.supervisor.LayerStatus) {
             // Status indicator
             Surface(
                 color = when {
-                    layer.isRunning -> MaterialTheme.colorScheme.primaryContainer
-                    layer.error != null -> MaterialTheme.colorScheme.errorContainer
+                    layer.isRunning -> MaterialTheme.colorScheme.primary
+                    isFailed -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.surfaceVariant
                 },
                 shape = MaterialTheme.shapes.small
             ) {
                 Text(
-                    text = if (layer.isRunning) "RUNNING" else "STOPPED",
+                    text = when {
+                        layer.isRunning -> "READY"
+                        isFailed -> "FAILED"
+                        else -> "STOPPED"
+                    },
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelSmall
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when {
+                        layer.isRunning -> MaterialTheme.colorScheme.onPrimary
+                        isFailed -> MaterialTheme.colorScheme.onError
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 )
             }
         }

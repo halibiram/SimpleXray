@@ -208,6 +208,22 @@ class ChainSupervisor(private val context: Context) {
             val criticalSuccess = criticalLayers.isEmpty() || criticalLayers.all { it.isSuccess }
             val allSuccess = results.all { it.isSuccess }
             
+            // Log which layers failed for better debugging
+            val failedLayers = mutableListOf<String>()
+            results.forEachIndexed { index, result ->
+                if (!result.isSuccess) {
+                    val layerName = when (index) {
+                        0 -> "QUICME"
+                        1 -> "PepperShaper"
+                        2 -> "Xray"
+                        else -> "Unknown"
+                    }
+                    failedLayers.add(layerName)
+                    val error = result.exceptionOrNull()
+                    AppLogger.w("ChainSupervisor: Layer '$layerName' failed: ${error?.message ?: "Unknown error"}")
+                }
+            }
+            
             kotlinx.coroutines.runBlocking {
                 statusMutex.withLock {
                     if (criticalSuccess) {
@@ -217,11 +233,19 @@ class ChainSupervisor(private val context: Context) {
                             AppLogger.i("ChainSupervisor: Chain started successfully (all layers active)")
                         } else {
                             _status.value = _status.value.copy(state = ChainState.RUNNING)
-                            AppLogger.i("ChainSupervisor: Chain started successfully (some optional layers inactive)")
+                            AppLogger.w("ChainSupervisor: Chain started in degraded mode (some optional layers failed)")
+                            AppLogger.w("ChainSupervisor: Failed layers: ${failedLayers.joinToString(", ")}")
+                            if (failedLayers.isNotEmpty()) {
+                                AppLogger.w("ChainSupervisor: Chain will continue with reduced functionality")
+                            }
                         }
                     } else {
                         _status.value = _status.value.copy(state = ChainState.DEGRADED)
                         AppLogger.w("ChainSupervisor: Chain started in degraded mode (critical layers failed)")
+                        AppLogger.w("ChainSupervisor: Failed critical layers: ${failedLayers.joinToString(", ")}")
+                        if (failedLayers.isNotEmpty()) {
+                            AppLogger.e("ChainSupervisor: Critical layer failures may cause VPN connectivity issues")
+                        }
                     }
                 }
             }
