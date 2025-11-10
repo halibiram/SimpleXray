@@ -84,6 +84,9 @@ android {
     namespace "com.simplexray.an"
     compileSdk = 36
 
+    // Allow switching to CI-provided Rust artifacts
+    def useCiRustArtifacts = (System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]
+
     defaultConfig {
         applicationId "com.simplexray.an"
         versionCode versionProps.APP_VERSION_CODE.toInteger()
@@ -431,6 +434,10 @@ tasks.register("copyQuicheLibraries") {
 // Build Rust native modules
 tasks.register("buildRustModules") {
     doLast {
+        if ((System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]) {
+            println("✅ Using CI-provided Rust artifacts (SXR_USE_CI_RUST=true) - skipping local Rust build")
+            return
+        }
         // Map module names to their Cargo library names and Kotlin load names
         def rustModules = [
             "xray-signal-handler": ["cargoLib": "xray_signal_handler", "kotlinName": "xray-signal-handler"],
@@ -722,7 +729,14 @@ tasks.matching { task ->
     task.name.startsWith("externalNativeBuild") && 
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
-    task.dependsOn("checkBoringSSL", "copyQuicheLibraries", "buildRustModules")
+    task.dependsOn("checkBoringSSL", "copyQuicheLibraries")
+    // Only depend on local Rust build when CI artifacts are not used
+    def ciRust = (System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]
+    if (!ciRust) {
+        task.dependsOn("buildRustModules")
+    } else {
+        println("ℹ️ Skipping buildRustModules dependency for ${task.name} (SXR_USE_CI_RUST=true)")
+    }
 }
 
 // Ensure Rust modules are built before any build task (if available)
@@ -730,7 +744,12 @@ tasks.matching { task ->
     (task.name.contains("assemble") || task.name.contains("bundle")) &&
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
-    task.dependsOn("buildRustModules")
+    def ciRust = (System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]
+    if (!ciRust) {
+        task.dependsOn("buildRustModules")
+    } else {
+        println("ℹ️ Skipping buildRustModules dependency for ${task.name} (SXR_USE_CI_RUST=true)")
+    }
 }
 
 // buildRustModules is REQUIRED - build will fail if Rust modules can't be built

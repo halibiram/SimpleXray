@@ -164,10 +164,12 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(onClick = {
-                        mainViewModel.downloadRuleFile(ruleFileUrl, editingRuleFile!!)
-                        scope.launch { sheetState.hide() }.invokeOnCompletion {
-                            if (!sheetState.isVisible) {
-                                editingRuleFile = null
+                        editingRuleFile?.let { file ->
+                            mainViewModel.downloadRuleFile(ruleFileUrl, file)
+                            scope.launch { sheetState.hide() }.invokeOnCompletion {
+                                if (!sheetState.isVisible) {
+                                    editingRuleFile = null
+                                }
                             }
                         }
                     }) {
@@ -230,15 +232,21 @@ fun SettingsScreen(
             onDismissRequest = { mainViewModel.clearNewVersionAvailable() },
             title = { Text(stringResource(R.string.new_version_available_title)) },
             text = {
-                Text(
-                    stringResource(
-                        R.string.new_version_available_message,
-                        newVersionTag!!
+                newVersionTag?.let { tag ->
+                    Text(
+                        stringResource(
+                            R.string.new_version_available_message,
+                            tag
+                        )
                     )
-                )
+                }
             },
             confirmButton = {
-                TextButton(onClick = { mainViewModel.downloadNewVersion(newVersionTag!!) }) {
+                TextButton(onClick = { 
+                    newVersionTag?.let { tag ->
+                        mainViewModel.downloadNewVersion(tag)
+                    }
+                }) {
                     Text(stringResource(R.string.download))
                 }
             },

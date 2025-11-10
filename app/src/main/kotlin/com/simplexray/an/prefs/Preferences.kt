@@ -244,8 +244,9 @@ class Preferences(context: Context) {
         get() {
             val now = System.currentTimeMillis()
             // Return cached value if still valid
-            if (cachedConfigFilesOrder != null && (now - cacheTimestamp) < CACHE_VALIDITY_MS) {
-                return cachedConfigFilesOrder!!
+            val cached = cachedConfigFilesOrder
+            if (cached != null && (now - cacheTimestamp) < CACHE_VALIDITY_MS) {
+                return cached
             }
             
             val jsonList = getPrefData(CONFIG_FILES_ORDER).first

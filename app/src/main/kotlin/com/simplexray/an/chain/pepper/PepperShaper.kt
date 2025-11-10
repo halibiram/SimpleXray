@@ -177,7 +177,8 @@ object PepperShaper {
     
     enum class SocketMode {
         TCP,
-        UDP
+        UDP,
+        TUN
     }
     
     data class PepperStats(

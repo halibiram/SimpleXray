@@ -534,6 +534,12 @@ class LogViewModel(application: Application) :
 
     override fun onCleared() {
         super.onCleared()
+        // Ensure receiver is unregistered even if DisposableEffect didn't run
+        try {
+            unregisterLogReceiver(getApplication())
+        } catch (e: Exception) {
+            AppLogger.w("Error unregistering log receiver in onCleared", e)
+        }
         stopLogcat()
     }
 }

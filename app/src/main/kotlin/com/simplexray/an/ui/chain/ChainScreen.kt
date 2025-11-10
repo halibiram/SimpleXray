@@ -10,14 +10,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.simplexray.an.chain.hysteria2.Hy2Config
 import com.simplexray.an.chain.pepper.PepperParams
-import com.simplexray.an.chain.reality.RealityConfig
-import com.simplexray.an.chain.reality.TlsFingerprintProfile
 import com.simplexray.an.chain.supervisor.ChainConfig
 import com.simplexray.an.chain.supervisor.ChainState
 import com.simplexray.an.viewmodel.ChainViewModel
-import java.net.InetSocketAddress
 
 /**
  * Chain Overview Screen
@@ -166,22 +162,6 @@ fun LayerStatusCard(layer: com.simplexray.an.chain.supervisor.LayerStatus) {
 fun createDemoConfig(): ChainConfig {
     return ChainConfig(
         name = "Demo Profile",
-        realityConfig = RealityConfig(
-            server = "example.com",
-            port = 443,
-            shortId = "demo",
-            publicKey = "demo-key",
-            serverName = "example.com",
-            fingerprintProfile = TlsFingerprintProfile.CHROME,
-            localPort = 10808
-        ),
-        hysteria2Config = Hy2Config(
-            server = "example.com",
-            port = 443,
-            auth = "demo-auth",
-            alpn = "h3",
-            upstreamSocksAddr = InetSocketAddress("127.0.0.1", 10808)
-        ),
         pepperParams = PepperParams(
             mode = com.simplexray.an.chain.pepper.PepperMode.BURST_FRIENDLY
         ),

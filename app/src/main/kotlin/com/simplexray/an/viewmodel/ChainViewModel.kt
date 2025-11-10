@@ -47,8 +47,8 @@ class ChainViewModel(application: Application) : AndroidViewModel(application) {
     @Synchronized
     fun startChain(config: ChainConfig) {
         // Validate config before starting
-        if (config.xrayConfigPath == null && config.realityConfig == null && config.hysteria2Config == null) {
-            AppLogger.e("ChainViewModel: Invalid config - no layers configured")
+        if (config.xrayConfigPath == null) {
+            AppLogger.e("ChainViewModel: Invalid config - no Xray config configured")
             return
         }
         
@@ -111,8 +111,8 @@ class ChainViewModel(application: Application) : AndroidViewModel(application) {
     @Synchronized
     fun restartChain(config: ChainConfig) {
         // Validate config
-        if (config.xrayConfigPath == null && config.realityConfig == null && config.hysteria2Config == null) {
-            AppLogger.e("ChainViewModel: Invalid config - no layers configured")
+        if (config.xrayConfigPath == null) {
+            AppLogger.e("ChainViewModel: Invalid config - no Xray config configured")
             return
         }
         

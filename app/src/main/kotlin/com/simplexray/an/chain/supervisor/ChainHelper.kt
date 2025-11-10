@@ -1,9 +1,7 @@
 package com.simplexray.an.chain.supervisor
 
 import com.simplexray.an.common.AppLogger
-import com.simplexray.an.chain.hysteria2.Hysteria2
 import com.simplexray.an.chain.pepper.PepperShaper
-import com.simplexray.an.chain.reality.RealitySocks
 
 /**
  * Helper functions for chain operations
@@ -16,35 +14,8 @@ object ChainHelper {
     fun checkChainHealth(config: ChainConfig): ChainHealthReport {
         val report = ChainHealthReport()
         
-        // Check Reality SOCKS
-        if (config.realityConfig != null) {
-            val realityStatus = RealitySocks.getStatus()
-            report.realityRunning = realityStatus.isRunning
-            report.realityPort = realityStatus.localPort
-            if (!realityStatus.isRunning) {
-                report.issues.add("Reality SOCKS is not running: ${realityStatus.lastError ?: "Unknown error"}")
-            }
-        } else {
-            report.realityRunning = null // Not configured
-        }
-        
-        // Check Hysteria2
-        if (config.hysteria2Config != null) {
-            val hy2Running = Hysteria2.isRunning()
-            report.hysteria2Running = hy2Running
-            report.hysteria2BinaryAvailable = Hysteria2.isBinaryAvailable()
-            val hy2Metrics = Hysteria2.getMetrics()
-            report.hysteria2Connected = hy2Metrics.isConnected
-            report.hysteria2Rtt = hy2Metrics.rtt
-            
-            if (!hy2Running) {
-                report.issues.add("Hysteria2 is not running")
-            } else if (!report.hysteria2BinaryAvailable) {
-                report.issues.add("Hysteria2 binary not available (running in simulation mode)")
-            }
-        } else {
-            report.hysteria2Running = null // Not configured
-        }
+        // Check QUICME (managed by ChainSupervisor)
+        // QUICME status is tracked in ChainSupervisor.status
         
         // Check PepperShaper
         if (config.pepperParams != null) {
@@ -77,18 +48,8 @@ object ChainHelper {
     fun getChainStatusSummary(config: ChainConfig): String {
         val parts = mutableListOf<String>()
         
-        if (config.realityConfig != null) {
-            val status = RealitySocks.getStatus()
-            parts.add("Reality: ${if (status.isRunning) "✓" else "✗"}")
-        }
-        
-        if (config.hysteria2Config != null) {
-            val running = Hysteria2.isRunning()
-            val binary = Hysteria2.isBinaryAvailable()
-            val status = if (running) "✓" else "✗"
-            val sim = if (!binary) " (sim)" else ""
-            parts.add("Hysteria2: $status$sim")
-        }
+        // QUICME is part of the chain (TUN → QUICME → Xray)
+        parts.add("QUICME: configured")
         
         if (config.pepperParams != null) {
             parts.add("PepperShaper: ${if (try { PepperShaper.getStats(); true } catch (e: Exception) { false }) "✓" else "✗"}")
@@ -108,40 +69,6 @@ object ChainHelper {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         
-        // Validate Reality config
-        if (config.realityConfig != null) {
-            if (config.realityConfig.server.isBlank()) {
-                errors.add("Reality server address is empty")
-            }
-            if (config.realityConfig.port <= 0 || config.realityConfig.port > 65535) {
-                errors.add("Reality port is invalid: ${config.realityConfig.port}")
-            }
-            if (config.realityConfig.publicKey.isBlank()) {
-                errors.add("Reality publicKey is empty")
-            }
-            if (config.realityConfig.localPort <= 0 || config.realityConfig.localPort > 65535) {
-                errors.add("Reality localPort is invalid: ${config.realityConfig.localPort}")
-            }
-        }
-        
-        // Validate Hysteria2 config
-        if (config.hysteria2Config != null) {
-            if (config.hysteria2Config.server.isBlank()) {
-                errors.add("Hysteria2 server address is empty")
-            }
-            if (config.hysteria2Config.port <= 0 || config.hysteria2Config.port > 65535) {
-                errors.add("Hysteria2 port is invalid: ${config.hysteria2Config.port}")
-            }
-            if (config.hysteria2Config.auth.isBlank()) {
-                errors.add("Hysteria2 auth is empty")
-            }
-            
-            // Check if binary is available
-            if (!Hysteria2.isBinaryAvailable()) {
-                warnings.add("Hysteria2 binary not available - will run in simulation mode")
-            }
-        }
-        
         // Validate Xray config path
         if (config.xrayConfigPath != null) {
             if (config.xrayConfigPath.isBlank()) {
@@ -150,8 +77,8 @@ object ChainHelper {
         }
         
         // Check if at least one critical component is configured
-        if (config.realityConfig == null && config.xrayConfigPath == null) {
-            errors.add("At least one of Reality or Xray must be configured")
+        if (config.xrayConfigPath == null) {
+            errors.add("Xray must be configured")
         }
         
         return ValidationResult(
@@ -162,12 +89,7 @@ object ChainHelper {
     }
     
     data class ChainHealthReport(
-        var realityRunning: Boolean? = null,
-        var realityPort: Int? = null,
-        var hysteria2Running: Boolean? = null,
-        var hysteria2BinaryAvailable: Boolean = false,
-        var hysteria2Connected: Boolean = false,
-        var hysteria2Rtt: Long = 0,
+        var quicmeRunning: Boolean? = null,
         var pepperShaperAvailable: Boolean? = null,
         var isHealthy: Boolean = false,
         val issues: MutableList<String> = mutableListOf()

@@ -16,7 +16,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.gson.JsonParser
-import com.simplexray.an.chain.hysteria2.Hy2Config
 import com.simplexray.an.chain.reality.RealityConfig
 import com.simplexray.an.service.TProxyService
 import com.simplexray.an.viewmodel.ChainConfigViewModel
@@ -32,7 +31,7 @@ import java.io.File
 @Composable
 fun ChainConfigSelectionScreen(
     viewModel: ChainConfigViewModel = viewModel(),
-    onConfigSelected: (realityConfig: RealityConfig?, hysteria2Config: Hy2Config?) -> Unit = { _, _ -> }
+    onConfigSelected: (realityConfig: RealityConfig?) -> Unit = { _ -> }
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     
@@ -56,28 +55,15 @@ fun ChainConfigSelectionScreen(
                 onClick = { selectedTab = 0 },
                 text = { Text("VLESS Reality") }
             )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("Hysteria2") }
-            )
         }
         
         // Tab Content
-        when (selectedTab) {
-            0 -> VlessRealityConfigTable(
-                viewModel = viewModel,
-                onConfigSelected = { realityConfig ->
-                    onConfigSelected(realityConfig, viewModel.selectedHysteria2Config.value)
-                }
-            )
-            1 -> Hysteria2ConfigTable(
-                viewModel = viewModel,
-                onConfigSelected = { hysteria2Config ->
-                    onConfigSelected(viewModel.selectedRealityConfig.value, hysteria2Config)
-                }
-            )
-        }
+        VlessRealityConfigTable(
+            viewModel = viewModel,
+            onConfigSelected = { realityConfig ->
+                onConfigSelected(realityConfig)
+            }
+        )
     }
 }
 
@@ -137,71 +123,7 @@ fun VlessRealityConfigTable(
     }
 }
 
-/**
- * Hysteria2 Config Selection Table
- * 
- * Lists Hysteria2 config files
- */
-@Composable
-fun Hysteria2ConfigTable(
-    viewModel: ChainConfigViewModel,
-    onConfigSelected: (Hy2Config?) -> Unit
-) {
-    val hysteria2Configs by viewModel.hysteria2Configs.collectAsState()
-    val selectedHysteria2Config by viewModel.selectedHysteria2Config.collectAsState()
-    
-    LaunchedEffect(Unit) {
-        viewModel.loadHysteria2Configs()
-    }
-    
-    if (hysteria2Configs.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "No Hysteria2 config files found.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "Import Hysteria2 configs from x-ui or create new ones.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
-        ) {
-            items(hysteria2Configs, key = { it.first.absolutePath }) { (file, hy2Config) ->
-                Hysteria2ConfigCard(
-                    fileName = file.name,
-                    filePath = file.absolutePath,
-                    hy2Config = hy2Config,
-                    isSelected = hy2Config?.let {
-                        selectedHysteria2Config?.server == it.server &&
-                        selectedHysteria2Config?.port == it.port &&
-                        selectedHysteria2Config?.auth == it.auth
-                    } ?: false,
-                    onClick = {
-                        viewModel.selectHysteria2Config(hy2Config)
-                        onConfigSelected(hy2Config)
-                    }
-                )
-            }
-        }
-    }
-}
+// Hysteria2 selection removed
 
 /**
  * VLESS Reality Config Card
@@ -268,78 +190,7 @@ fun VlessRealityConfigCard(
     }
 }
 
-/**
- * Hysteria2 Config Card
- */
-@Composable
-fun Hysteria2ConfigCard(
-    fileName: String,
-    filePath: String,
-    hy2Config: Hy2Config?,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) 
-                MaterialTheme.colorScheme.secondaryContainer 
-            else 
-                MaterialTheme.colorScheme.surfaceContainerHighest
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = fileName.removeSuffix(".json"),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                Spacer(modifier = Modifier.height(4.dp))
-                
-                if (hy2Config != null) {
-                    ConfigInfoRow("Server", "${hy2Config.server}:${hy2Config.port}")
-                    if (!hy2Config.sni.isNullOrBlank()) {
-                        ConfigInfoRow("SNI", hy2Config.sni)
-                    }
-                    ConfigInfoRow("ALPN", hy2Config.alpn)
-                    if (hy2Config.upRateMbps > 0 || hy2Config.downRateMbps > 0) {
-                        ConfigInfoRow(
-                            "Bandwidth", 
-                            "${hy2Config.downRateMbps}↓/${hy2Config.upRateMbps}↑ Mbps"
-                        )
-                    }
-                } else {
-                    Text(
-                        text = "Invalid Hysteria2 config",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            
-            Icon(
-                imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                contentDescription = if (isSelected) "Selected" else "Not selected",
-                tint = if (isSelected) 
-                    MaterialTheme.colorScheme.primary 
-                else 
-                    MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
-        }
-    }
-}
+// Hysteria2 card removed
 
 @Composable
 private fun ConfigInfoRow(label: String, value: String) {

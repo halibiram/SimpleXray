@@ -29,12 +29,10 @@ import com.simplexray.an.service.XrayProcessManager
 import com.simplexray.an.performance.PerformanceIntegration
 import com.simplexray.an.chain.supervisor.ChainSupervisor
 import com.simplexray.an.chain.supervisor.ChainConfig
-import com.simplexray.an.chain.reality.RealitySocks
-import com.simplexray.an.chain.reality.RealityConfig
-import com.simplexray.an.chain.reality.TlsFingerprintProfile
 import com.simplexray.an.chain.pepper.PepperParams
 import com.simplexray.an.chain.pepper.PepperMode
 import com.simplexray.an.chain.pepper.QueueDiscipline
+import com.simplexray.an.xray.XrayCoreLauncher
 import com.simplexray.an.quiche.QuicheClient
 import com.simplexray.an.quiche.QuicheTunForwarder
 import com.simplexray.an.quiche.CongestionControl
@@ -110,8 +108,7 @@ class TProxyService : VpnService() {
     // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
     private var chainSupervisor: ChainSupervisor? = null
     // QUICHE TUN forwarder (TUN → QUICHE → Chain)
-    private var quicheClient: QuicheClient? = null
-    private var quicheTunForwarder: QuicheTunForwarder? = null
+    // QUICME TUN forwarder is now managed by ChainSupervisor
 
     // Data class to hold both process and reloading state atomically
     // PID is stored separately to allow killing process even if Process reference becomes invalid
@@ -1370,58 +1367,34 @@ class TProxyService : VpnService() {
                 AppLogger.w("TProxyService: Could not determine Xray SOCKS port from config")
             }
 
-            // Start QUICHE TUN forwarder (TUN → QUICHE → Chain)
+            // Start QUICME TUN forwarder via ChainSupervisor (TUN → QUICME → Xray Chain)
             establishedFd.let { fd ->
                 try {
-                    // Get QUICHE server address from chain or preferences
+                    // Get QUICME server address from chain or preferences
                     val quicheServerHost = prefs.quicheServerHost ?: "127.0.0.1"
                     val quicheServerPort = prefs.quicheServerPort ?: 443
 
-                    AppLogger.i("TProxyService: Starting QUICHE TUN forwarder with chain ($quicheServerHost:$quicheServerPort)")
+                    AppLogger.i("TProxyService: Starting QUICME in chain via ChainSupervisor (TUN → QUICME → Xray) ($quicheServerHost:$quicheServerPort)")
 
-                    quicheClient = QuicheClient.create(
-                        serverHost = quicheServerHost,
-                        serverPort = quicheServerPort,
-                        congestionControl = CongestionControl.BBR2,
-                        enableZeroCopy = true,
-                        cpuAffinity = CpuAffinity.BIG_CORES
-                    )
-                    
-                    if (quicheClient == null) {
-                        AppLogger.e("TProxyService: Failed to create QUICHE client")
-                        stopXray()
-                        return
+                    // Initialize ChainSupervisor if not already initialized
+                    if (chainSupervisor == null) {
+                        chainSupervisor = ChainSupervisor(this)
                     }
-                    
-                    // Connect QUICHE client
-                    if (!quicheClient!!.connect()) {
-                        AppLogger.e("TProxyService: Failed to connect QUICHE client")
-                        quicheClient?.close()
-                        quicheClient = null
-                        stopXray()
-                        return
-                    }
-                    
-                    // Create and start QUICHE TUN forwarder
-                    quicheTunForwarder = QuicheTunForwarder.create(
+
+                    // Attach QUICME to TUN via ChainSupervisor (QUICME is part of the chain)
+                    val attached = chainSupervisor?.attachQuicheToTunFd(
                         tunFd = fd.fd,
-                        quicClient = quicheClient!!,
-                        batchSize = 64,
-                        useGSO = true,
-                        useGRO = true
-                    )
-                    
-                    if (quicheTunForwarder == null || !quicheTunForwarder!!.start()) {
-                        AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder")
-                        quicheTunForwarder?.close()
-                        quicheTunForwarder = null
-                        quicheClient?.close()
-                        quicheClient = null
+                        serverHost = quicheServerHost,
+                        serverPort = quicheServerPort
+                    ) ?: false
+
+                    if (!attached) {
+                        AppLogger.e("TProxyService: Failed to attach QUICME to chain via ChainSupervisor")
                         stopXray()
                         return
                     }
                     
-                    AppLogger.i("TProxyService: QUICHE TUN forwarder with chain started successfully")
+                    AppLogger.i("TProxyService: QUICME successfully integrated into chain (TUN → QUICME → Xray)")
                     
                     // Apply performance optimizations if enabled
                     if (enablePerformanceMode && perfIntegration != null) {
@@ -1432,9 +1405,9 @@ class TProxyService : VpnService() {
                         }
                     }
                 } catch (e: Exception) {
-                    AppLogger.e("TProxyService: Failed to start QUICHE TUN forwarder: ${e.message}", e)
+                    AppLogger.e("TProxyService: Error starting QUICME TUN forwarder: ${e.message}", e)
                     stopXray()
-                    return
+                    return@let
                 }
             }
 
@@ -1525,11 +1498,7 @@ class TProxyService : VpnService() {
         stopChain()
         
         // Stop QUICHE TUN forwarder
-        quicheTunForwarder?.stop()
-        quicheTunForwarder?.close()
-        quicheTunForwarder = null
-        quicheClient?.close()
-        quicheClient = null
+        // QUICME TUN forwarder is cleaned up by ChainSupervisor.stop()
         
         tunFd?.let {
             try {
@@ -1615,18 +1584,8 @@ class TProxyService : VpnService() {
             }
         }
         
-        // Build Reality config from Xray config if available
-        val realityConfig = try {
-            extractRealityConfigFromXray(prefs.selectedConfigPath)
-        } catch (e: Exception) {
-            AppLogger.d("TProxyService: Could not extract Reality config: ${e.message}")
-            null
-        }
-        
         return ChainConfig(
             name = "TProxy Chain",
-            realityConfig = realityConfig,
-            hysteria2Config = null,
             pepperParams = PepperParams(
                 mode = PepperMode.BURST_FRIENDLY,
                 maxBurstBytes = 64 * 1024,
@@ -1641,70 +1600,6 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Extract Reality config from Xray JSON config file
-     */
-    private fun extractRealityConfigFromXray(configPath: String?): RealityConfig? {
-        if (configPath == null) return null
-        
-        return try {
-            val configFile = File(configPath)
-            if (!configFile.exists()) return null
-            
-            val configContent = configFile.readText()
-            val json = com.google.gson.JsonParser.parseString(configContent).asJsonObject
-            val outbounds = json.getAsJsonArray("outbounds") ?: return null
-            
-            for (outboundElement in outbounds) {
-                val outbound = outboundElement.asJsonObject
-                val streamSettings = outbound.getAsJsonObject("streamSettings")
-                if (streamSettings?.get("security")?.asString == "reality") {
-                    val realitySettings = streamSettings.getAsJsonObject("realitySettings")
-                    val settings = outbound.getAsJsonObject("settings")
-                    val vnext = settings?.getAsJsonArray("vnext")
-                    
-                    if (vnext != null && vnext.size() > 0) {
-                        val server = vnext[0].asJsonObject
-                        val serverAddr = server.get("address")?.asString ?: return null
-                        val serverPort = server.get("port")?.asInt ?: return null
-                        val publicKey = realitySettings?.get("publicKey")?.asString
-                        if (publicKey.isNullOrBlank()) {
-                            AppLogger.w("TProxyService: Found REALITY outbound with empty publicKey, skipping")
-                            return null
-                        }
-                        val shortIds = realitySettings?.getAsJsonArray("shortIds")
-                        val shortId = shortIds?.get(0)?.asString ?: ""
-                        val serverNames = realitySettings?.getAsJsonArray("serverNames")
-                        val serverNameFromArray = serverNames?.get(0)?.asString ?: ""
-                        val dest = realitySettings?.get("dest")?.asString ?: ""
-                        val serverName = when {
-                            serverNameFromArray.isNotBlank() -> serverNameFromArray
-                            dest.isNotBlank() -> dest.split(":").firstOrNull() ?: ""
-                            else -> serverAddr
-                        }
-                        val users = server.getAsJsonArray("users")
-                        val uuid = users?.get(0)?.asJsonObject?.get("id")?.asString
-                        
-                        return RealityConfig(
-                            server = serverAddr,
-                            port = serverPort,
-                            shortId = shortId,
-                            publicKey = publicKey,
-                            serverName = serverName,
-                            fingerprintProfile = TlsFingerprintProfile.CHROME,
-                            localPort = 10809, // Use different port to avoid conflict with main Xray SOCKS (10808)
-                            uuid = uuid
-                        )
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            AppLogger.d("TProxyService: Error extracting Reality config: ${e.message}")
-            null
-        }
-    }
-    
-    /**
      * Wait for chain to be ready
      */
     private fun waitForChainReady(): Boolean {
@@ -1713,19 +1608,12 @@ class TProxyService : VpnService() {
         val delayMs = 500L
         
         while (attempts < maxAttempts) {
-            // Check Reality SOCKS first
-            val realityAddr = RealitySocks.getLocalAddress()
-            if (realityAddr != null) {
-                AppLogger.i("TProxyService: Chain ready, Reality SOCKS port: ${realityAddr.port}")
-                return true
-            }
-            
             // Check Xray is running
             val prefs = Preferences(this)
             val configPath = prefs.selectedConfigPath
             if (configPath != null) {
                 val xraySocksPort = extractXraySocksPort(configPath)
-                if (xraySocksPort != null) {
+                if (xraySocksPort != null && XrayCoreLauncher.isRunning()) {
                     AppLogger.i("TProxyService: Chain ready, Xray SOCKS port: $xraySocksPort")
                     return true
                 }

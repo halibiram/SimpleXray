@@ -3,8 +3,10 @@ package com.simplexray.an.chain.supervisor
 import android.content.Context
 import com.simplexray.an.common.AppLogger
 import com.simplexray.an.chain.pepper.PepperShaper
-import com.simplexray.an.chain.reality.RealitySocks
-import com.simplexray.an.chain.reality.RealityXrayIntegrator
+import com.simplexray.an.quiche.QuicheClient
+import com.simplexray.an.quiche.QuicheTunForwarder
+import com.simplexray.an.quiche.CongestionControl
+import com.simplexray.an.quiche.CpuAffinity
 import kotlinx.coroutines.cancel
 import com.simplexray.an.xray.XrayCoreLauncher
 import kotlinx.coroutines.CoroutineScope
@@ -24,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Chain Supervisor: Orchestrates the full tunneling stack
  *
  * Manages lifecycle of:
- * - Reality SOCKS (TLS mimic)
+ * - QUICME (QUIC tunneling via TUN)
  * - PepperShaper (traffic shaping)
  * - Xray-core (routing engine)
  */
@@ -54,14 +56,12 @@ class ChainSupervisor(private val context: Context) {
     private val startTime = AtomicLong(0)
     // Native handle - validated before use
     private var pepperHandle: Long? = null
+    // QUICME TUN forwarder
+    private var quicheClient: QuicheClient? = null
+    private var quicheTunForwarder: QuicheTunForwarder? = null
     
     init {
         // Initialize all layers with error handling
-        try {
-            RealitySocks.init(context)
-        } catch (e: Exception) {
-            AppLogger.e("ChainSupervisor: Failed to initialize RealitySocks: ${e.message}", e)
-        }
         try {
             PepperShaper.init(context)
         } catch (e: Exception) {
@@ -103,20 +103,7 @@ class ChainSupervisor(private val context: Context) {
             // Start layers in order
             val results = mutableListOf<Result<Unit>>()
             
-            // 1. Start Reality SOCKS if configured
-            if (config.realityConfig != null) {
-                // Validate config before starting
-                val result = try {
-                    RealitySocks.start(config.realityConfig)
-                } catch (e: Exception) {
-                    AppLogger.e("ChainSupervisor: Exception starting RealitySocks: ${e.message}", e)
-                    Result.failure(e)
-                }
-                results.add(result)
-                updateLayerStatus("reality", result.isSuccess, result.exceptionOrNull()?.message)
-            }
-
-            // 2. Attach PepperShaper if configured
+            // 1. Attach PepperShaper if configured
             if (config.pepperParams != null) {
                 // PepperShaper is initialized but not attached to any FDs
                 // It's available for future use if needed
@@ -159,53 +146,9 @@ class ChainSupervisor(private val context: Context) {
             }
             
             // 4. Start Xray-core if configured
-            // If Reality config exists, integrate it with Xray config for unified chain tunnel
             if (config.xrayConfigPath != null) {
-                // If Reality config is provided, build unified Xray config
-                val finalXrayConfigPath = if (config.realityConfig != null) {
-                    try {
-                        val originalConfigPath = File(context.filesDir, config.xrayConfigPath)
-                        if (originalConfigPath.exists()) {
-                            // Build unified config with Reality integration
-                            val unifiedConfig = RealityXrayIntegrator.buildUnifiedXrayConfig(
-                                originalConfigPath.absolutePath,
-                                config.realityConfig,
-                                chainMode = true
-                            )
-                            
-                            if (unifiedConfig != null) {
-                                // Use fixed filename instead of creating new file each time
-                                // Only update if config has changed
-                                val unifiedConfigFile = File(context.filesDir, "unified-chain.json")
-                                val existingContent = if (unifiedConfigFile.exists()) {
-                                    unifiedConfigFile.readText()
-                                } else {
-                                    null
-                                }
-                                
-                                // Only write if config changed or file doesn't exist
-                                if (existingContent != unifiedConfig) {
-                                    unifiedConfigFile.writeText(unifiedConfig)
-                                    AppLogger.i("ChainSupervisor: Created/updated unified Xray config with Reality integration")
-                                } else {
-                                    AppLogger.d("ChainSupervisor: Unified config unchanged, using existing file")
-                                }
-                                unifiedConfigFile.name // Return relative path
-                            } else {
-                                AppLogger.w("ChainSupervisor: Failed to build unified config, using original")
-                                config.xrayConfigPath
-                            }
-                        } else {
-                            AppLogger.w("ChainSupervisor: Original Xray config not found, using provided path")
-                            config.xrayConfigPath
-                        }
-                    } catch (e: Exception) {
-                        AppLogger.e("ChainSupervisor: Error building unified config: ${e.message}", e)
-                        config.xrayConfigPath
-                    }
-                } else {
-                    config.xrayConfigPath
-                }
+                // Use Xray config directly
+                val finalXrayConfigPath = config.xrayConfigPath
                 
                 // SEC: Validate config path to prevent path traversal
                 val configFile = File(context.filesDir, finalXrayConfigPath)
@@ -256,11 +199,8 @@ class ChainSupervisor(private val context: Context) {
             }
             
             // Check if critical layers started successfully
-            // Reality and Xray are critical, PepperShaper is optional
+            // Xray is critical, PepperShaper is optional
             val criticalLayers = mutableListOf<Result<Unit>>()
-            if (config.realityConfig != null) {
-                results.firstOrNull()?.let { criticalLayers.add(it) }
-            }
             if (config.xrayConfigPath != null) {
                 results.lastOrNull()?.let { criticalLayers.add(it) }
             }
@@ -334,18 +274,39 @@ class ChainSupervisor(private val context: Context) {
             stopResults.add(xrayResult.map { })
             updateLayerStatus("xray", false, xrayResult.exceptionOrNull()?.message)
             
+            // Stop monitoring job first
+            monitoringJob?.cancel()
+            monitoringJob = null
+
             // Stop PepperShaper (validate handle before detach)
-            if (pepperHandle != null && pepperHandle!! > 0) {
-                val pepperResult = runCatching { PepperShaper.detach(pepperHandle!!) }
-                stopResults.add(pepperResult.map { })
-                updateLayerStatus("pepper", false, pepperResult.exceptionOrNull()?.message)
+            pepperHandle?.let { handle ->
+                if (handle > 0) {
+                    val pepperResult = runCatching { PepperShaper.detach(handle) }
+                    stopResults.add(pepperResult.map { })
+                    updateLayerStatus("pepper", false, pepperResult.exceptionOrNull()?.message)
+                }
             }
             pepperHandle = null
 
-            // Stop RealitySocks
-            val realityResult = RealitySocks.stop()
-            stopResults.add(realityResult)
-            updateLayerStatus("reality", false, realityResult.exceptionOrNull()?.message)
+            // Stop QUICME TUN forwarder
+            quicheTunForwarder?.let { forwarder ->
+                val quicheResult = runCatching {
+                    forwarder.stop()
+                    forwarder.close()
+                }
+                stopResults.add(quicheResult.map { })
+                updateLayerStatus("quicme", false, quicheResult.exceptionOrNull()?.message)
+            }
+            quicheTunForwarder = null
+            
+            // Stop QUICME client
+            quicheClient?.let { client ->
+                val quicheClientResult = runCatching {
+                    client.close()
+                }
+                stopResults.add(quicheClientResult.map { })
+            }
+            quicheClient = null
 
             // Log any failures but continue cleanup
             stopResults.forEachIndexed { index, result ->
@@ -353,7 +314,7 @@ class ChainSupervisor(private val context: Context) {
                     val layerName = when (index) {
                         0 -> "xray"
                         1 -> "pepper"
-                        2 -> "reality"
+                        2 -> "quicme"
                         else -> "unknown"
                     }
                     AppLogger.w("ChainSupervisor: Failed to stop layer $layerName: ${result.exceptionOrNull()?.message}")
@@ -435,15 +396,18 @@ class ChainSupervisor(private val context: Context) {
                     }
                     
                     // Aggregate metrics from all layers (with null safety)
-                    val realityStatus = RealitySocks.getStatus()
+                    // QUICME metrics
+                    val quicheStats = quicheTunForwarder?.getStats()
+                    val quicheBytesUp = quicheStats?.bytesSent ?: 0L
+                    val quicheBytesDown = quicheStats?.bytesReceived ?: 0L
 
                     // Safe aggregation with overflow protection
                     val totalBytesUp = runCatching {
-                        realityStatus?.bytesUp ?: 0L
+                        quicheBytesUp.coerceAtLeast(0L)
                     }.getOrElse { 0L }
 
                     val totalBytesDown = runCatching {
-                        realityStatus?.bytesDown ?: 0L
+                        quicheBytesDown.coerceAtLeast(0L)
                     }.getOrElse { 0L }
                     
                     // This is already in a coroutine (monitoringJob), so we can use suspend
@@ -473,6 +437,99 @@ class ChainSupervisor(private val context: Context) {
     }
     
     /**
+     * Attach QUICME to TUN file descriptor for QUIC tunneling
+     *
+     * @param tunFd The TUN interface file descriptor
+     * @param serverHost QUICME server hostname
+     * @param serverPort QUICME server port
+     * @return true if successfully attached, false otherwise
+     */
+    fun attachQuicheToTunFd(tunFd: Int, serverHost: String = "127.0.0.1", serverPort: Int = 443): Boolean {
+        return try {
+            // Validate TUN file descriptor
+            if (tunFd < 0) {
+                AppLogger.e("ChainSupervisor: Invalid TUN file descriptor: $tunFd")
+                updateLayerStatus("quicme", false, "Invalid TUN FD")
+                return false
+            }
+
+            // Don't re-attach if already attached
+            if (quicheTunForwarder != null) {
+                AppLogger.i("ChainSupervisor: QUICME TUN forwarder already attached")
+                return true
+            }
+
+            AppLogger.i("ChainSupervisor: Attaching QUICME to TUN FD $tunFd ($serverHost:$serverPort) - QUICME is part of the chain (TUN → QUICME → Xray)")
+
+            // Create QUICME client
+            val client = QuicheClient.create(
+                serverHost = serverHost,
+                serverPort = serverPort,
+                congestionControl = CongestionControl.BBR2,
+                enableZeroCopy = true,
+                cpuAffinity = CpuAffinity.BIG_CORES
+            )
+
+            if (client == null) {
+                AppLogger.e("ChainSupervisor: Failed to create QUICME client")
+                updateLayerStatus("quicme", false, "Failed to create client")
+                return false
+            }
+
+            // Connect QUICME client
+            if (!client.connect()) {
+                AppLogger.e("ChainSupervisor: Failed to connect QUICME client")
+                client.close()
+                updateLayerStatus("quicme", false, "Failed to connect")
+                return false
+            }
+
+            quicheClient = client
+
+            // Create TUN forwarder
+            val forwarder = QuicheTunForwarder.create(
+                tunFd = tunFd,
+                quicClient = client,
+                batchSize = 64,
+                useGSO = true,
+                useGRO = true
+            )
+
+            if (forwarder == null) {
+                AppLogger.e("ChainSupervisor: Failed to create QUICME TUN forwarder")
+                client.close()
+                quicheClient = null
+                updateLayerStatus("quicme", false, "Failed to create forwarder")
+                return false
+            }
+
+            // Start forwarder
+            if (!forwarder.start()) {
+                AppLogger.e("ChainSupervisor: Failed to start QUICME TUN forwarder")
+                forwarder.close()
+                client.close()
+                quicheClient = null
+                updateLayerStatus("quicme", false, "Failed to start forwarder")
+                return false
+            }
+
+            quicheTunForwarder = forwarder
+            updateLayerStatus("quicme", true, null)
+            AppLogger.i("ChainSupervisor: QUICME successfully integrated into chain (TUN → QUICME → Xray)")
+            true
+        } catch (e: Exception) {
+            AppLogger.e("ChainSupervisor: Failed to attach QUICME to TUN FD: ${e.message}", e)
+            updateLayerStatus("quicme", false, e.message)
+            // Cleanup on error
+            quicheTunForwarder?.close()
+            quicheClient?.close()
+            quicheTunForwarder = null
+            quicheClient = null
+            false
+        }
+    }
+
+    /**
      * Attach PepperShaper to TUN file descriptor for traffic shaping
      *
      * @param tunFd The TUN interface file descriptor
@@ -487,17 +544,27 @@ class ChainSupervisor(private val context: Context) {
             }
 
             // Don't re-attach if already attached
-            if (pepperHandle != null && pepperHandle!! > 0) {
-                AppLogger.i("ChainSupervisor: PepperShaper already attached (handle=$pepperHandle)")
-                return true
+            pepperHandle?.let { handle ->
+                if (handle > 0) {
+                    AppLogger.i("ChainSupervisor: PepperShaper already attached (handle=$handle)")
+                    return true
+                }
             }
 
             AppLogger.i("ChainSupervisor: Attaching PepperShaper to TUN FD $tunFd")
 
+            // Safe access to pepperParams (already validated above)
+            val pepperParams = currentConfig?.pepperParams
+            if (pepperParams == null) {
+                AppLogger.e("ChainSupervisor: pepperParams is null after validation check")
+                updateLayerStatus("pepper", false, "pepperParams is null")
+                return false
+            }
+
             val handle = PepperShaper.attach(
                 fdPair = Pair(tunFd, tunFd),
                 mode = PepperShaper.SocketMode.TUN,
-                params = currentConfig!!.pepperParams!!
+                params = pepperParams
             )
 
             if (handle != null && handle > 0) {

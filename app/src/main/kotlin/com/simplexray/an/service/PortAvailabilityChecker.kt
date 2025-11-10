@@ -31,8 +31,8 @@ class PortAvailabilityChecker(
         // Check cache first (thread-safe)
         val now = System.currentTimeMillis()
         synchronized(this) {
-            if (cachedAvailablePort != null && (now - portCacheTime) < portCacheValidityMs) {
-                val cached = cachedAvailablePort!!
+            val cached = cachedAvailablePort
+            if (cached != null && (now - portCacheTime) < portCacheValidityMs) {
                 if (cached !in excludedPorts) {
                     // Verify cached port is still available (with timeout)
                     runCatching {

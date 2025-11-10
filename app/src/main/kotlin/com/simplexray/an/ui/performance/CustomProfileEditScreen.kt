@@ -167,7 +167,12 @@ fun CustomProfileEditScreen(
                                         category = "Custom"
                                     )
                                 } else {
-                                    profile!!.copy(
+                                    val existingProfile = profile
+                                    if (existingProfile == null) {
+                                        // Profile should not be null when editing, but handle gracefully
+                                        return@IconButton
+                                    }
+                                    existingProfile.copy(
                                         name = name,
                                         description = description,
                                         config = config,

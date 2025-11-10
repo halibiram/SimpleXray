@@ -113,11 +113,7 @@ class TrafficViewModel(application: Application) : AndroidViewModel(application)
     private fun observeRealTimeTraffic() {
         viewModelScope.launch {
             // Use XrayStatsObserver if available, otherwise TrafficObserver
-            val snapshotFlow = if (xrayObserver != null) {
-                xrayObserver!!.currentSnapshot
-            } else {
-                trafficObserver.currentSnapshot
-            }
+            val snapshotFlow = xrayObserver?.currentSnapshot ?: trafficObserver.currentSnapshot
             
             snapshotFlow.collect { snapshot ->
                 // Update UI state with current snapshot
@@ -135,11 +131,7 @@ class TrafficViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             // Use XrayStatsObserver history if available, otherwise TrafficObserver
-            val historyFlow = if (xrayObserver != null) {
-                xrayObserver!!.history
-            } else {
-                trafficObserver.history
-            }
+            val historyFlow = xrayObserver?.history ?: trafficObserver.history
             
             historyFlow.collect { history ->
                 // Update UI state with history for charting
