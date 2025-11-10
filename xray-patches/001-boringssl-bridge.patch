@@ -10,8 +10,6 @@ index 0000000..a1b2c3d
 +package crypto
 +
 +/*
-+#cgo CFLAGS: -I${SRCDIR}/../../boringssl/include
-+#cgo LDFLAGS: -L${SRCDIR}/../../boringssl/lib -lcrypto -lssl
 +#include <openssl/ssl.h>
 +#include <openssl/crypto.h>
 +#include <openssl/evp.h>
