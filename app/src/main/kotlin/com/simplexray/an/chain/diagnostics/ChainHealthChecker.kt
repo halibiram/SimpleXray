@@ -3,7 +3,6 @@ package com.simplexray.an.chain.diagnostics
 import android.content.Context
 import com.simplexray.an.common.AppLogger
 import com.simplexray.an.chain.reality.RealitySocks
-import com.simplexray.an.chain.hysteria2.Hysteria2
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
@@ -26,13 +25,10 @@ object ChainHealthChecker {
         // 1. Check local SOCKS5 server (Reality SOCKS)
         checks.add(checkLocalSocks())
         
-        // 2. Check QUIC handshake (Hysteria2)
-        checks.add(checkQuicHandshake())
-        
-        // 3. Check egress IP
+        // 2. Check egress IP
         checks.add(checkEgressIp())
         
-        // 4. Check Xray-core process
+        // 3. Check Xray-core process
         checks.add(checkXrayProcess())
         
         val allPassed = checks.all { it.passed }
@@ -100,54 +96,6 @@ object ChainHealthChecker {
                 passed = false,
                 critical = true,
                 message = "Error checking SOCKS5 server: ${e.message}",
-                details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
-            )
-        }
-    }
-    
-    /**
-     * Check QUIC handshake (Hysteria2)
-     */
-    private suspend fun checkQuicHandshake(): SingleCheckResult = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val metrics = Hysteria2.getMetrics()
-            if (!metrics.isConnected) {
-                SingleCheckResult(
-                    name = "QUIC Handshake",
-                    passed = false,
-                    critical = false,
-                    message = "Hysteria2 is not connected",
-                    details = null
-                )
-            } else {
-                val rtt = metrics.rtt
-                val loss = metrics.loss
-                val handshakeTime = metrics.handshakeTimeMs
-                
-                val isHealthy = rtt > 0 && loss < 0.1f // Less than 10% loss
-                
-                SingleCheckResult(
-                    name = "QUIC Handshake",
-                    passed = isHealthy,
-                    critical = false,
-                    message = if (isHealthy) {
-                        "QUIC connection healthy (RTT: ${rtt}ms, Loss: ${(loss * 100).toInt()}%)"
-                    } else {
-                        "QUIC connection degraded (RTT: ${rtt}ms, Loss: ${(loss * 100).toInt()}%)"
-                    },
-                    details = mapOf(
-                        "rtt" to rtt.toString(),
-                        "loss" to loss.toString(),
-                        "handshakeTimeMs" to (handshakeTime?.toString() ?: "N/A")
-                    )
-                )
-            }
-        } catch (e: Exception) {
-            SingleCheckResult(
-                name = "QUIC Handshake",
-                passed = false,
-                critical = false,
-                message = "Error checking QUIC: ${e.message}",
                 details = mapOf<String, String>("error" to (e.message ?: "Unknown"))
             )
         }

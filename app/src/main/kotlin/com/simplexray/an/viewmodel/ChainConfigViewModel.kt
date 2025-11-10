@@ -72,7 +72,6 @@ class ChainConfigViewModel(application: Application) : AndroidViewModel(applicat
         AppLogger.d("Selected Reality config: ${config?.server}:${config?.port}")
     }
     
-    // Hysteria2 functionality removed
     
     /**
      * Extract Reality config from Xray config file
@@ -153,6 +152,5 @@ class ChainConfigViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
     
-    // Hysteria2 parsing removed
 }
 

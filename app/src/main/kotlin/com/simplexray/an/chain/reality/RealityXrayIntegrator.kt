@@ -110,7 +110,7 @@ object RealityXrayIntegrator {
      * 
      * @param originalXrayConfigPath Path to original Xray config
      * @param realityConfig Reality configuration to integrate
-     * @param chainMode If true, configures for chain tunnel (Reality → Hysteria2 → Xray)
+     * @param chainMode If true, configures for chain tunnel (Reality → Xray)
      * @return Modified Xray config JSON as string, or null if failed
      */
     fun buildUnifiedXrayConfig(

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to download necessary files from last successful build for local debug
-# Downloads: Xray libraries, Hysteria2 binaries, geoip.dat, geosite.dat
+# Downloads: Xray libraries, geoip.dat, geosite.dat
 
 set -euo pipefail
 
@@ -99,38 +99,8 @@ fi
 
 echo ""
 
-# Step 2: Download Hysteria2 binaries from last successful build
-echo -e "${YELLOW}[2/4] Hysteria2 binaries indiriliyor...${NC}"
-HYSTERIA2_WORKFLOW="build-hysteria2.yml"
-
-# Find last successful run
-HYSTERIA2_RUN=$(gh run list --workflow="$HYSTERIA2_WORKFLOW" --status=success --limit=1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
-
-if [ -z "$HYSTERIA2_RUN" ]; then
-    echo -e "${YELLOW}⚠️  Başarılı Hysteria2 build bulunamadı, atlanıyor...${NC}"
-else
-    echo -e "${BLUE}   Run ID: $HYSTERIA2_RUN${NC}"
-    
-    # Download artifacts
-    gh run download "$HYSTERIA2_RUN" --pattern "hysteria2-*" --dir ".debug-artifacts/hysteria2-libs" 2>/dev/null || {
-        echo -e "${YELLOW}⚠️  Hysteria2 artifacts indirilemedi, atlanıyor...${NC}"
-    }
-    
-    # Copy libraries to jniLibs
-    if [ -d ".debug-artifacts/hysteria2-libs" ]; then
-        for abi in arm64-v8a armeabi-v7a x86_64; do
-            if [ -f ".debug-artifacts/hysteria2-libs/hysteria2-$abi/libhysteria2.so" ]; then
-                cp ".debug-artifacts/hysteria2-libs/hysteria2-$abi/libhysteria2.so" "app/src/main/jniLibs/$abi/libhysteria2.so"
-                echo -e "${GREEN}   ✅ Hysteria2 binary copied for $abi${NC}"
-            fi
-        done
-    fi
-fi
-
-echo ""
-
-# Step 3: Download geoip.dat and geosite.dat
-echo -e "${YELLOW}[3/4] GeoIP ve GeoSite dosyaları indiriliyor...${NC}"
+# Step 2: Download geoip.dat and geosite.dat
+echo -e "${YELLOW}[2/3] GeoIP ve GeoSite dosyaları indiriliyor...${NC}"
 
 if [ -n "$GEOIP_VERSION" ]; then
     echo -e "${BLUE}   Downloading geoip.dat (version: $GEOIP_VERSION)...${NC}"
@@ -154,8 +124,8 @@ fi
 
 echo ""
 
-# Step 4: Verify files
-echo -e "${YELLOW}[4/4] Dosyalar doğrulanıyor...${NC}"
+# Step 3: Verify files
+echo -e "${YELLOW}[3/3] Dosyalar doğrulanıyor...${NC}"
 
 VERIFIED=true
 
@@ -169,17 +139,6 @@ for abi in arm64-v8a armeabi-v7a x86_64; do
     fi
 done
 
-# Check Hysteria2 binaries
-for abi in arm64-v8a armeabi-v7a x86_64; do
-    if [ -f "app/src/main/jniLibs/$abi/libhysteria2.so" ]; then
-        SIZE=$(stat -f%z "app/src/main/jniLibs/$abi/libhysteria2.so" 2>/dev/null || stat -c%s "app/src/main/jniLibs/$abi/libhysteria2.so" 2>/dev/null || echo "0")
-        echo -e "${GREEN}   ✅ libhysteria2.so ($abi): ${SIZE} bytes${NC}"
-    else
-        echo -e "${YELLOW}   ⚠️  libhysteria2.so ($abi): not found${NC}"
-    fi
-done
-
-# Check geoip.dat
 if [ -f "app/src/main/assets/geoip.dat" ]; then
     SIZE=$(stat -f%z "app/src/main/assets/geoip.dat" 2>/dev/null || stat -c%s "app/src/main/assets/geoip.dat" 2>/dev/null || echo "0")
     echo -e "${GREEN}   ✅ geoip.dat: ${SIZE} bytes${NC}"

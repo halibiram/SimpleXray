@@ -26,7 +26,6 @@ import java.io.File
  * 
  * Tab-based interface for selecting:
  * - VLESS Reality configs (from Xray config files)
- * - Hysteria2 configs (from Hysteria2 JSON files)
  */
 @Composable
 fun ChainConfigSelectionScreen(
@@ -123,7 +122,6 @@ fun VlessRealityConfigTable(
     }
 }
 
-// Hysteria2 selection removed
 
 /**
  * VLESS Reality Config Card
@@ -190,7 +188,6 @@ fun VlessRealityConfigCard(
     }
 }
 
-// Hysteria2 card removed
 
 @Composable
 private fun ConfigInfoRow(label: String, value: String) {

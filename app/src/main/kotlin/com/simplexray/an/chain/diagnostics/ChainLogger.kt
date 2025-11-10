@@ -149,9 +149,9 @@ class ChainLogger(context: Context) {
     fun getLogcatCommand(pid: Int? = null): String {
         val packageName = "com.simplexray.an"
         return if (pid != null) {
-            "adb logcat --pid=$pid | grep -E '(SimpleXray|RealitySocks|Hysteria2|PepperShaper|ChainSupervisor)'"
+            "adb logcat --pid=$pid | grep -E '(SimpleXray|RealitySocks|PepperShaper|ChainSupervisor)'"
         } else {
-            "adb logcat | grep -E '(SimpleXray|RealitySocks|Hysteria2|PepperShaper|ChainSupervisor)'"
+            "adb logcat | grep -E '(SimpleXray|RealitySocks|PepperShaper|ChainSupervisor)'"
         }
     }
     

@@ -325,12 +325,8 @@ tasks.register("checkDebugFiles") {
                 jniLibsDir.listFiles()?.each { abiDir ->
                     if (abiDir.isDirectory()) {
                         def xrayLib = new File(abiDir, "libxray.so")
-                        def hysteria2Lib = new File(abiDir, "libhysteria2.so")
                         if (xrayLib.exists()) {
                             println("   ✅ libxray.so found for ${abiDir.name} (${xrayLib.length()} bytes)")
-                        }
-                        if (hysteria2Lib.exists()) {
-                            println("   ✅ libhysteria2.so found for ${abiDir.name} (${hysteria2Lib.length()} bytes)")
                         }
                     }
                 }
@@ -431,328 +427,57 @@ tasks.register("copyQuicheLibraries") {
     }
 }
 
-// Build Rust native modules
+// Check Rust native modules (using local libraries only, no building)
 tasks.register("buildRustModules") {
     doLast {
-        if ((System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]) {
-            println("✅ Using CI-provided Rust artifacts (SXR_USE_CI_RUST=true) - skipping local Rust build")
-            return
-        }
-        // Map module names to their Cargo library names and Kotlin load names
+        println("✅ Using local Rust libraries - skipping build")
+        
+        // Map module names to their Kotlin load names
         def rustModules = [
-            "xray-signal-handler": ["cargoLib": "xray_signal_handler", "kotlinName": "xray-signal-handler"],
-            "pepper-shaper": ["cargoLib": "pepper_shaper", "kotlinName": "pepper-shaper"],
-            "perf-net": ["cargoLib": "perf_net", "kotlinName": "perf-net"],
-            "quiche-client": ["cargoLib": "quiche_client", "kotlinName": "quiche-client"]
+            "xray-signal-handler": "xray-signal-handler",
+            "pepper-shaper": "pepper-shaper",
+            "perf-net": "perf-net",
+            "quiche-client": "quiche-client"
         ]
-        def targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android", "i686-linux-android"]
-        def abiMap = [
-            "aarch64-linux-android": "arm64-v8a",
-            "armv7-linux-androideabi": "armeabi-v7a",
-            "x86_64-linux-android": "x86_64",
-            "i686-linux-android": "x86"
-        ]
+        def abis = ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"]
         
-        def androidPlatform = "29"
-        def ndkPath = android.ndkDirectory?.absolutePath ?: System.getenv("ANDROID_NDK") ?: "${System.getProperty("user.home")}/AppData/Local/Android/Sdk/ndk/28.2.13676358"
-        
-        // Try to find NDK in common locations
-        if (!new File(ndkPath).exists()) {
-            def altPaths = [
-                "${System.getProperty("user.home")}/AppData/Local/Android/Sdk/ndk/28.2.13676358",
-                "${System.getProperty("user.home")}/Android/Sdk/ndk/28.2.13676358",
-                "${System.getProperty("user.home")}/Android/Sdk/ndk/25.2.9519653",
-                "/c/Users/${System.getProperty("user.name")}/AppData/Local/Android/Sdk/ndk/28.2.13676358"
-            ]
-            for (altPath in altPaths) {
-                if (new File(altPath).exists()) {
-                    ndkPath = altPath
-                    break
-                }
-            }
-        }
-        
-        println("🔨 Building Rust modules...")
-        println("   NDK: ${ndkPath}")
-        println("   Platform: ${androidPlatform}")
-        
-        // Check if cargo-ndk is available (try multiple locations)
-        def cargoNdkAvailable = false
-        def foundCargoPath = null
-        def cargoPaths = []
-        
-        // Common Rust installation paths
-        def userHome = System.getProperty("user.home")
-        if (System.getProperty("os.name").toLowerCase().contains("windows")) {
-            cargoPaths.add("${userHome}\\.cargo\\bin\\cargo.exe")
-            cargoPaths.add("${userHome}\\.cargo\\bin\\cargo")
-            // Also try in PATH
-            cargoPaths.add("cargo")
-        } else {
-            cargoPaths.add("${userHome}/.cargo/bin/cargo")
-            cargoPaths.add("cargo")
-        }
-        
-        // Try each cargo path
-        for (cargoPath in cargoPaths) {
-            try {
-                def process = new ProcessBuilder(cargoPath, "ndk", "--version")
-                    .redirectErrorStream(true)
-                    .start()
-                def exitCode = process.waitFor()
-                if (exitCode == 0) {
-                    cargoNdkAvailable = true
-                    foundCargoPath = cargoPath
-                    println("   ✅ Found cargo-ndk at: ${cargoPath}")
-                    break
-                }
-            } catch (Exception e) {
-                // Try next path
-            }
-        }
-        
-        if (!cargoNdkAvailable) {
-            def setupScript = System.getProperty("os.name").toLowerCase().contains("windows") 
-                ? "scripts\\setup-rust.ps1" 
-                : "scripts/setup-rust.sh"
-            throw new RuntimeException(
-                "❌ cargo-ndk is REQUIRED to build Rust modules!\n" +
-                "\n" +
-                "   Rust MUST be used for this project. Please install Rust and cargo-ndk:\n" +
-                "\n" +
-                "   Quick setup:\n" +
-                "   - Windows:  .\\scripts\\setup-rust.ps1\n" +
-                "   - Linux/Mac: ./scripts/setup-rust.sh\n" +
-                "\n" +
-                "   Manual setup:\n" +
-                "   1. Install Rust: https://rustup.rs/\n" +
-                "   2. Install cargo-ndk: cargo install cargo-ndk\n" +
-                "   3. Add Android targets:\n" +
-                "      rustup target add aarch64-linux-android\n" +
-                "      rustup target add armv7-linux-androideabi\n" +
-                "      rustup target add x86_64-linux-android\n" +
-                "      rustup target add i686-linux-android\n" +
-                "\n" +
-                "   After installation, restart your terminal and try building again."
-            )
-        }
-        
-        // Use the found cargo path for building
-        def cargoCommand = foundCargoPath ?: "cargo"
-        
-        rustModules.each { moduleName, config ->
-            println("   Building ${moduleName}...")
-            def moduleDir = file("src/main/jni/${moduleName}")
-            def cargoLibName = config["cargoLib"]
-            def kotlinLibName = config["kotlinName"]
-            
-            if (!moduleDir.exists()) {
-                println("   ⚠️  Module ${moduleName} not found, skipping")
-                return
-            }
-            
-            targets.each { target ->
-                def abi = abiMap[target]
-                def sourceLib = file("${moduleDir}/target/${target}/release/lib${cargoLibName}.so")
-                def destDir = file("src/main/jniLibs/${abi}")
-                def destLib = file("${destDir}/lib${kotlinLibName}.so")
-                
-                // Check if library already exists in jniLibs (from CI artifacts)
+        // Just verify that libraries exist locally
+        rustModules.each { moduleName, kotlinLibName ->
+            println("   Checking ${moduleName}...")
+            abis.each { abi ->
+                def destLib = file("src/main/jniLibs/${abi}/lib${kotlinLibName}.so")
                 if (destLib.exists()) {
-                    println("   ✅ ${moduleName} (${abi}): lib${kotlinLibName}.so already exists, skipping build")
-                    return
+                    println("   ✅ ${moduleName} (${abi}): lib${kotlinLibName}.so found")
+                } else {
+                    println("   ⚠️  ${moduleName} (${abi}): lib${kotlinLibName}.so not found")
                 }
-                
-                // Build Rust library if not found
-                println("   🔨 Building ${moduleName} for ${target}...")
-                
-                // Build natively (Windows or Linux)
-                def processBuilder = new ProcessBuilder(cargoCommand, "ndk",
-                    "--target", target,
-                    "--platform", androidPlatform,
-                    "build",
-                    "--release")
-                    .directory(moduleDir)
-                    .redirectErrorStream(true)
-                
-                // Set up environment variables for cmake/NDK
-                def env = processBuilder.environment()
-                env.put("ANDROID_NDK", ndkPath.toString())
-                env.put("ANDROID_NDK_HOME", ndkPath.toString())
-                env.put("NDK_HOME", ndkPath.toString())
-                env.put("ANDROID_PLATFORM", androidPlatform.toString())
-                
-                // Map Rust target to Android ABI
-                def androidAbi = abiMap[target]
-                env.put("ANDROID_ABI", androidAbi.toString())
-                
-                // Add ninja to PATH if it exists in user's bin directory
-                def userBin = new File(System.getProperty("user.home"), "bin").absolutePath
-                def userBinFile = new File(userBin)
-                if (userBinFile.exists() && new File(userBinFile, "ninja.exe").exists()) {
-                    def currentPath = env.get("PATH")
-                    def pathStr = currentPath ? currentPath.toString() : ""
-                    if (!pathStr.contains(userBin)) {
-                        env.put("PATH", userBin + ";" + pathStr)
-                    }
-                }
-                
-                // Set CMAKE_TOOLCHAIN_FILE if NDK exists
-                def ndkFile = new File(ndkPath)
-                if (ndkFile.exists()) {
-                    def toolchainFile = new File(ndkFile, "build/cmake/android.toolchain.cmake")
-                    if (toolchainFile.exists()) {
-                        env.put("CMAKE_TOOLCHAIN_FILE", toolchainFile.absolutePath.toString())
-                        
-                        // Set Android-specific cmake variables
-                        env.put("ANDROID_ABI", androidAbi.toString())
-                        env.put("ANDROID_PLATFORM", "android-" + androidPlatform.toString())
-                        env.put("ANDROID_NDK", ndkPath.toString())
-                        
-                        // aws-lc-sys uses cmake crate which doesn't read CMAKE_ARGS env var
-                        // Instead, we need to set ANDROID_ABI via cmake's build script mechanism
-                        // The cmake crate reads AWS_LC_SYS_CMAKE_* environment variables
-                        env.put("AWS_LC_SYS_CMAKE_ANDROID_ABI", androidAbi.toString())
-                        env.put("AWS_LC_SYS_CMAKE_ANDROID_PLATFORM", "android-" + androidPlatform.toString())
-                        
-                        // Also try setting via target-specific variables
-                        def targetEnvVar = target.replace("-", "_")
-                        env.put("AWS_LC_SYS_CMAKE_ANDROID_ABI_" + targetEnvVar, androidAbi.toString())
-                        env.put("AWS_LC_SYS_CMAKE_ANDROID_PLATFORM_" + targetEnvVar, "android-" + androidPlatform.toString())
-                        
-                        // Try to find ninja in common locations
-                        def userHomePath = System.getProperty("user.home")
-                        def ninjaPaths = [
-                            new File(userHomePath, "bin/ninja.exe").absolutePath,
-                            "ninja.exe",
-                            "ninja"
-                        ]
-                        def foundNinja = null
-                        for (ninjaPath in ninjaPaths) {
-                            def ninjaFile = new File(ninjaPath)
-                            if (ninjaFile.exists() || ninjaPath == "ninja" || ninjaPath == "ninja.exe") {
-                                // Check if it's in PATH
-                                try {
-                                    def testProcess = new ProcessBuilder(ninjaPath, "--version")
-                                        .redirectErrorStream(true)
-                                        .start()
-                                    def exitCode = testProcess.waitFor()
-                                    if (exitCode == 0) {
-                                        foundNinja = ninjaPath
-                                        break
-                                    }
-                                } catch (Exception e) {
-                                    // Try next path
-                                }
-                            }
-                        }
-                        
-                        if (foundNinja != null) {
-                            env.put("CMAKE_GENERATOR", "Ninja")
-                            // Always set CMAKE_MAKE_PROGRAM to full path for reliability
-                            def ninjaPath = foundNinja.toString()
-                            if (ninjaPath != "ninja" && ninjaPath != "ninja.exe") {
-                                env.put("CMAKE_MAKE_PROGRAM", ninjaPath)
-                            } else {
-                                // If found in PATH, use full path from user bin
-                                def userBinNinja = new File(System.getProperty("user.home"), "bin/ninja.exe")
-                                if (userBinNinja.exists()) {
-                                    env.put("CMAKE_MAKE_PROGRAM", userBinNinja.absolutePath.toString())
-                                }
-                            }
-                            println("   📝 Using Ninja: ${foundNinja}")
-                            if (env.get("CMAKE_MAKE_PROGRAM")) {
-                                println("   📝 CMAKE_MAKE_PROGRAM: ${env.get("CMAKE_MAKE_PROGRAM")}")
-                            }
-                        } else {
-                            // Fallback: Use Unix Makefiles (requires make/gcc in PATH)
-                            env.put("CMAKE_GENERATOR", "Unix Makefiles")
-                            println("   ⚠️  Ninja not found, using Unix Makefiles generator")
-                        }
-                        
-                        // Also set target-specific variables
-                        def targetEnv = target.replace("-", "_")
-                        env.put("CMAKE_TOOLCHAIN_FILE_" + targetEnv, toolchainFile.absolutePath.toString())
-                        def generator = env.get("CMAKE_GENERATOR")
-                        env.put("CMAKE_GENERATOR_" + targetEnv, generator ? generator.toString() : "Ninja")
-                        println("   📝 Using CMAKE_TOOLCHAIN_FILE: ${toolchainFile.absolutePath}")
-                    }
-                }
-                
-                def process = processBuilder.start()
-                
-                // Read output in real-time
-                def reader = new BufferedReader(new InputStreamReader(process.inputStream))
-                def line
-                def output = new StringBuilder()
-                while ((line = reader.readLine()) != null) {
-                    println("   ${line}")
-                    output.append(line).append("\n")
-                }
-                
-                def exitCode = process.waitFor()
-                if (exitCode != 0) {
-                    throw new RuntimeException(
-                        "❌ Failed to build ${moduleName} for ${target}!\n" +
-                        "   Exit code: ${exitCode}\n" +
-                        "   Last output lines:\n" +
-                        output.toString().split("\n").takeRight(10).join("\n")
-                    )
-                }
-                
-                // Verify library was built
-                if (!sourceLib.exists()) {
-                    throw new RuntimeException(
-                        "❌ Failed to build ${moduleName} for ${target}!\n" +
-                        "   Expected library at: ${sourceLib.absolutePath}\n" +
-                        "   Check Cargo build output for errors."
-                    )
-                }
-                
-                // Copy library to jniLibs with Kotlin-expected name
-                destDir.mkdirs()
-                copy {
-                    from sourceLib
-                    into destDir
-                    rename { "lib${kotlinLibName}.so" }
-                }
-                println("   ✅ ${moduleName} (${abi}): lib${kotlinLibName}.so")
             }
         }
         
-        println("✅ Rust modules build complete!")
+        println("✅ Rust modules check complete!")
     }
 }
 
-// Always build Rust modules before NDK build (if available)
+// Always check Rust modules before NDK build (using local libraries only)
 tasks.matching { task ->
     task.name.startsWith("externalNativeBuild") && 
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
     task.dependsOn("checkBoringSSL", "copyQuicheLibraries")
-    // Only depend on local Rust build when CI artifacts are not used
-    def ciRust = (System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]
-    if (!ciRust) {
-        task.dependsOn("buildRustModules")
-    } else {
-        println("ℹ️ Skipping buildRustModules dependency for ${task.name} (SXR_USE_CI_RUST=true)")
-    }
+    // buildRustModules is now just a check task, no actual building
+    task.dependsOn("buildRustModules")
 }
 
-// Ensure Rust modules are built before any build task (if available)
+// Ensure Rust modules are checked before any build task (using local libraries only)
 tasks.matching { task ->
     (task.name.contains("assemble") || task.name.contains("bundle")) &&
     (task.name.contains("Debug") || task.name.contains("Release"))
 }.configureEach { task ->
-    def ciRust = (System.getenv("SXR_USE_CI_RUST") ?: "false").toString().toLowerCase() in ["1","true","yes"]
-    if (!ciRust) {
-        task.dependsOn("buildRustModules")
-    } else {
-        println("ℹ️ Skipping buildRustModules dependency for ${task.name} (SXR_USE_CI_RUST=true)")
-    }
+    // buildRustModules is now just a check task, no actual building
+    task.dependsOn("buildRustModules")
 }
 
-// buildRustModules is REQUIRED - build will fail if Rust modules can't be built
+// buildRustModules now only checks for local libraries - no building
 
 // Run debug files check before debug builds
 tasks.matching { task ->

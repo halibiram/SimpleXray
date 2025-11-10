@@ -3,7 +3,13 @@
     "allow": [
       "Bash(./gradlew :app:testDebugUnitTest:*)",
       "Bash(./gradlew clean:*)",
-      "Bash(./gradlew build:*)"
+      "Bash(./gradlew build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []

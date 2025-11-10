@@ -1,5 +1,5 @@
 # Script to download necessary files from last successful build for local debug
-# Downloads: Xray libraries, Hysteria2 binaries, geoip.dat, geosite.dat
+# Downloads: Xray libraries, geoip.dat, geosite.dat
 
 $ErrorActionPreference = "Continue"
 
@@ -73,7 +73,7 @@ $null = New-Item -ItemType Directory -Force -Path "app/src/main/assets"
 $null = New-Item -ItemType Directory -Force -Path ".debug-artifacts"
 
 # Step 1: Download Xray libraries from last successful build
-Write-Host "[1/4] Xray libraries indiriliyor..." -ForegroundColor Yellow
+Write-Host "[1/3] Xray libraries indiriliyor..." -ForegroundColor Yellow
 $XRAY_WORKFLOW = "build-xray-boringssl.yml"
 
 # Find last successful run
@@ -110,46 +110,8 @@ if (-not $XRAY_RUN) {
 
 Write-Host ""
 
-# Step 2: Download Hysteria2 binaries from last successful build
-Write-Host "[2/4] Hysteria2 binaries indiriliyor..." -ForegroundColor Yellow
-$HYSTERIA2_WORKFLOW = "build-hysteria2.yml"
-
-# Find last successful run
-$HYSTERIA2_RUN_JSON = gh run list --workflow="$HYSTERIA2_WORKFLOW" --status=success --limit=1 --json databaseId 2>&1
-if ($LASTEXITCODE -eq 0 -and $HYSTERIA2_RUN_JSON) {
-    $HYSTERIA2_RUN = ($HYSTERIA2_RUN_JSON | ConvertFrom-Json).databaseId
-} else {
-    $HYSTERIA2_RUN = $null
-}
-
-if (-not $HYSTERIA2_RUN) {
-    Write-Host "[UYARI] Basarili Hysteria2 build bulunamadi, atlaniyor..." -ForegroundColor Yellow
-} else {
-    Write-Host "   Run ID: $HYSTERIA2_RUN" -ForegroundColor Blue
-    
-    # Download artifacts
-    gh run download "$HYSTERIA2_RUN" --pattern "hysteria2-*" --dir ".debug-artifacts/hysteria2-libs" *>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[UYARI] Hysteria2 artifacts indirilemedi, atlaniyor..." -ForegroundColor Yellow
-    }
-    
-    # Copy libraries to jniLibs
-    if (Test-Path ".debug-artifacts/hysteria2-libs") {
-        $abis = @("arm64-v8a", "armeabi-v7a", "x86_64")
-        foreach ($abi in $abis) {
-            $sourcePath = ".debug-artifacts/hysteria2-libs/hysteria2-$abi/libhysteria2.so"
-            if (Test-Path $sourcePath) {
-                Copy-Item $sourcePath "app/src/main/jniLibs/$abi/libhysteria2.so" -Force
-                Write-Host "   [OK] Hysteria2 binary copied for $abi" -ForegroundColor Green
-            }
-        }
-    }
-}
-
-Write-Host ""
-
-# Step 3: Download geoip.dat and geosite.dat
-Write-Host "[3/4] GeoIP ve GeoSite dosyalari indiriliyor..." -ForegroundColor Yellow
+# Step 2: Download geoip.dat and geosite.dat
+Write-Host "[2/3] GeoIP ve GeoSite dosyalari indiriliyor..." -ForegroundColor Yellow
 
 if ($GEOIP_VERSION) {
     Write-Host "   Downloading geoip.dat (version: $GEOIP_VERSION)..." -ForegroundColor Blue
@@ -179,8 +141,8 @@ if ($GEOSITE_VERSION) {
 
 Write-Host ""
 
-# Step 4: Verify files
-Write-Host "[4/4] Dosyalar dogrulaniyor..." -ForegroundColor Yellow
+# Step 3: Verify files
+Write-Host "[3/3] Dosyalar dogrulaniyor..." -ForegroundColor Yellow
 
 $VERIFIED = $true
 
@@ -196,18 +158,6 @@ foreach ($abi in $abis) {
     }
 }
 
-# Check Hysteria2 binaries
-foreach ($abi in $abis) {
-    $libPath = "app/src/main/jniLibs/$abi/libhysteria2.so"
-    if (Test-Path $libPath) {
-        $size = (Get-Item $libPath).Length
-        Write-Host "   [OK] libhysteria2.so ($abi): $size bytes" -ForegroundColor Green
-    } else {
-        Write-Host "   [UYARI] libhysteria2.so ($abi): not found" -ForegroundColor Yellow
-    }
-}
-
-# Check geoip.dat
 $geoipPath = "app/src/main/assets/geoip.dat"
 if (Test-Path $geoipPath) {
     $size = (Get-Item $geoipPath).Length

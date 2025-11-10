@@ -74,7 +74,6 @@ class DiagnosticBundle(private val context: Context) {
                 "state" to "unknown", // Would get from ChainSupervisor
                 "layers" to mapOf(
                     "reality" to mapOf("running" to false),
-                    "hysteria2" to mapOf("running" to false),
                     "pepper" to mapOf("running" to false),
                     "xray" to mapOf("running" to false)
                 )

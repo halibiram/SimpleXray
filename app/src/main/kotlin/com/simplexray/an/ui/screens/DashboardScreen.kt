@@ -260,7 +260,7 @@ fun DashboardScreen(
 
                     FeatureRow(
                         title = "Tunneling Chain",
-                        description = "Reality SOCKS + Hysteria2 + PepperShaper",
+                        description = "PepperShaper + Xray-core",
                         onClick = { appNavController.navigate(ROUTE_CHAIN) }
                     )
                 }
@@ -406,7 +406,7 @@ private fun ChainStatusQuickCard(
                 )
                 if (chainStatus.uptime > 0) {
                     Text(
-                        text = "Uptime: ${formatUptime(chainStatus.uptime)}",
+                        text = "Uptime: ${formatUptime(chainStatus.uptime.toInt())}",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp)
                     )

@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.Environment
 import com.simplexray.an.common.AppLogger
 import androidx.activity.result.ActivityResultLauncher
 import androidx.lifecycle.AndroidViewModel
@@ -58,8 +59,10 @@ import okhttp3.Request
 import okhttp3.Response
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileWriter
 import java.io.IOException
 import java.io.InputStreamReader
+import java.io.PrintWriter
 import java.net.InetSocketAddress
 import java.net.Proxy
 import kotlin.coroutines.cancellation.CancellationException
@@ -1069,6 +1072,33 @@ class MainViewModel(application: Application) :
         }
     }
 
+    /**
+     * Logs download file path to downloads folder
+     */
+    private fun logToDownloadsFolder(filePath: String?, uri: Uri) {
+        try {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadsDir.exists()) {
+                downloadsDir.mkdirs()
+            }
+            val logFile = File(downloadsDir, "app_log.txt")
+            val logEntry = if (filePath != null) {
+                "Download completed - File path: $filePath"
+            } else {
+                "Download completed - File path: $uri"
+            }
+            
+            FileWriter(logFile, true).use { fileWriter ->
+                PrintWriter(fileWriter).use { printWriter ->
+                    printWriter.println(logEntry)
+                }
+            }
+            AppLogger.d("Logged download to downloads folder: ${logFile.absolutePath}")
+        } catch (e: Exception) {
+            AppLogger.e("Failed to log to downloads folder", e)
+        }
+    }
+
     fun downloadNewVersion(versionTag: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1102,6 +1132,9 @@ class MainViewModel(application: Application) :
                             _downloadProgress.value = 100
                             _isDownloadingUpdate.value = false
                             AppLogger.d("Download completed, waiting for user to install")
+                            
+                            // Log file path to downloads folder
+                            logToDownloadsFolder(progress.filePath, progress.uri)
                             
                             // Store completion info instead of installing immediately
                             withContext(Dispatchers.Main) {

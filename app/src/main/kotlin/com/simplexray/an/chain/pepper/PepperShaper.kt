@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.asStateFlow
  * Implemented as Kotlin + JNI pair for TCP and UDP flows.
  */
 // ARCH-DEBT: Object singleton pattern - may cause issues with multiple instances
-// UNSAFE: Native library loaded in init - may crash if library not found
 object PepperShaper {
     // STATE-HAZARD: MutableStateFlow updated from native code
     private val _stats = MutableStateFlow<PepperStats>(
@@ -30,9 +29,12 @@ object PepperShaper {
     private var isInitialized = false
     
     init {
-        // Safe library loading with error handling
+        // Load native library using System.loadLibrary() - Android's standard mechanism
+        // This ensures proper library loading from the APK's native library directory
+        // Error handling prevents crashes if library is missing
         try {
             System.loadLibrary("pepper-shaper")
+            AppLogger.d("PepperShaper: Native library loaded successfully")
         } catch (e: UnsatisfiedLinkError) {
             AppLogger.e("Failed to load pepper-shaper native library: ${e.message}", e)
             // Mark as failed to prevent further operations
