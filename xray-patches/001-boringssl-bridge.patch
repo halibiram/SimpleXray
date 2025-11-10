@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..a1b2c3d
 --- /dev/null
 +++ b/crypto/boringssl_bridge.go
-@@ -0,0 +1,300 @@
+@@ -0,0 +1,407 @@
 +//go:build cgo
 +// +build cgo
 +
