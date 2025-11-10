@@ -13,6 +13,7 @@ index 0000000..a1b2c3d
 +#include <openssl/ssl.h>
 +#include <openssl/crypto.h>
 +#include <openssl/evp.h>
++#include <openssl/cipher.h>
 +#include <openssl/aes.h>
 +#include <openssl/err.h>
 +#include <openssl/rand.h>
@@ -129,6 +130,9 @@ index 0000000..a1b2c3d
 +}
 +
 +// ChaCha20Poly1305Encrypt encrypts data using ChaCha20-Poly1305 with BoringSSL
++// Note: BoringSSL does not provide EVP_chacha20_poly1305() in the EVP_CIPHER API.
++// ChaCha20-Poly1305 is available via the EVP_AEAD API (EVP_aead_chacha20_poly1305).
++// This function is a placeholder and not currently implemented.
 +func ChaCha20Poly1305Encrypt(key, nonce, plaintext, aad []byte) ([]byte, []byte, error) {
 +	if len(key) != 32 {
 +		return nil, nil, ErrInvalidKey
@@ -137,37 +141,9 @@ index 0000000..a1b2c3d
 +		return nil, nil, ErrInvalidNonce
 +	}
 +
-+	ctx := C.EVP_CIPHER_CTX_new()
-+	if ctx == nil {
-+		return nil, nil, ErrBoringSSLInit
-+	}
-+	defer C.EVP_CIPHER_CTX_free(ctx)
-+
-+	cipher := C.EVP_chacha20_poly1305()
-+	if C.EVP_EncryptInit_ex(ctx, cipher, nil, (*C.uchar)(&key[0]), (*C.uchar)(&nonce[0])) != 1 {
-+		return nil, nil, getBoringSSLError()
-+	}
-+
-+	var outlen C.int
-+	ciphertext := make([]byte, len(plaintext)+16)
-+
-+	if len(aad) > 0 {
-+		if C.EVP_EncryptUpdate(ctx, nil, &outlen, (*C.uchar)(&aad[0]), C.int(len(aad))) != 1 {
-+			return nil, nil, getBoringSSLError()
-+		}
-+	}
-+
-+	if C.EVP_EncryptUpdate(ctx, (*C.uchar)(&ciphertext[0]), &outlen, (*C.uchar)(&plaintext[0]), C.int(len(plaintext))) != 1 {
-+		return nil, nil, getBoringSSLError()
-+	}
-+	ciphertext = ciphertext[:outlen]
-+
-+	tag := make([]byte, 16)
-+	if C.EVP_EncryptFinal_ex(ctx, (*C.uchar)(&tag[0]), &outlen) != 1 {
-+		return nil, nil, getBoringSSLError()
-+	}
-+
-+	return ciphertext, tag, nil
++	// ChaCha20-Poly1305 in BoringSSL requires the AEAD API, not EVP_CIPHER API
++	// To implement this, use EVP_aead_chacha20_poly1305() with EVP_AEAD_CTX instead
++	return nil, nil, errors.New("ChaCha20-Poly1305 not supported via EVP_CIPHER API in BoringSSL - use AEAD API instead")
 +}
 +
 +// SHA256Hash computes SHA-256 hash using BoringSSL
