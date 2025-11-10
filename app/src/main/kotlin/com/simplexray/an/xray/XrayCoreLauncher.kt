@@ -173,35 +173,11 @@ object XrayCoreLauncher {
             val pb = ProcessBuilder(bin.absolutePath, "-config", cfg.absolutePath)
             val filesDir = context.filesDir
             val cacheDir = context.cacheDir
-            val environment = pb.environment()
-            
-            // Restrict filesystem access to prevent SELinux denials
-            // Set HOME and TMPDIR to app-accessible directories
-            // Also prevents access to tests directories (shell_test_data_file context)
-            environment["HOME"] = filesDir.path
-            environment["TMPDIR"] = cacheDir.path
-            environment["TMP"] = cacheDir.path
-            // Ensure BORINGSSL_TEST_DATA_ROOT is not set to prevent test data access
-            // Test data should only be accessed in test builds, not production
-            environment.remove("BORINGSSL_TEST_DATA_ROOT")
-            // Additional restrictions to prevent /data/local/tmp/tests access
-            // Remove any test-related environment variables that might trigger test directory access
-            environment.remove("TEST_DATA_ROOT")
-            environment.remove("TEST_DIR")
-            environment.remove("GO_TEST_DIR")
-            // Restrict PATH to prevent accessing system test binaries and test directories
-            // Filter out any paths containing "test", "/data/local/tmp", or "tests"
-            val systemPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
-            val restrictedPath = systemPath.split(":").filter { path ->
-                val normalizedPath = path.lowercase()
-                !normalizedPath.contains("test") && 
-                !normalizedPath.contains("/data/local/tmp") &&
-                !normalizedPath.contains("tests") &&
-                !normalizedPath.contains("/tmp")
-            }.joinToString(":")
-            environment["PATH"] = restrictedPath
-            
-            pb.directory(filesDir)
+
+            // Configure SELinux-compliant environment (includes PATH filtering)
+            com.simplexray.an.common.SelinuxComplianceHelper.configureProcessEnvironment(
+                pb, filesDir, cacheDir
+            )
             pb.redirectErrorStream(true)
             val logFile = File(filesDir, "xray.log")
             
@@ -680,11 +656,11 @@ object XrayCoreLauncher {
             }
             val cmdline = cmdlineFile.readText().trim()
             // Check if process name contains "xray" or matches expected binary name
-            cmdline.contains("xray", ignoreCase = true) || 
+            cmdline.contains("xray", ignoreCase = true) ||
             cmdline.contains("xray_core", ignoreCase = true) ||
             cmdline.endsWith("/xray_core", ignoreCase = true) ||
-            cmdline.contains("libxray_copy.so", ignoreCase = true) ||
-            cmdline.endsWith("/libxray_copy.so", ignoreCase = true)
+            cmdline.contains("libxray.so", ignoreCase = true) ||
+            cmdline.endsWith("/libxray.so", ignoreCase = true)
         } catch (e: Exception) {
             // If we can't verify, assume it's safe (process may have exited)
             AppLogger.w("Could not verify process name for PID $pid: ${e.message}")
@@ -740,6 +716,19 @@ object XrayCoreLauncher {
             // Native library directory has app_file_exec context which allows execution
             // Android 16+ SELinux policy prevents setExecutable() on copied files
             // Even if canExecute() returns false, the library is executable in native context
+
+            // Clean up old libxray_copy.so if it exists (from older Android versions or app updates)
+            val oldCopy = File(context.filesDir, "libxray_copy.so")
+            if (oldCopy.exists()) {
+                try {
+                    if (oldCopy.delete()) {
+                        AppLogger.i("Cleaned up old libxray_copy.so (no longer needed on Android 14+)")
+                    }
+                } catch (e: Exception) {
+                    AppLogger.w("Failed to clean up old libxray_copy.so: ${e.message}")
+                }
+            }
+
             AppLogger.i("Using native library directly (Android $androidVersion SELinux compliance): ${src.absolutePath}")
             AppLogger.d("Native library executable check: ${src.canExecute()} (ignoring for Android 14+)")
             return src

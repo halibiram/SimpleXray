@@ -104,32 +104,21 @@ class SettingsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
                 val app = getApplication<Application>()
-                val xrayCore = java.io.File(app.filesDir, "libxray_copy.so")
-                if (!xrayCore.exists() || !xrayCore.canExecute()) {
-                    val libraryDir = app.applicationInfo.nativeLibraryDir
-                    if (libraryDir == null) {
-                        throw IllegalStateException("Native library directory not found")
-                    }
-                    val libxray = java.io.File(libraryDir, "libxray.so")
-                    if (!libxray.exists() || !libxray.canRead()) {
-                        throw IllegalStateException("Xray binary not found or not readable: ${libxray.absolutePath}")
-                    }
-                    libxray.inputStream().use { input ->
-                        xrayCore.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    if (!xrayCore.setExecutable(true)) {
-                        throw IllegalStateException("Failed to set executable permission on libxray_copy.so")
-                    }
-                    if (!xrayCore.canExecute()) {
-                        throw IllegalStateException("Failed to make libxray_copy.so executable")
-                    }
-                }
-                
-                val process = ProcessBuilder(xrayCore.absolutePath, "version")
-                    .redirectErrorStream(true)
-                    .start()
+                // Use XrayCoreLauncher.copyExecutable() for SELinux compliance
+                // Android 14+: Uses native library directly from native library directory
+                // Android 10-13: Copies to app files directory
+                val xrayCore = com.simplexray.an.xray.XrayCoreLauncher.copyExecutable(app)
+                    ?: throw IllegalStateException("Failed to get Xray executable")
+
+                val pb = ProcessBuilder(xrayCore.absolutePath, "version")
+
+                // Configure SELinux-compliant environment (includes PATH filtering)
+                com.simplexray.an.common.SelinuxComplianceHelper.configureProcessEnvironment(
+                    pb, app.filesDir, app.cacheDir
+                )
+                pb.redirectErrorStream(true)
+
+                val process = pb.start()
                 
                 val output = try {
                     java.io.BufferedReader(java.io.InputStreamReader(process.inputStream)).use { reader ->

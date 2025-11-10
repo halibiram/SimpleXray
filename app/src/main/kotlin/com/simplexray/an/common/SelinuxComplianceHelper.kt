@@ -54,10 +54,25 @@ object SelinuxComplianceHelper {
         }
         
         return try {
-            // Use Process APIs which are SELinux-compliant
-            val uid = Process.getUidForPid(pid)
-            if (uid < 0) {
-                return null // Process doesn't exist
+            // Process.getUidForPid() is not available in Android SDK
+            // Try to read from /proc/PID/status as fallback
+            val statusFile = File("/proc/$pid/status")
+            var uid: Int? = null
+            
+            if (statusFile.exists() && statusFile.canRead()) {
+                statusFile.readLines().forEach { line ->
+                    if (line.startsWith("Uid:")) {
+                        val parts = line.split("\\s+".toRegex())
+                        if (parts.size > 1) {
+                            uid = parts[1].toIntOrNull()
+                        }
+                    }
+                }
+            }
+            
+            if (uid == null) {
+                // If we can't get UID, return null
+                return null
             }
             
             ProcessInfo(
@@ -164,31 +179,11 @@ object SelinuxComplianceHelper {
                 // Use NetworkStatsManager for detailed stats
                 val networkStatsManager = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? android.app.usage.NetworkStatsManager
                 if (networkStatsManager != null) {
-                    val uid = Process.myUid()
-                    val now = System.currentTimeMillis()
-                    val startTime = now - (24 * 60 * 60 * 1000) // Last 24 hours
-                    
-                    val stats = networkStatsManager.querySummary(
-                        android.net.NetworkTemplate.Builder(android.net.NetworkTemplate.MATCH_MOBILE)
-                            .build(),
-                        startTime,
-                        now
+                    // Use TrafficStats API instead - simpler and more reliable
+                    NetworkStats(
+                        rxBytes = android.net.TrafficStats.getTotalRxBytes().takeIf { it != android.net.TrafficStats.UNSUPPORTED.toLong() } ?: 0L,
+                        txBytes = android.net.TrafficStats.getTotalTxBytes().takeIf { it != android.net.TrafficStats.UNSUPPORTED.toLong() } ?: 0L
                     )
-                    
-                    var rxBytes = 0L
-                    var txBytes = 0L
-                    
-                    while (stats.hasNextBucket()) {
-                        val bucket = android.app.usage.NetworkStats.Bucket()
-                        stats.getNextBucket(bucket)
-                        if (bucket.uid == uid) {
-                            rxBytes += bucket.rxBytes
-                            txBytes += bucket.txBytes
-                        }
-                    }
-                    stats.close()
-                    
-                    NetworkStats(rxBytes, txBytes)
                 } else {
                     // Fallback to TrafficStats
                     NetworkStats(
@@ -272,16 +267,9 @@ object SelinuxComplianceHelper {
      * Alternative: Use Os.getrlimit() or Process API
      */
     fun getFileDescriptorCount(): Int? {
-        return try {
-            // Use Os.getrlimit() to get file descriptor limits
-            // This is SELinux-compliant
-            val rlimit = Os.getrlimit(OsConstants.RLIMIT_NOFILE)
-            // Return current soft limit (approximate)
-            rlimit.current.toInt()
-        } catch (e: Exception) {
-            AppLogger.d("SelinuxComplianceHelper: Failed to get FD count: ${e.message}")
-            null
-        }
+        // Os.getrlimit() is not available in Android SDK
+        // Return null as we can't get FD count without /proc access
+        return null
     }
     
     /**
@@ -290,10 +278,15 @@ object SelinuxComplianceHelper {
      */
     fun isSelinuxEnforcing(): Boolean {
         return try {
-            // Use Os.sysconf() to check SELinux status
-            // This is SELinux-compliant
-            val selinuxEnforcing = Os.sysconf(OsConstants._SC_SELINUX_ENFORCING)
-            selinuxEnforcing > 0
+            // Try to read SELinux status from /proc/sys/kernel/selinux/enforce
+            val enforceFile = File("/proc/sys/kernel/selinux/enforce")
+            if (enforceFile.exists() && enforceFile.canRead()) {
+                val content = enforceFile.readText().trim()
+                content == "1"
+            } else {
+                // Default to enforcing if we can't check
+                true
+            }
         } catch (e: Exception) {
             // Default to enforcing if we can't check
             true
@@ -301,12 +294,58 @@ object SelinuxComplianceHelper {
     }
     
     /**
+     * Configure ProcessBuilder with SELinux-compliant environment variables
+     *
+     * Android 16+ SELinux: Restricts PATH, HOME, TMPDIR to app directories
+     * Filters out test directories to prevent shell_test_data_file access denials
+     *
+     * Example usage:
+     * ```
+     * val pb = ProcessBuilder(binary.absolutePath, "args")
+     * SelinuxComplianceHelper.configureProcessEnvironment(pb, filesDir, cacheDir)
+     * val process = pb.start()
+     * ```
+     */
+    fun configureProcessEnvironment(
+        processBuilder: ProcessBuilder,
+        filesDir: File,
+        cacheDir: File
+    ) {
+        val environment = processBuilder.environment()
+
+        // Set HOME and TMPDIR to app-accessible directories
+        environment["HOME"] = filesDir.path
+        environment["TMPDIR"] = cacheDir.path
+        environment["TMP"] = cacheDir.path
+
+        // Remove test-related environment variables
+        environment.remove("BORINGSSL_TEST_DATA_ROOT")
+        environment.remove("TEST_DATA_ROOT")
+        environment.remove("TEST_DIR")
+        environment.remove("GO_TEST_DIR")
+
+        // Filter PATH to prevent test directory access
+        val systemPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
+        val filteredPath = systemPath.split(":").filter { path ->
+            val normalizedPath = path.lowercase()
+            !normalizedPath.contains("test") &&
+            !normalizedPath.contains("/data/local/tmp") &&
+            !normalizedPath.contains("tests") &&
+            !normalizedPath.contains("/tmp")
+        }.joinToString(":")
+        environment["PATH"] = filteredPath
+
+        // Set working directory to app files directory
+        processBuilder.directory(filesDir)
+    }
+
+    /**
      * Get Android version-specific SELinux compliance recommendations
      */
     fun getComplianceRecommendations(): List<String> {
         val recommendations = mutableListOf<String>()
         val androidVersion = Build.VERSION.SDK_INT
-        
+
         if (androidVersion >= 36) {
             recommendations.add("Android 16+ detected: Use native library directory directly instead of copying")
             recommendations.add("Avoid /proc filesystem access - use Android Process APIs instead")
@@ -318,7 +357,7 @@ object SelinuxComplianceHelper {
             recommendations.add("Android 14+ detected: Use native library directory directly")
             recommendations.add("Avoid /proc filesystem access where possible")
         }
-        
+
         return recommendations
     }
     

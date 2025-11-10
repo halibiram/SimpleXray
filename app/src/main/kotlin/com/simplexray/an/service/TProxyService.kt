@@ -105,7 +105,7 @@ class TProxyService : VpnService() {
     private val enablePerformanceMode: Boolean
         get() = Preferences(this).enablePerformanceMode
     
-    // Chain supervisor for Reality SOCKS → Hysteria2 → PepperShaper → Xray-core
+    // Chain supervisor for PepperShaper → Xray-core
     private var chainSupervisor: ChainSupervisor? = null
     // QUICHE TUN forwarder (TUN → QUICHE → Chain)
     // QUICME TUN forwarder is now managed by ChainSupervisor
@@ -862,38 +862,16 @@ class TProxyService : VpnService() {
         val cacheDir = applicationContext.cacheDir
         val command: MutableList<String> = mutableListOf(xrayPath)
         val processBuilder = ProcessBuilder(command)
-        val environment = processBuilder.environment()
-        
+
+        // Configure SELinux-compliant environment (includes PATH filtering)
+        com.simplexray.an.common.SelinuxComplianceHelper.configureProcessEnvironment(
+            processBuilder, filesDir, cacheDir
+        )
+
         // Set xray-specific environment variables
+        val environment = processBuilder.environment()
         environment["XRAY_LOCATION_ASSET"] = filesDir.path
-        
-        // Restrict filesystem access to prevent SELinux denials
-        // Set HOME and TMPDIR to app-accessible directories to prevent system directory probing
-        // Also prevents access to tests directories (shell_test_data_file context)
-        environment["HOME"] = filesDir.path
-        environment["TMPDIR"] = cacheDir.path
-        environment["TMP"] = cacheDir.path
-        // Ensure BORINGSSL_TEST_DATA_ROOT is not set to prevent test data access
-        // Test data should only be accessed in test builds, not production
-        environment.remove("BORINGSSL_TEST_DATA_ROOT")
-        // Additional restrictions to prevent /data/local/tmp/tests access
-        // Remove any test-related environment variables that might trigger test directory access
-        environment.remove("TEST_DATA_ROOT")
-        environment.remove("TEST_DIR")
-        environment.remove("GO_TEST_DIR")
-        // Restrict PATH to prevent accessing system test binaries and test directories
-        // Filter out any paths containing "test", "/data/local/tmp", or "tests"
-        val systemPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
-        val restrictedPath = systemPath.split(":").filter { path ->
-            val normalizedPath = path.lowercase()
-            !normalizedPath.contains("test") && 
-            !normalizedPath.contains("/data/local/tmp") &&
-            !normalizedPath.contains("tests") &&
-            !normalizedPath.contains("/tmp")
-        }.joinToString(":")
-        environment["PATH"] = restrictedPath
-        
-        processBuilder.directory(filesDir)
+
         processBuilder.redirectErrorStream(true)
         return processBuilder
     }
@@ -1214,11 +1192,11 @@ class TProxyService : VpnService() {
             }
             val cmdline = cmdlineFile.readText().trim()
             // Check if process name contains "xray" or matches expected binary name
-            cmdline.contains("xray", ignoreCase = true) || 
+            cmdline.contains("xray", ignoreCase = true) ||
             cmdline.contains("xray_core", ignoreCase = true) ||
             cmdline.endsWith("/xray_core", ignoreCase = true) ||
-            cmdline.contains("libxray_copy.so", ignoreCase = true) ||
-            cmdline.endsWith("/libxray_copy.so", ignoreCase = true)
+            cmdline.contains("libxray.so", ignoreCase = true) ||
+            cmdline.endsWith("/libxray.so", ignoreCase = true)
         } catch (e: Exception) {
             // If we can't verify, assume it's safe (process may have exited)
             AppLogger.w("Could not verify process name for PID $pid: ${e.message}")
@@ -1466,7 +1444,7 @@ class TProxyService : VpnService() {
                 AppLogger.w("TProxyService: Failed to schedule watchdog services: ${e.message}", e)
             }
 
-            // Start chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+            // Start chain (PepperShaper → Xray-core)
             val chainStarted = startChain(prefs)
             if (!chainStarted) {
                 AppLogger.e("TProxyService: Chain start failed - cannot continue")
@@ -1648,7 +1626,7 @@ class TProxyService : VpnService() {
     }
     
     /**
-     * Start the tunneling chain (Reality SOCKS → Hysteria2 → PepperShaper → Xray-core)
+     * Start the tunneling chain (PepperShaper → Xray-core)
      */
     private fun startChain(prefs: Preferences): Boolean {
         return try {

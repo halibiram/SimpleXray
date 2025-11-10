@@ -93,18 +93,11 @@ object XrayConfigValidator {
             
             val filesDir = context.filesDir
             val cacheDir = context.cacheDir
-            val environment = pb.environment()
-            
-            // Set environment variables (same as XrayCoreLauncher)
-            environment["HOME"] = filesDir.path
-            environment["TMPDIR"] = cacheDir.path
-            environment["TMP"] = cacheDir.path
-            environment.remove("BORINGSSL_TEST_DATA_ROOT")
-            environment.remove("TEST_DATA_ROOT")
-            environment.remove("TEST_DIR")
-            environment.remove("GO_TEST_DIR")
-            
-            pb.directory(filesDir)
+
+            // Configure SELinux-compliant environment (includes PATH filtering)
+            com.simplexray.an.common.SelinuxComplianceHelper.configureProcessEnvironment(
+                pb, filesDir, cacheDir
+            )
             pb.redirectErrorStream(true)
             
             // Capture output
