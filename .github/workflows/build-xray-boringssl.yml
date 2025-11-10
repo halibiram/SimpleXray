@@ -1052,7 +1052,7 @@ jobs:
 
           # Save build log
           go build \
-            -o libxray.so \
+            -buildmode=c-shared \n            -o libxray.so \
             -trimpath \
             -buildvcs=false \
             -ldflags="-X github.com/xtls/xray-core/core.build=${XRAY_COMMIT} -s -w -buildid=" \
