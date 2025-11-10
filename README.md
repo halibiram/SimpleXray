@@ -82,17 +82,25 @@ It features an **innovative approach**: **directly executing the official Xray-c
 ### Prerequisites
 
 - Android Studio (latest)
-- JDK 17
+- JDK 17 or higher (JDK 21 recommended)
 - Android SDK (API 35)
 - NDK r28c
+- Rust toolchain (for native modules)
 
 ### Building
 
 ```bash
+# 1. Clone the repository with submodules
 git clone --recursive https://github.com/halibiram/SimpleXray
 cd SimpleXray
+
+# 2. Build the APK
 ./gradlew assembleDebug
 ```
+
+**Important**: The `--recursive` flag initializes git submodules including BoringSSL.
+
+**If you cloned without `--recursive`**: Run `./scripts/setup-boringssl.sh` to initialize the BoringSSL submodule. See [BoringSSL Setup Guide](docs/boringssl-setup.md) for details.
 
 ### Running Tests
 
