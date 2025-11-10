@@ -78,3 +78,7 @@ Thumbs.db
 
 # Debug artifacts (downloaded from CI builds)
 .debug-artifacts/
+# Device logs and debug files
+device_logs_*.txt
+log/
+external/
