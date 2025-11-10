@@ -1,9 +1,9 @@
 diff --git a/common/crypto/crypto_cgo.go b/common/crypto/crypto_cgo.go
 new file mode 100644
-index 0000000..70ea6a1
+index 0000000..81c349e
 --- /dev/null
 +++ b/common/crypto/crypto_cgo.go
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,58 @@
 +//go:build cgo
 +// +build cgo
 +
@@ -11,6 +11,7 @@ index 0000000..70ea6a1
 +
 +import (
 +	"crypto/cipher"
++	"errors"
 +
 +	boringssl "github.com/xtls/xray-core/crypto"
 +)
@@ -40,6 +41,22 @@ index 0000000..70ea6a1
 +	return cipher.NewGCM(block)
 +}
 +
++// NewGCMWithNonceSize creates a GCM cipher with custom nonce size
++func NewGCMWithNonceSize(block cipher.Block, size int) (cipher.AEAD, error) {
++	if size != 12 {
++		return nil, errors.New("invalid nonce size for BoringSSL GCM")
++	}
++	return NewGCM(block)
++}
++
++// NewGCMWithTagSize creates a GCM cipher with custom tag size
++func NewGCMWithTagSize(block cipher.Block, tagSize int) (cipher.AEAD, error) {
++	if tagSize != 16 {
++		return nil, errors.New("invalid tag size for BoringSSL GCM")
++	}
++	return NewGCM(block)
++}
++
 +// NewBoringSSLGCM creates a BoringSSL-backed GCM cipher
 +func NewBoringSSLGCM(block cipher.Block) (cipher.AEAD, error) {
 +	// For now, fallback to standard GCM
@@ -47,10 +64,10 @@ index 0000000..70ea6a1
 +}
 diff --git a/common/crypto/crypto_nocgo.go b/common/crypto/crypto_nocgo.go
 new file mode 100644
-index 0000000..892f38b
+index 0000000..98e7123
 --- /dev/null
 +++ b/common/crypto/crypto_nocgo.go
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,26 @@
 +//go:build !cgo
 +// +build !cgo
 +
@@ -67,3 +84,146 @@ index 0000000..892f38b
 +func NewGCM(block cipher.Block) (cipher.AEAD, error) {
 +	return cipher.NewGCM(block)
 +}
++
++// NewGCMWithNonceSize creates a GCM cipher with custom nonce size using Go stdlib
++func NewGCMWithNonceSize(block cipher.Block, size int) (cipher.AEAD, error) {
++	return cipher.NewGCMWithNonceSize(block, size)
++}
++
++// NewGCMWithTagSize creates a GCM cipher with custom tag size using Go stdlib
++func NewGCMWithTagSize(block cipher.Block, tagSize int) (cipher.AEAD, error) {
++	return cipher.NewGCMWithTagSize(block, tagSize)
++}
+diff --git a/common/crypto/runtime.go b/common/crypto/runtime.go
+new file mode 100644
+index 0000000..a4f7bae
+--- /dev/null
++++ b/common/crypto/runtime.go
+@@ -0,0 +1,64 @@
++//go:build cgo
++// +build cgo
++
++package crypto
++
++import (
++	"sync"
++	"sync/atomic"
++
++	boringssl "github.com/xtls/xray-core/crypto"
++)
++
++// BoringSSL runtime availability
++var (
++	boringsslAvailable atomic.Bool
++	boringsslCheckOnce sync.Once
++)
++
++// IsBoringSSLAvailable checks if BoringSSL is available at runtime
++func IsBoringSSLAvailable() bool {
++	boringsslCheckOnce.Do(func() {
++		available := checkBoringSSL()
++		boringsslAvailable.Store(available)
++	})
++	return boringsslAvailable.Load()
++}
++
++// checkBoringSSL performs the actual BoringSSL availability check
++func checkBoringSSL() bool {
++	defer func() {
++		if r := recover(); r != nil {
++			// BoringSSL initialization panicked - not available
++		}
++	}()
++
++	// Try to use BoringSSL random bytes as a test
++	_, err := boringssl.RandomBytes(16)
++	return err == nil
++}
++
++// GetCryptoBackend returns the current crypto backend name
++func GetCryptoBackend() string {
++	if IsBoringSSLAvailable() {
++		return "BoringSSL"
++	}
++	return "Go stdlib"
++}
++
++// CryptoInfo returns detailed crypto backend information
++type CryptoInfo struct {
++	Backend              string
++	HardwareAcceleration bool
++	CGOEnabled           bool
++}
++
++// GetCryptoInfo returns detailed information about the crypto backend
++func GetCryptoInfo() CryptoInfo {
++	available := IsBoringSSLAvailable()
++	return CryptoInfo{
++		Backend:              GetCryptoBackend(),
++		HardwareAcceleration: available,
++		CGOEnabled:           true,
++	}
++}
+diff --git a/common/crypto/runtime_nocgo.go b/common/crypto/runtime_nocgo.go
+new file mode 100644
+index 0000000..4d25c62
+--- /dev/null
++++ b/common/crypto/runtime_nocgo.go
+@@ -0,0 +1,30 @@
++//go:build !cgo
++// +build !cgo
++
++package crypto
++
++// IsBoringSSLAvailable always returns false when CGO is disabled
++func IsBoringSSLAvailable() bool {
++	return false
++}
++
++// GetCryptoBackend always returns Go stdlib when CGO is disabled
++func GetCryptoBackend() string {
++	return "Go stdlib"
++}
++
++// CryptoInfo returns detailed crypto backend information
++type CryptoInfo struct {
++	Backend              string
++	HardwareAcceleration bool
++	CGOEnabled           bool
++}
++
++// GetCryptoInfo returns Go stdlib information
++func GetCryptoInfo() CryptoInfo {
++	return CryptoInfo{
++		Backend:              "Go stdlib",
++		HardwareAcceleration: false,
++		CGOEnabled:           false,
++	}
++}
+diff --git a/main/main.go b/main/main.go
+index e8824e6..7ff6f94 100644
+--- a/main/main.go
++++ b/main/main.go
+@@ -2,15 +2,22 @@ package main
+ 
+ import (
+ 	"flag"
++	"fmt"
+ 	"os"
+ 
+ 	"github.com/xtls/xray-core/main/commands/base"
+ 	_ "github.com/xtls/xray-core/main/distro/all"
++	"github.com/xtls/xray-core/common/crypto"
+ )
+ 
+ func main() {
+ 	os.Args = getArgsV4Compatible()
+ 
++	// Display crypto backend information
++	cryptoInfo := crypto.GetCryptoInfo()
++	fmt.Fprintf(os.Stderr, "[Xray] Crypto backend: %s (CGO: %v, HW Accel: %v)\n",
++		cryptoInfo.Backend, cryptoInfo.CGOEnabled, cryptoInfo.HardwareAcceleration)
++
+ 	base.RootCommand.Long = "Xray is a platform for building proxies."
+ 	base.RootCommand.Commands = append(
+ 		[]*base.Command{
