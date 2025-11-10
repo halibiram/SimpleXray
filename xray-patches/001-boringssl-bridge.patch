@@ -1,9 +1,9 @@
 diff --git a/crypto/boringssl_bridge.go b/crypto/boringssl_bridge.go
 new file mode 100644
-index 0000000..a1b2c3d
+index 0000000..4beed69
 --- /dev/null
 +++ b/crypto/boringssl_bridge.go
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,381 @@
 +//go:build cgo
 +// +build cgo
 +
@@ -287,7 +287,7 @@ index 0000000..a1b2c3d
 +	if ctx == nil || conn == nil {
 +		return errors.New("invalid SSL context or connection")
 +	}
-+	
++
 +	if C.SSL_do_handshake(conn) != 1 {
 +		return getBoringSSLError()
 +	}
@@ -299,12 +299,12 @@ index 0000000..a1b2c3d
 +	if ctx == nil {
 +		return nil, errors.New("invalid SSL context")
 +	}
-+	
++
 +	conn := C.SSL_new(ctx)
 +	if conn == nil {
 +		return nil, getBoringSSLError()
 +	}
-+	
++
 +	// Set TLS 1.3
 +	if C.SSL_set_min_proto_version(conn, C.TLS1_3_VERSION) != 1 {
 +		C.SSL_free(conn)
@@ -314,7 +314,7 @@ index 0000000..a1b2c3d
 +		C.SSL_free(conn)
 +		return nil, getBoringSSLError()
 +	}
-+	
++
 +	// Set SNI (Server Name Indication)
 +	if hostname != "" {
 +		cHostname := C.CString(hostname)
@@ -324,7 +324,7 @@ index 0000000..a1b2c3d
 +			return nil, getBoringSSLError()
 +		}
 +	}
-+	
++
 +	return conn, nil
 +}
 +
@@ -333,7 +333,7 @@ index 0000000..a1b2c3d
 +	if conn == nil {
 +		return errors.New("invalid SSL connection")
 +	}
-+	
++
 +	// Server hello is part of the handshake
 +	if C.SSL_do_handshake(conn) != 1 {
 +		return getBoringSSLError()
@@ -346,12 +346,12 @@ index 0000000..a1b2c3d
 +	if conn == nil {
 +		return nil, errors.New("invalid SSL connection")
 +	}
-+	
++
 +	// In TLS 1.3, key exchange is part of the handshake
 +	// This function extracts the shared secret after handshake
 +	// Note: BoringSSL doesn't expose raw key material directly
 +	// This is a placeholder - actual implementation would use SSL_get_session
-+	
++
 +	return nil, errors.New("TLS 1.3 key exchange extraction not yet fully implemented")
 +}
 +
