@@ -1,9 +1,9 @@
 diff --git a/common/crypto/runtime.go b/common/crypto/runtime.go
 new file mode 100644
-index 0000000..7777777
+index 0000000..a4f7bae
 --- /dev/null
 +++ b/common/crypto/runtime.go
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,64 @@
 +//go:build cgo
 +// +build cgo
 +
@@ -70,10 +70,10 @@ index 0000000..7777777
 +}
 diff --git a/common/crypto/runtime_nocgo.go b/common/crypto/runtime_nocgo.go
 new file mode 100644
-index 0000000..8888888
+index 0000000..4d25c62
 --- /dev/null
 +++ b/common/crypto/runtime_nocgo.go
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,30 @@
 +//go:build !cgo
 +// +build !cgo
 +
@@ -105,11 +105,10 @@ index 0000000..8888888
 +	}
 +}
 diff --git a/main/main.go b/main/main.go
-index 0000000..1111111 100644
+index e8824e6..7ff6f94 100644
 --- a/main/main.go
 +++ b/main/main.go
-@@ -1,11 +1,13 @@
- package main
+@@ -2,15 +2,22 @@ package main
  
  import (
  	"flag"
@@ -123,11 +122,12 @@ index 0000000..1111111 100644
  
  func main() {
  	os.Args = getArgsV4Compatible()
-+
+ 
 +	// Display crypto backend information
 +	cryptoInfo := crypto.GetCryptoInfo()
-+	fmt.Fprintf(os.Stderr, "[Xray] Crypto backend: %s (CGO: %v, HW Accel: %v)\n", 
++	fmt.Fprintf(os.Stderr, "[Xray] Crypto backend: %s (CGO: %v, HW Accel: %v)\n",
 +		cryptoInfo.Backend, cryptoInfo.CGOEnabled, cryptoInfo.HardwareAcceleration)
- 
++
  	base.RootCommand.Long = "Xray is a platform for building proxies."
  	base.RootCommand.Commands = append(
+ 		[]*base.Command{
