@@ -42,11 +42,12 @@ jobs:
         with:
           submodules: false
 
-      - name: Initialize Valid Submodules
+      - name: Initialize Submodules
         run: |
-          # Only initialize the valid submodule (hev-socks5-tunnel)
+          # Initialize required submodules
           git submodule sync || true
           git submodule update --init app/src/main/jni/hev-socks5-tunnel || true
+          git submodule update --init app/src/main/jni/perf-net/third_party/boringssl || true
 
       - name: Setup NDK
         run: |
@@ -65,97 +66,31 @@ jobs:
           which cmake && cmake --version
           which ninja && ninja --version
 
-      - name: Clone BoringSSL
+      - name: Verify BoringSSL Submodule
         run: |
           BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
 
-          # Create directory structure if it doesn't exist
-          mkdir -p "$(dirname "$BORINGSSL_DIR")"
-
-          # Check if BoringSSL is already cloned and valid
-          if [ -d "$BORINGSSL_DIR" ] && [ -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
-            echo "✅ BoringSSL directory already exists and is valid"
-          else
-            echo "📦 Cloning BoringSSL..."
-            
-            # Remove any existing directory or submodule reference
-            if [ -d "$BORINGSSL_DIR" ]; then
-              echo "🧹 Removing existing BoringSSL directory..."
-              rm -rf "$BORINGSSL_DIR"
-            fi
-            
-            # Remove any .git submodule reference file that might exist
-            if [ -f "$(dirname "$BORINGSSL_DIR")/.git" ]; then
-              echo "🧹 Removing submodule reference..."
-              rm -f "$(dirname "$BORINGSSL_DIR")/.git"
-            fi
-            
-            # Clone BoringSSL master branch (most reliable, always has CMakeLists.txt)
-            # We'll pin to a specific commit hash for reproducibility
-            echo "📌 Cloning BoringSSL master branch..."
-            if git clone --depth=1 https://boringssl.googlesource.com/boringssl "$BORINGSSL_DIR" 2>&1; then
-              echo "✅ BoringSSL cloned successfully from googlesource"
-              cd "$BORINGSSL_DIR"
-              
-              # Pin to a specific commit for reproducibility (optional - can use HEAD if preferred)
-              # Using HEAD ensures we get the latest stable version
-              BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-              echo "✅ BoringSSL pinned to commit: $BORINGSSL_COMMIT"
-              echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
-              
-              # Verify CMakeLists.txt exists before leaving directory
-              if [ ! -f "CMakeLists.txt" ]; then
-                echo "❌ CMakeLists.txt not found in cloned repository!"
-                echo "   Current directory: $(pwd)"
-                echo "   Directory contents:"
-                ls -la | head -20
-                cd - > /dev/null
-                exit 1
-              fi
-              echo "✅ CMakeLists.txt verified in repository root"
-              cd - > /dev/null
-            else
-              echo "⚠️  Failed to clone from googlesource, trying GitHub mirror..."
-              # Clean up partial clone if any
-              rm -rf "$BORINGSSL_DIR"
-              
-              # Fallback to GitHub mirror
-              if git clone --depth=1 https://github.com/google/boringssl.git "$BORINGSSL_DIR" 2>&1; then
-                echo "✅ BoringSSL cloned successfully from GitHub"
-                cd "$BORINGSSL_DIR"
-                BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
-                echo "✅ BoringSSL pinned to commit: $BORINGSSL_COMMIT"
-                echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
-                
-                # Verify CMakeLists.txt exists
-                if [ ! -f "CMakeLists.txt" ]; then
-                  echo "❌ CMakeLists.txt not found in cloned repository!"
-                  echo "   Current directory: $(pwd)"
-                  echo "   Directory contents:"
-                  ls -la | head -20
-                  cd - > /dev/null
-                  exit 1
-                fi
-                echo "✅ CMakeLists.txt verified in repository root"
-                cd - > /dev/null
-              else
-                echo "❌ Failed to clone BoringSSL from all sources"
-                exit 1
-              fi
-            fi
-            
-            # Final verification after all operations
-            if [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
-              echo "❌ BoringSSL CMakeLists.txt not found after clone!"
-              echo "   Directory contents:"
-              ls -la "$BORINGSSL_DIR" | head -20 || echo "   (cannot list directory)"
-              echo "   Current directory: $(pwd)"
-              echo "   BORINGSSL_DIR: $BORINGSSL_DIR"
-              echo "   Absolute path: $(realpath "$BORINGSSL_DIR" 2>/dev/null || echo "$BORINGSSL_DIR")"
-              exit 1
-            fi
-            echo "✅ BoringSSL CMakeLists.txt verified at final check"
+          # Verify BoringSSL submodule was initialized
+          if [ ! -d "$BORINGSSL_DIR" ] || [ ! -f "$BORINGSSL_DIR/CMakeLists.txt" ]; then
+            echo "❌ BoringSSL submodule not initialized properly!"
+            echo "   Expected: $BORINGSSL_DIR/CMakeLists.txt"
+            exit 1
           fi
+
+          # Verify headers exist
+          if [ ! -f "$BORINGSSL_DIR/include/openssl/ssl.h" ]; then
+            echo "❌ BoringSSL headers not found!"
+            echo "   Expected: $BORINGSSL_DIR/include/openssl/ssl.h"
+            exit 1
+          fi
+
+          # Get commit hash for reference
+          cd "$BORINGSSL_DIR"
+          BORINGSSL_COMMIT=$(git rev-parse HEAD | cut -c 1-12)
+          echo "✅ BoringSSL submodule initialized successfully"
+          echo "📌 BoringSSL commit: $BORINGSSL_COMMIT"
+          echo "BORINGSSL_COMMIT=$BORINGSSL_COMMIT" >> $GITHUB_ENV
+          cd - > /dev/null
 
       - name: Build BoringSSL
         run: |
@@ -540,11 +475,28 @@ jobs:
         with:
           submodules: false
 
-      - name: Initialize Valid Submodules
+      - name: Initialize Submodules
         run: |
-          # Only initialize the valid submodule (hev-socks5-tunnel)
+          # Initialize required submodules
           git submodule sync || true
           git submodule update --init app/src/main/jni/hev-socks5-tunnel || true
+          git submodule update --init app/src/main/jni/perf-net/third_party/boringssl || true
+
+      - name: Verify BoringSSL Submodule
+        run: |
+          BORINGSSL_DIR="app/src/main/jni/perf-net/third_party/boringssl"
+
+          # Verify BoringSSL submodule was initialized
+          if [ ! -f "$BORINGSSL_DIR/include/openssl/ssl.h" ]; then
+            echo "❌ BoringSSL submodule headers not found!"
+            echo "   Expected: $BORINGSSL_DIR/include/openssl/ssl.h"
+            exit 1
+          fi
+
+          cd "$BORINGSSL_DIR"
+          COMMIT=$(git rev-parse HEAD | cut -c 1-12)
+          echo "✅ BoringSSL submodule verified (commit: $COMMIT)"
+          cd - > /dev/null
 
       - name: Read Versions
         run: |
