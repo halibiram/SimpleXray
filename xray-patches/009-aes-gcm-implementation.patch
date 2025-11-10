@@ -1,136 +1,102 @@
 diff --git a/common/crypto/aes.go b/common/crypto/aes.go
-new file mode 100644
-index 0000000..9999999
---- /dev/null
+index 0000000..1111111 100644
+--- a/common/crypto/aes.go
 +++ b/common/crypto/aes.go
-@@ -0,0 +1,65 @@
+@@ -1,3 +1,6 @@
 +//go:build cgo
 +// +build cgo
 +
-+package crypto
-+
-+import (
-+	"crypto/cipher"
-+	stdaes "crypto/aes"
-+
+ package crypto
+ 
+ import (
+ 	"crypto/aes"
+ 	"crypto/cipher"
+ 
+ 	"github.com/xtls/xray-core/common"
 +	boringssl "github.com/xtls/xray-core/crypto"
-+)
-+
-+// NewAESCipher creates a new AES cipher.Block
-+// Uses BoringSSL when available for hardware acceleration
-+func NewAESCipher(key []byte) (cipher.Block, error) {
-+	if IsBoringSSLAvailable() {
-+		// Use BoringSSL AES (hardware accelerated with AES-NI/NEON)
-+		return newBoringSSLAESBlock(key)
+ )
+ 
+ // NewAesDecryptionStream creates a new AES encryption stream based on given key and IV.
+ // Caller must ensure the length of key and IV is either 16, 24 or 32 bytes.
+ func NewAesDecryptionStream(key []byte, iv []byte) cipher.Stream {
+ 	return NewAesStreamMethod(key, iv, cipher.NewCFBDecrypter)
+ }
+ 
+ // NewAesEncryptionStream creates a new AES description stream based on given key and IV.
+ // Caller must ensure the length of key and IV is either 16, 24 or 32 bytes.
+ func NewAesEncryptionStream(key []byte, iv []byte) cipher.Stream {
+ 	return NewAesStreamMethod(key, iv, cipher.NewCFBEncrypter)
+ }
+ 
+ func NewAesStreamMethod(key []byte, iv []byte, f func(cipher.Block, []byte) cipher.Stream) cipher.Stream {
+ 	aesBlock, err := aes.NewCipher(key)
+ 	common.Must(err)
+ 	return f(aesBlock, iv)
+ }
+ 
+ // NewAesCTRStream creates a stream cipher based on AES-CTR.
+ func NewAesCTRStream(key []byte, iv []byte) cipher.Stream {
+ 	return NewAesStreamMethod(key, iv, cipher.NewCTR)
+ }
+ 
+-// NewAesGcm creates a AEAD cipher based on AES-GCM.
++// NewAesGcm creates a AEAD cipher based on AES-GCM, using BoringSSL when available.
+ func NewAesGcm(key []byte) cipher.AEAD {
++	// Try to use BoringSSL GCM if available
++	if UseBoringSSL {
++		if aead, err := boringssl.NewBoringSSLGCM(key); err == nil {
++			return aead
++		}
 +	}
-+	// Fallback to Go stdlib
-+	return stdaes.NewCipher(key)
-+}
-+
-+// NewGCM creates a new GCM AEAD cipher
-+// Uses BoringSSL implementation when available
-+func NewGCM(block cipher.Block) (cipher.AEAD, error) {
-+	if IsBoringSSLAvailable() {
-+		// Extract key from block (if possible)
-+		// This is a simplified approach - production code would need better handling
-+		return boringssl.NewBoringSSLGCM(extractKeyFromBlock(block))
-+	}
-+	return cipher.NewGCM(block)
-+}
-+
-+// NewGCMWithNonceSize creates GCM with custom nonce size
-+func NewGCMWithNonceSize(block cipher.Block, nonceSize int) (cipher.AEAD, error) {
-+	if IsBoringSSLAvailable() && nonceSize == 12 {
-+		// BoringSSL supports standard 12-byte nonce
-+		return boringssl.NewBoringSSLGCM(extractKeyFromBlock(block))
-+	}
-+	return cipher.NewGCMWithNonceSize(block, nonceSize)
-+}
-+
-+// NewGCMWithTagSize creates GCM with custom tag size
-+func NewGCMWithTagSize(block cipher.Block, tagSize int) (cipher.AEAD, error) {
-+	if IsBoringSSLAvailable() && tagSize == 16 {
-+		// BoringSSL supports standard 16-byte tag
-+		return boringssl.NewBoringSSLGCM(extractKeyFromBlock(block))
-+	}
-+	return cipher.NewGCMWithTagSize(block, tagSize)
-+}
-+
-+// Helper function to extract key from cipher.Block
-+// This is a workaround - ideally we'd refactor to pass keys directly
-+func extractKeyFromBlock(block cipher.Block) []byte {
-+	// For AES, block size tells us key size
-+	// This is a simplified implementation
-+	keySize := block.BlockSize() * 2 // Rough estimation
-+	return make([]byte, keySize)
-+}
-+
-+// newBoringSSLAESBlock creates BoringSSL-backed cipher.Block
-+func newBoringSSLAESBlock(key []byte) (cipher.Block, error) {
-+	// Implement BoringSSL AES block wrapper
-+	return stdaes.NewCipher(key) // Placeholder
-+}
++	// Fallback to Go stdlib GCM
+ 	block := common.Must2(aes.NewCipher(key))
+ 	aead := common.Must2(cipher.NewGCM(block))
+ 	return aead
+ }
 diff --git a/common/crypto/aes_nocgo.go b/common/crypto/aes_nocgo.go
 new file mode 100644
-index 0000000..aaaaaaa
+index 0000000..2222222
 --- /dev/null
 +++ b/common/crypto/aes_nocgo.go
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,37 @@
 +//go:build !cgo
 +// +build !cgo
 +
 +package crypto
 +
 +import (
++	"crypto/aes"
 +	"crypto/cipher"
-+	stdaes "crypto/aes"
++
++	"github.com/xtls/xray-core/common"
 +)
 +
-+// NewAESCipher always uses Go stdlib when CGO disabled
-+func NewAESCipher(key []byte) (cipher.Block, error) {
-+	return stdaes.NewCipher(key)
++// NewAesDecryptionStream creates a new AES encryption stream based on given key and IV.
++// Caller must ensure the length of key and IV is either 16, 24 or 32 bytes.
++func NewAesDecryptionStream(key []byte, iv []byte) cipher.Stream {
++	return NewAesStreamMethod(key, iv, cipher.NewCFBDecrypter)
 +}
 +
-+// NewGCM uses Go stdlib GCM
-+func NewGCM(block cipher.Block) (cipher.AEAD, error) {
-+	return cipher.NewGCM(block)
++// NewAesEncryptionStream creates a new AES description stream based on given key and IV.
++// Caller must ensure the length of key and IV is either 16, 24 or 32 bytes.
++func NewAesEncryptionStream(key []byte, iv []byte) cipher.Stream {
++	return NewAesStreamMethod(key, iv, cipher.NewCFBEncrypter)
 +}
 +
-+// NewGCMWithNonceSize uses Go stdlib
-+func NewGCMWithNonceSize(block cipher.Block, nonceSize int) (cipher.AEAD, error) {
-+	return cipher.NewGCMWithNonceSize(block, nonceSize)
++func NewAesStreamMethod(key []byte, iv []byte, f func(cipher.Block, []byte) cipher.Stream) cipher.Stream {
++	aesBlock, err := aes.NewCipher(key)
++	common.Must(err)
++	return f(aesBlock, iv)
 +}
 +
-diff --git a/common/buf/buffer_encrypt.go b/common/buf/buffer_encrypt.go
-index iiiiiii..jjjjjjj 100644
---- a/common/buf/buffer_encrypt.go
-+++ b/common/buf/buffer_encrypt.go
-@@ -2,9 +2,9 @@ package buf
-
- import (
- 	"crypto/cipher"
--	"crypto/aes"
-
- 	"github.com/xtls/xray-core/common"
-+	commoncrypto "github.com/xtls/xray-core/common/crypto"
- )
-
- // EncryptedWriter encrypts and writes buffers
-@@ -18,7 +18,7 @@ type EncryptedWriter struct {
- // NewEncryptedWriter creates a new encrypted writer
- func NewEncryptedWriter(key []byte, writer Writer) (*EncryptedWriter, error) {
- 	// Create AES cipher
--	block, err := aes.NewCipher(key)
-+	block, err := commoncrypto.NewAESCipher(key)
- 	if err != nil {
- 		return nil, err
- 	}
-@@ -26,7 +26,7 @@ func NewEncryptedWriter(key []byte, writer Writer) (*EncryptedWriter, error) {
- 	// Create GCM AEAD
- 	// Uses BoringSSL when available for hardware acceleration
- 	var aead cipher.AEAD
--	aead, err = cipher.NewGCM(block)
-+	aead, err = commoncrypto.NewGCM(block)
- 	if err != nil {
- 		return nil, err
- 	}
++// NewAesCTRStream creates a stream cipher based on AES-CTR.
++func NewAesCTRStream(key []byte, iv []byte) cipher.Stream {
++	return NewAesStreamMethod(key, iv, cipher.NewCTR)
++}
++
++// NewAesGcm creates a AEAD cipher based on AES-GCM (stdlib only, no CGO).
++func NewAesGcm(key []byte) cipher.AEAD {
++	block := common.Must2(aes.NewCipher(key))
++	aead := common.Must2(cipher.NewGCM(block))
++	return aead
++}

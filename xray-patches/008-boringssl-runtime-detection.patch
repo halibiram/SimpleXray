@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..7777777
 --- /dev/null
 +++ b/common/crypto/runtime.go
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,60 @@
 +//go:build cgo
 +// +build cgo
 +
@@ -41,18 +41,7 @@ index 0000000..7777777
 +
 +	// Try to use BoringSSL random bytes as a test
 +	_, err := boringssl.RandomBytes(16)
-+	if err != nil {
-+		return false
-+	}
-+
-+	// Try to create an AES-GCM cipher
-+	key := make([]byte, 16)
-+	_, err = boringssl.NewBoringSSLGCM(key)
-+	if err != nil {
-+		return false
-+	}
-+
-+	return true
++	return err == nil
 +}
 +
 +// GetCryptoBackend returns the current crypto backend name
@@ -65,36 +54,26 @@ index 0000000..7777777
 +
 +// CryptoInfo returns detailed crypto backend information
 +type CryptoInfo struct {
-+	Backend           string
++	Backend              string
 +	HardwareAcceleration bool
-+	Features          []string
++	CGOEnabled           bool
 +}
 +
 +// GetCryptoInfo returns detailed information about the crypto backend
 +func GetCryptoInfo() CryptoInfo {
-+	info := CryptoInfo{
-+		Backend:  GetCryptoBackend(),
-+		Features: []string{},
++	available := IsBoringSSLAvailable()
++	return CryptoInfo{
++		Backend:              GetCryptoBackend(),
++		HardwareAcceleration: available,
++		CGOEnabled:           true,
 +	}
-+
-+	if IsBoringSSLAvailable() {
-+		info.HardwareAcceleration = true
-+		info.Features = append(info.Features,
-+			"AES-GCM (hardware accelerated)",
-+			"ChaCha20-Poly1305 (BoringSSL)",
-+			"TLS 1.3 (BoringSSL)",
-+			"X25519 key exchange",
-+		)
-+	}
-+
-+	return info
 +}
 diff --git a/common/crypto/runtime_nocgo.go b/common/crypto/runtime_nocgo.go
 new file mode 100644
 index 0000000..8888888
 --- /dev/null
 +++ b/common/crypto/runtime_nocgo.go
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,26 @@
 +//go:build !cgo
 +// +build !cgo
 +
@@ -114,7 +93,7 @@ index 0000000..8888888
 +type CryptoInfo struct {
 +	Backend              string
 +	HardwareAcceleration bool
-+	Features             []string
++	CGOEnabled           bool
 +}
 +
 +// GetCryptoInfo returns Go stdlib information
@@ -122,34 +101,33 @@ index 0000000..8888888
 +	return CryptoInfo{
 +		Backend:              "Go stdlib",
 +		HardwareAcceleration: false,
-+		Features:             []string{"Pure Go implementation"},
++		CGOEnabled:           false,
 +	}
 +}
 diff --git a/main/main.go b/main/main.go
-index ggggggg..hhhhhhh 100644
+index 0000000..1111111 100644
 --- a/main/main.go
 +++ b/main/main.go
-@@ -8,6 +8,7 @@ import (
- 	"strings"
-
- 	"github.com/xtls/xray-core/core"
-+	commoncrypto "github.com/xtls/xray-core/common/crypto"
- 	"github.com/xtls/xray-core/common/cmdarg"
- 	"github.com/xtls/xray-core/common/platform"
- 	"github.com/xtls/xray-core/main/commands"
-@@ -30,6 +31,15 @@ func main() {
- 		os.Exit(1)
- 	}
-
-+	// Log crypto backend information
-+	cryptoInfo := commoncrypto.GetCryptoInfo()
-+	fmt.Printf("Xray-core crypto backend: %s\n", cryptoInfo.Backend)
-+	if cryptoInfo.HardwareAcceleration {
-+		fmt.Println("Hardware acceleration: enabled")
-+	}
-+	fmt.Printf("Features: %v\n", cryptoInfo.Features)
-+	fmt.Println("---")
+@@ -1,11 +1,13 @@
+ package main
+ 
+ import (
+ 	"flag"
++	"fmt"
+ 	"os"
+ 
+ 	"github.com/xtls/xray-core/main/commands/base"
+ 	_ "github.com/xtls/xray-core/main/distro/all"
++	"github.com/xtls/xray-core/common/crypto"
+ )
+ 
+ func main() {
+ 	os.Args = getArgsV4Compatible()
 +
- 	// Execute commands
- 	if err := cmd.Execute(); err != nil {
- 		fmt.Fprintln(os.Stderr, err)
++	// Display crypto backend information
++	cryptoInfo := crypto.GetCryptoInfo()
++	fmt.Fprintf(os.Stderr, "[Xray] Crypto backend: %s (CGO: %v, HW Accel: %v)\n", 
++		cryptoInfo.Backend, cryptoInfo.CGOEnabled, cryptoInfo.HardwareAcceleration)
+ 
+ 	base.RootCommand.Long = "Xray is a platform for building proxies."
+ 	base.RootCommand.Commands = append(
